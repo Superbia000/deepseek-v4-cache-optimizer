@@ -1,0 +1,38 @@
+/* 簡單、緊湊、無特效的基礎排版 */
+#deepseek-v4-cache-optimizer {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+#deepseek-v4-cache-optimizer h3 {
+    margin: 0;
+    font-size: 1.1em;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, #555);
+    padding-bottom: 5px;
+}
+
+#deepseek-v4-cache-optimizer p {
+    margin: 0;
+    font-size: 0.85em;
+    opacity: 0.8;
+}
+
+#ds-cache-log {
+    width: 100%;
+    height: 250px;
+    background-color: #1e1e1e;
+    color: #4af626; /* 終端機綠色，方便 Debug */
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    padding: 8px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    border-radius: 4px;
+    resize: vertical;
+    box-sizing: border-box;
+}
+
+#ds-cache-log:focus {
+    outline: none;
+    border-color: #4af626;
+}
