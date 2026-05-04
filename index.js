@@ -1,4 +1,5 @@
 import { extension_settings, getContext } from '../../../extensions.js';
+import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
 // 模組 1：顯眼且詳盡的 Debug 排錯記錄器
@@ -6,20 +7,20 @@ import { extension_settings, getContext } from '../../../extensions.js';
 const Logger = {
     log: (msg, ...args) => {
         const time = new Date().toISOString();
-        const logStr = `[${time}] [Deepseek V4 Optimizer] [INFO] ${msg}`;
+        const logStr = `[${time}] [DS V4 Optimizer] [INFO] ${msg}`;
         console.log(`%c${logStr}`, 'color: #00ff00; font-weight: bold;', ...args);
         appendLogToUI(logStr);
     },
     error: (msg, err) => {
         const time = new Date().toISOString();
         const errorDetail = err?.stack || err?.message || err || "Unknown Error";
-        const logStr = `[${time}] [Deepseek V4 Optimizer] [ERROR] 🔴 ${msg} | 詳細錯誤: ${errorDetail}`;
+        const logStr = `[${time}] [DS V4 Optimizer] [ERROR] 🔴 ${msg} | 詳細錯誤: ${errorDetail}`;
         console.error(`%c${logStr}`, 'color: #ff0000; font-weight: bold; font-size: 14px;', err);
         appendLogToUI(logStr);
     },
     debug: (msg, ...args) => {
         const time = new Date().toISOString();
-        const logStr = `[${time}] [Deepseek V4 Optimizer] [DEBUG] 🟡 ${msg}`;
+        const logStr = `[${time}] [DS V4 Optimizer] [DEBUG] 🟡 ${msg}`;
         console.log(`%c${logStr}`, 'color: #00ffff;', ...args);
         appendLogToUI(logStr);
     }
@@ -33,7 +34,6 @@ function appendLogToUI(text) {
     }
 }
 
-// 緩存狀態機
 const CacheState = {
     enabled: true,
     lastStaticBase: null,
@@ -41,32 +41,38 @@ const CacheState = {
 };
 
 // ==========================================
-// 模組 2：Prompt Interceptor (提示詞攔截與重組核心)
+// 模組 2：核心攔截與緩存重組算法 (適配 1.17.0 payload)
 // ==========================================
-// 依據 ST 官方文檔，攔截器必須是全局函數 (globalThis)，並接收 chat (陣列) 與 contextSize (數字)
-globalThis.deepseekV4CacheOptimizerInterceptor = async function (chat, contextSize) {
+function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled) return;
+    
+    // 如果是酒館內部的 Token 計算(Dry Run)，則略過以免污染日誌
+    if (data.dryRun) return; 
 
     try {
         Logger.log("==========================================");
-        Logger.log(`啟動攔截器：Prompt Interceptor 成功接管發送前陣列 (預估 Tokens: ${contextSize})`);
+        Logger.log("啟動攔截器：捕獲到 CHAT_COMPLETION_PROMPT_READY 事件");
         
-        if (!Array.isArray(chat) || chat.length === 0) {
-            Logger.debug("Chat 陣列為空，跳過處理。");
+        // 在 ST 1.17.0 中，最終組裝好的陣列存放在 data.chat
+        if (!data || !Array.isArray(data.chat)) {
+            Logger.error("攔截失敗：找不到 data.chat 陣列，可能非 Chat Completion 請求。");
             return;
         }
 
-        Logger.debug(`原始陣列長度: ${chat.length} 個 Message 區塊`);
+        const originalMessages = data.chat;
+        Logger.debug(`原始陣列長度: ${originalMessages.length} 個 Message 區塊`);
 
-        // 1. 拆解陣列：將最後一條消息（通常是當前用戶輸入）分離
-        const finalMessage = chat.pop(); 
+        if (originalMessages.length === 0) return;
+
+        // 1. 拆解陣列：將最後一條消息（當前用戶輸入）分離
+        const finalMessage = originalMessages.pop(); 
         Logger.debug(`已分離最終觸發消息, Role: ${finalMessage.role}`);
 
         const systemLines = [];
         const pureChatHistory = [];
 
-        // 2. 遍歷剩餘的所有消息，無情剝離所有 System (世界書、設定、預設) 與歷史對話
-        chat.forEach((msg) => {
+        // 2. 剝離所有 System 消息 (無視酒館或世界書的原本插入深度)
+        originalMessages.forEach((msg) => {
             if (msg.role === 'system') {
                 systemLines.push(msg.content);
             } else {
@@ -74,28 +80,26 @@ globalThis.deepseekV4CacheOptimizerInterceptor = async function (chat, contextSi
             }
         });
 
-        Logger.debug(`成功分離出 ${pureChatHistory.length} 條歷史對話, 與 ${systemLines.length} 個系統提示區塊`);
-
-        // 3. 執行「Converging Static Core」自適應差分算法
+        // 3. 執行「Converging Static Core」差分算法
         const currentSystemText = systemLines.join('\n');
         let staticCore = "";
         let dynamicSuffix = "";
 
         if (!CacheState.lastStaticBase) {
-            Logger.log("初始回合 (或緩存被重置)：將當前所有 System 設定為靜態核心。");
+            Logger.log("初始回合：將當前所有 System 設定為靜態核心。");
             CacheState.lastStaticBase = currentSystemText;
             staticCore = currentSystemText;
         } else {
-            Logger.debug("開始執行文本差異 (Diffing) 算法對比上一回合...");
+            Logger.debug("執行文本差異 (Diffing) 算法...");
             const oldLines = CacheState.lastStaticBase.split('\n');
             const newLines = currentSystemText.split('\n');
-
             const oldLinesSet = new Set(oldLines.map(l => l.trim()));
+            
             const commonLines = [];
             const dynamicLines = [];
 
             for (const line of newLines) {
-                if (line.trim() === '') continue; // 忽略純空行
+                if (line.trim() === '') continue; 
                 if (oldLinesSet.has(line.trim())) {
                     commonLines.push(line);
                 } else {
@@ -106,78 +110,78 @@ globalThis.deepseekV4CacheOptimizerInterceptor = async function (chat, contextSi
             const similarity = commonLines.length / Math.max(newLines.length, 1);
             Logger.debug(`System 核心相似度: ${(similarity * 100).toFixed(2)}%`);
 
-            // 防呆：如果設定大改（例如切換角色或換卡），自動重置緩存基底
             if (similarity < 0.15 && newLines.length > 5) {
-                Logger.log("⚠️ 偵測到 System 內容發生重大變更，自動重置靜態核心！");
+                Logger.log("⚠️ System 內容巨變，自動重置靜態核心！");
                 CacheState.lastStaticBase = currentSystemText;
                 staticCore = currentSystemText;
             } else {
                 staticCore = commonLines.join('\n');
                 dynamicSuffix = dynamicLines.join('\n');
-                CacheState.lastStaticBase = staticCore; // 讓核心不斷收斂逼近純靜態
-                Logger.log(`Diff 完畢：靜態核心 ${commonLines.length} 行，動態後置(世界書/記憶) ${dynamicLines.length} 行`);
+                CacheState.lastStaticBase = staticCore; 
             }
         }
 
-        // 4. 原地修改 Chat 陣列 (SillyTavern 官方允許 Mutable In-Place 修改)
-        chat.length = 0; // 瞬間清空原本未優化的陣列
-        
-        // [Index 0]: 絕對不變的系統設定
+        // 4. 重組為完美的前綴緩存陣列
+        const newMessages = [];
         if (staticCore.trim().length > 0) {
-            chat.push({ role: 'system', content: staticCore });
+            newMessages.push({ role: 'system', content: staticCore });
         }
-
-        // [Index 1 ~ N]: 乾淨的用戶與 AI 的對話歷史
-        chat.push(...pureChatHistory);
-
-        // [Index N+1]: 所有動態內容 (世界書、動態記憶) 強制掛載在底部！
+        newMessages.push(...pureChatHistory);
         if (dynamicSuffix.trim().length > 0) {
-            chat.push({ role: 'system', content: `[System Note / Memory / World Info]:\n${dynamicSuffix}` });
-            Logger.debug("已將動態內容 (World Info/Memory) 成功掛載至陣列底部！");
+            // 將世界書與其他插件的動態插入強制轉移到陣列最底部！
+            newMessages.push({ role: 'system', content: `[System Note / Dynamic Info]:\n${dynamicSuffix}` });
+            Logger.debug("已將動態內容成功掛載至陣列底部！");
         }
+        newMessages.push(finalMessage);
 
-        // [Index N+2]: 最新回合用戶的輸入
-        chat.push(finalMessage);
-
+        // 5. 【關鍵技術】使用 splice 進行 in-place(原地) 修改，覆寫即將發送出去的 payload
+        data.chat.splice(0, data.chat.length, ...newMessages);
+        
         CacheState.turnCount++;
-        Logger.log(`✅ 重組完成！已輸出高度適應緩存的陣列 (總區塊數: ${chat.length})`);
+        Logger.log(`✅ 重組完成！已覆寫 ST 的發送陣列 (總區塊數: ${data.chat.length})`);
         
     } catch (err) {
-        Logger.error("致命錯誤：攔截與重組過程中發生崩潰！", err);
+        Logger.error("致命錯誤：攔截與重組過程中發生崩潰！已取消優化。", err);
     }
-};
+}
 
 // ==========================================
-// 模組 3：純淨無特效的內置 UI 介面
+// 模組 3：內建折疊式 UI 介面 (SillyTavern 原生樣式)
 // ==========================================
 async function setupUI() {
     try {
-        Logger.log("正在初始化 SillyTavern 擴展 UI...");
+        Logger.log("初始化 SillyTavern 折疊擴展 UI...");
         
+        // 使用 ST 原生的 inline-drawer (折疊菜單) 類別，完美解決排版擠壓問題
         const uiHTML = `
-            <div id="deepseek-v4-cache-optimizer" class="drawer-content">
-                <h3>🧠 Deepseek V4 Cache Optimizer</h3>
-                <p>強制分離靜態與動態提示詞，將動態記憶移至底部以達到極致的 KV Cache 命中率。</p>
-                
-                <div class="flex-container alignitemscenter" style="margin-bottom: 10px;">
+            <div class="inline-drawer" id="ds-v4-optimizer-drawer">
+                <div class="inline-drawer-toggle inline-drawer-header">
+                    <b>🧠 Deepseek V4 Cache Optimizer</b>
+                    <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
+                </div>
+                <div class="inline-drawer-content" style="padding-top: 10px; display: flex; flex-direction: column; gap: 10px;">
+                    <p style="font-size: 0.9em; opacity: 0.8; margin: 0;">強制分離靜態與動態提示詞，將動態記憶移至底部以達到極致的 KV Cache 命中率。</p>
+                    
                     <label class="checkbox_label">
                         <input type="checkbox" id="ds-cache-enable" checked> 
-                        啟用緩存攔截與重組
+                        <span>啟用緩存攔截與重組</span>
                     </label>
-                </div>
-                
-                <div class="menu_button_step">
-                    <button id="ds-cache-reset" class="menu_button">🔄 強制重置靜態緩存核心</button>
-                </div>
-                
-                <div style="margin-top: 10px;">
-                    <label style="font-weight: bold; margin-bottom: 5px; display: block;">排錯日誌 (Debug Logs):</label>
-                    <textarea id="ds-cache-log" readonly></textarea>
+                    
+                    <div class="menu_button_step" style="margin-top: 5px;">
+                        <button id="ds-cache-reset" class="menu_button">🔄 強制重置靜態緩存核心</button>
+                    </div>
+                    
+                    <div style="margin-top: 5px;">
+                        <label style="font-weight: bold; margin-bottom: 5px; display: block;">排錯日誌 (Debug Logs):</label>
+                        <textarea id="ds-cache-log" readonly style="width: 100%; height: 200px; background-color: #1e1e1e; color: #4af626; font-family: monospace; font-size: 11px; padding: 8px; border: 1px solid var(--SmartThemeBorderColor, #555); border-radius: 4px; resize: vertical; box-sizing: border-box;"></textarea>
+                    </div>
                 </div>
             </div>
         `;
         
+        // 將 UI 注入到擴展清單的尾部
         $('#extensions_settings').append(uiHTML);
+
         uiLogTextarea = document.getElementById('ds-cache-log');
         
         $('#ds-cache-enable').on('change', function() {
@@ -202,9 +206,16 @@ async function setupUI() {
 // ==========================================
 jQuery(async () => {
     try {
-        console.log("Deepseek V4 Cache Optimizer is loading...");
+        console.log("Deepseek V4 Optimizer is loading...");
         await setupUI();
-        Logger.log("✅ 擴展加載成功！攔截器已透過 manifest.json 註冊就緒，隨時準備接管對話。");
+        
+        // 核心鉤子：完美攔截 ST 1.17.0 的 CHAT_COMPLETION_PROMPT_READY
+        if (eventSource && event_types && event_types.CHAT_COMPLETION_PROMPT_READY) {
+            eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
+            Logger.log("✅ 成功掛載 CHAT_COMPLETION_PROMPT_READY 事件鉤子");
+        } else {
+            throw new Error("找不到 CHAT_COMPLETION_PROMPT_READY 事件源！");
+        }
     } catch (err) {
         Logger.error("擴展加載過程發生致命錯誤！", err);
     }
