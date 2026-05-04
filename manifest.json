@@ -1,0 +1,12 @@
+{
+    "name": "deepseek-v4-cache-optimizer",
+    "display_name": "Deepseek V4 Cache Optimizer",
+    "description": "攔截並重組提示詞陣列。透過自適應差異算法提取靜態核心，將世界書與動態記憶轉移至底部，完美對齊 Deepseek V4 Pro 的前綴緩存(KV Cache)機制。",
+    "version": "1.0.0",
+    "author": "Senior Developer",
+    "requires": [
+        "1.16.0",
+        "1.17.0",
+        "1.17.1"
+    ]
+}
