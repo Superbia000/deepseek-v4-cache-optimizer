@@ -2,62 +2,8 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 模块 1：日志系统（支持等级过滤）
+// 简易 hash（用于内容指纹）
 // ==========================================
-const LOG_LEVELS = { OFF: 0, BASIC: 1, DETAIL: 2, DEBUG: 3 };
-let currentLogLevel = LOG_LEVELS.DETAIL; // 默认详细
-
-const Logger = {
-    _uiTextarea: null,
-    _logLevel: LOG_LEVELS.DETAIL,
-    setLevel(level) {
-        this._logLevel = level;
-        this.log(`日志等级切换为: ${Object.keys(LOG_LEVELS).find(k => LOG_LEVELS[k] === level)}`);
-    },
-    log(msg, level = LOG_LEVELS.BASIC) {
-        if (level > this._logLevel) return;
-        const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        const prefix = level === LOG_LEVELS.DEBUG ? `[${time}] 🔍` : `[${time}] ✅`;
-        console.log(`%c[DS V4 Opt v3.2] ${msg}`, 'color: #00ff00; font-weight: bold;');
-        this._append(`${prefix} ${msg}`);
-    },
-    warn(msg, level = LOG_LEVELS.BASIC) {
-        if (level > this._logLevel) return;
-        const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        console.warn(`%c[DS V4 Opt v3.2] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-        this._append(`[${time}] 🌪️ ${msg}`);
-    },
-    error(msg, err) {
-        const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        console.error(`[DS V4 Opt v3.2] 🔴 ${msg}`, err || '');
-        this._append(`[${time}] 🔴 ${msg}`);
-    },
-    _append(text) {
-        if (Logger._uiTextarea) {
-            Logger._uiTextarea.value += text + '\n';
-            Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
-        }
-    }
-};
-
-// ==========================================
-// 模块 2：文本归一化（处理标点、空格不一致）
-// ==========================================
-function normalizeText(str) {
-    if (!str) return '';
-    // 1. 全角转半角（保留中文）
-    let result = str.replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
-    // 2. 统一引号：将中文引号 ""'' 转为 "
-    result = result.replace(/[\u201C\u201D\u2018\u2019]/g, '"');
-    // 3. 去除行首行尾空格，以及连续空格
-    result = result.replace(/[ \t]+/g, ' ');
-    result = result.replace(/\n\s+/g, '\n');
-    result = result.trim();
-    // 4. 标准化省略号为 ...
-    result = result.replace(/…/g, '...');
-    return result;
-}
-
 function simpleHash(str) {
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
@@ -68,13 +14,8 @@ function simpleHash(str) {
     return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
 }
 
-// 基于归一化文本的哈希
-function normalizedHash(str) {
-    return simpleHash(normalizeText(str));
-}
-
 // ==========================================
-// 模块 3：Token 估算
+// Token 估算（CJK 感知）
 // ==========================================
 function estimateTokens(text) {
     if (!text) return 0;
@@ -91,22 +32,63 @@ function estimateTokens(text) {
 }
 
 // ==========================================
-// 模块 4：缓存状态机（增加归一化快照）
+// 日志系统（带等级过滤）
+// ==========================================
+const LOG_LEVELS = { QUIET: 0, NORMAL: 1, DEBUG: 2 };
+const Logger = (() => {
+    let uiTextarea = null;
+    let currentLevel = LOG_LEVELS.DEBUG; // 默认详细模式
+
+    function log(msg, level = LOG_LEVELS.NORMAL) {
+        if (level > currentLevel) return;
+        const time = new Date().toISOString().split('T')[1].slice(0, -1);
+        const logStr = `[${time}] ✅ ${msg}`;
+        console.log(`%c[DS V4 Opt v4] ${msg}`, 'color: #00ff00; font-weight: bold;');
+        append(logStr);
+    }
+    function warn(msg, level = LOG_LEVELS.NORMAL) {
+        if (level > currentLevel) return;
+        const time = new Date().toISOString().split('T')[1].slice(0, -1);
+        const logStr = `[${time}] 🌪️ ${msg}`;
+        console.warn(`%c[DS V4 Opt v4] ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        append(logStr);
+    }
+    function error(msg, err) {
+        const time = new Date().toISOString().split('T')[1].slice(0, -1);
+        const logStr = `[${time}] 🔴 ${msg}`;
+        console.error(`[DS V4 Opt v4] ${msg}`, err || '');
+        append(logStr);
+    }
+    function append(text) {
+        if (uiTextarea) {
+            uiTextarea.value += text + '\n';
+            uiTextarea.scrollTop = uiTextarea.scrollHeight;
+        }
+    }
+    function setUI(ta) { uiTextarea = ta; }
+    function setLevel(lvl) { currentLevel = lvl; }
+    function getLevel() { return currentLevel; }
+    return { log, warn, error, setUI, setLevel, getLevel, LOG_LEVELS };
+})();
+
+// ==========================================
+// 缓存状态机
 // ==========================================
 const CacheState = {
     enabled: true,
-    staticCore: null,                 // 原始冻结文本（用于发送）
-    staticCoreNormalized: null,       // 归一化后文本（用于比较）
-    absorbedMessages: [],             // 原始吸收指令列表
-    absorbedNormalized: [],           // 对应归一化后的列表
-    knownFloatsNormalized: new Set(), // 存储归一化指纹
-    lastBottomBlocks: [],
-    lastPrefixSnapshotNormalized: null, // 归一化后的前缀快照
+    staticCore: null,               // 冻结的 system 核心
+    absorbedMessages: [],           // 已吸收的固定 user 消息列表
+    knownFloatsContent: new Set(),  // 内容完全匹配的吸收池
+    lastBottomBlocks: [],           // 底部特征
+    lastPrefixSnapshot: null,
+    // 新增：强制固化模式（开启后，后续浮动指令使用首次锁定的版本，不更新）
+    lockMode: false,
+    lockedUserInstructions: new Map(), // role@index 映射到首次内容
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
 };
 
 // ==========================================
-// 模块 5：消息分类
+// 消息分类与合并
 // ==========================================
 function classifyMessages(chat) {
     const systems = [], chatHistory = [], prefills = [];
@@ -137,11 +119,10 @@ function mergeSystemText(systemMsgs) {
     return lines.join('\n');
 }
 
-function similarity(oldNormalized, newRaw) {
-    const newNorm = normalizeText(newRaw);
-    if (!oldNormalized || !newNorm) return 0;
-    const oldLines = new Set(oldNormalized.split('\n').filter(Boolean));
-    const newLines = newNorm.split('\n').filter(Boolean);
+function similarity(oldText, newText) {
+    if (!oldText || !newText) return 0;
+    const oldLines = new Set(oldText.split('\n').map(l => l.trim()).filter(Boolean));
+    const newLines = newText.split('\n').map(l => l.trim()).filter(Boolean);
     if (newLines.length === 0) return 1;
     let common = 0;
     for (const l of newLines) if (oldLines.has(l)) common++;
@@ -149,7 +130,7 @@ function similarity(oldNormalized, newRaw) {
 }
 
 // ==========================================
-// 模块 6：浮动指令检测与吸收（归一化版）
+// 浮动指令检测与固化吸收
 // ==========================================
 function detectAndAbsorbFloats(chatHistory) {
     if (!chatHistory.length) return { cleaned: chatHistory, newlyAbsorbed: [] };
@@ -161,25 +142,33 @@ function detectAndAbsorbFloats(chatHistory) {
         const msg = chatHistory[i];
         const isBottom = i >= chatHistory.length - 3;
         const long = msg.content && msg.content.length > 25;
+        const key = msg.role + '|' + i; // 用角色+索引作为固化键（简单方式）
 
-        const normalizedContent = normalizeText(msg.content);
-        if (!normalizedContent) continue; // 跳过空消息
-
-        if (CacheState.knownFloatsNormalized.has(normalizedContent)) {
-            continue; // 已吸收
+        // 强制固化模式：如果该位置已有锁定内容，直接使用锁定值，跳过当前消息
+        if (CacheState.lockMode && CacheState.lockedUserInstructions.has(key)) {
+            continue; // 被锁定的消息完全剔除出对话历史，并忽略
         }
 
-        const wasInLastBottom = CacheState.lastBottomBlocks.some(b => normalizeText(b.content) === normalizedContent);
-        if (isBottom && long && wasInLastBottom) {
-            // 新发现浮动指令
-            CacheState.knownFloatsNormalized.add(normalizedContent);
-            const entry = { role: 'user', content: msg.content }; // 保留原始内容用于发送
-            CacheState.absorbedMessages.push(entry);
-            CacheState.absorbedNormalized.push(normalizedContent);
-            newlyAbsorbed.push(entry);
-            Logger.warn(`吸收新浮动指令 (${msg.role}, ${msg.content.length}字)，归一化指纹: ${normalizedHash(msg.content)}`, LOG_LEVELS.DETAIL);
+        // 已完全匹配的吸收池
+        if (CacheState.knownFloatsContent.has(msg.content)) {
             continue;
         }
+
+        const wasInLastBottom = CacheState.lastBottomBlocks.some(b => b.content === msg.content);
+        if (isBottom && long && wasInLastBottom) {
+            // 吸收为固定指令
+            CacheState.knownFloatsContent.add(msg.content);
+            const entry = { role: 'user', content: msg.content };
+            CacheState.absorbedMessages.push(entry);
+            newlyAbsorbed.push(entry);
+            // 如果开启了强制固化，记录该位置的锁定内容
+            if (CacheState.lockMode) {
+                CacheState.lockedUserInstructions.set(key, msg.content);
+            }
+            Logger.warn(`吸收新浮动指令 (${msg.role}, ${msg.content.length}字)，已作为固定 user 消息后置`);
+            continue;
+        }
+
         cleaned.push(msg);
     }
 
@@ -188,26 +177,25 @@ function detectAndAbsorbFloats(chatHistory) {
 }
 
 // ==========================================
-// 模块 7：前缀快照与差异报告（归一化）
+// 前缀快照与差异报告
 // ==========================================
-function capturePrefixSnapshotNormalized() {
+function capturePrefixSnapshot(systemText, absorbedList) {
     return {
-        systemHash: normalizedHash(CacheState.staticCore),
-        systemLen: CacheState.staticCore ? CacheState.staticCore.length : 0,
-        systemTokens: estimateTokens(CacheState.staticCore),
-        absorbedHashes: CacheState.absorbedNormalized.map(s => simpleHash(s)),
-        absorbedLengths: CacheState.absorbedMessages.map(m => m.content.length),
-        absorbedTokens: CacheState.absorbedMessages.map(m => estimateTokens(m.content)),
-        totalPrefixTokens: estimateTokens(CacheState.staticCore) + CacheState.absorbedMessages.reduce((sum, m) => sum + estimateTokens(m.content), 0)
+        systemHash: simpleHash(systemText),
+        systemLen: systemText.length,
+        systemTokens: estimateTokens(systemText),
+        absorbedHashes: absorbedList.map(m => simpleHash(m.content)),
+        absorbedLengths: absorbedList.map(m => m.content.length),
+        absorbedTokens: absorbedList.map(m => estimateTokens(m.content)),
+        totalPrefixTokens: estimateTokens(systemText) + absorbedList.reduce((sum, m) => sum + estimateTokens(m.content), 0)
     };
 }
 
-function comparePrefixSnapshotsNormalized(prev, curr) {
+function comparePrefixSnapshots(prev, curr) {
     if (!prev) return '首次建立前缀，无历史对比';
     const diffs = [];
     if (prev.systemHash !== curr.systemHash) {
-        diffs.push(`❌ System 核心变化 (归一化后) | 旧hash:${prev.systemHash} → 新hash:${curr.systemHash}`);
-        Logger.log(`System 原始文本变化细节: 旧长度${prev.systemLen}, 新长度${curr.systemLen}`, LOG_LEVELS.DEBUG);
+        diffs.push(`❌ System 核心变化 | 旧hash:${prev.systemHash} (${prev.systemLen}字) → 新hash:${curr.systemHash} (${curr.systemLen}字)`);
     } else {
         diffs.push(`✅ System 核心无变化 (${curr.systemLen}字)`);
     }
@@ -218,7 +206,7 @@ function comparePrefixSnapshotsNormalized(prev, curr) {
         const prevHash = prev.absorbedHashes[i] || '(无)';
         const currHash = curr.absorbedHashes[i] || '(无)';
         if (prevHash !== currHash) {
-            diffs.push(`🔸 吸收指令 #${i+1} 变化 (归一化) | 旧hash:${prevHash} (${prev.absorbedLengths[i] || 0}字) → 新hash:${currHash} (${curr.absorbedLengths[i] || 0}字)`);
+            diffs.push(`🔸 吸收指令 #${i+1} 变化 | 旧hash:${prevHash} (${prev.absorbedLengths[i] || 0}字) → 新hash:${currHash} (${curr.absorbedLengths[i] || 0}字)`);
         } else {
             diffs.push(`✅ 吸收指令 #${i+1} 无变化 (${curr.absorbedLengths[i]}字)`);
         }
@@ -227,15 +215,15 @@ function comparePrefixSnapshotsNormalized(prev, curr) {
 }
 
 // ==========================================
-// 模块 8：核心拦截重组（归一化版 + 主动吸收固定 user 指令）
+// 核心拦截重组（完整版，含固化逻辑和详细日志）
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
 
     try {
         CacheState.stats.total++;
-        Logger.log(`==============================`, LOG_LEVELS.BASIC);
-        Logger.log(`拦截器 #${CacheState.stats.total}`, LOG_LEVELS.BASIC);
+        Logger.log(`==============================`, Logger.LOG_LEVELS.NORMAL);
+        Logger.log(`拦截器 #${CacheState.stats.total}`, Logger.LOG_LEVELS.NORMAL);
 
         if (!data?.chat?.length) return;
         const original = [...data.chat];
@@ -245,14 +233,26 @@ function interceptAndRestructurePrompt(data) {
         // ---- 初始化或重置静态核心 ----
         if (!CacheState.staticCore) {
             const { cleaned: cleanedChat, newlyAbsorbed } = detectAndAbsorbFloats(chatHistory);
-            // 构建纯净静态核心（去除可能已吸收内容的原始文本）
             const staticCoreLines = currentSystemRaw.split('\n').filter(line => {
-                const t = normalizeText(line);
-                return t && !CacheState.knownFloatsNormalized.has(t);
+                const t = line.trim();
+                return t && !CacheState.knownFloatsContent.has(t);
             });
             CacheState.staticCore = staticCoreLines.join('\n') || currentSystemRaw;
-            CacheState.staticCoreNormalized = normalizeText(CacheState.staticCore);
-            Logger.log(`首次冻结静态核心 (${estimateTokens(CacheState.staticCore)} tokens)`, LOG_LEVELS.DETAIL);
+            Logger.log(`首次冻结静态核心 (${estimateTokens(CacheState.staticCore)} tokens)`, Logger.LOG_LEVELS.NORMAL);
+
+            // 如果开启了强制固化，将当前 cleanedChat 中的 user/assistant 的位置记录下来
+            if (CacheState.lockMode) {
+                // 遍历 cleanedChat 的索引，记录 user 和 assistant 的位置
+                for (let i = 0; i < cleanedChat.length; i++) {
+                    const msg = cleanedChat[i];
+                    const key = msg.role + '|' + i;
+                    // 只锁定 user 或 assistant 消息（避免 system）
+                    if (msg.role === 'user' || msg.role === 'assistant') {
+                        CacheState.lockedUserInstructions.set(key, msg.content);
+                    }
+                }
+                Logger.log(`强制固化模式已记录 ${CacheState.lockedUserInstructions.size} 个位置的消息`, Logger.LOG_LEVELS.DEBUG);
+            }
 
             const initMsgs = [];
             initMsgs.push({ role: 'system', content: CacheState.staticCore });
@@ -261,50 +261,43 @@ function interceptAndRestructurePrompt(data) {
             initMsgs.push(...prefills);
             data.chat.splice(0, data.chat.length, ...initMsgs);
 
-            CacheState.lastPrefixSnapshotNormalized = capturePrefixSnapshotNormalized();
-            CacheState.stats.prefixTokens = CacheState.lastPrefixSnapshotNormalized.totalPrefixTokens;
+            CacheState.lastPrefixSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedMessages);
+            CacheState.stats.prefixTokens = CacheState.lastPrefixSnapshot.totalPrefixTokens;
             CacheState.stats.hits++;
             CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
-            Logger.log(`初始化完成，消息数: ${initMsgs.length}`, LOG_LEVELS.BASIC);
+            Logger.log(`初始化完成，消息数: ${initMsgs.length}`, Logger.LOG_LEVELS.NORMAL);
             updateStatsUI();
             return;
         }
 
         // ---- 相似度巨变检测 ----
-        const sim = similarity(CacheState.staticCoreNormalized, currentSystemRaw);
+        const sim = similarity(CacheState.staticCore, currentSystemRaw);
         if (sim < 0.3 && currentSystemRaw.length > 50) {
-            Logger.warn(`系统核心剧变 (相似度 ${(sim*100).toFixed(1)}%)，重置所有缓存状态`, LOG_LEVELS.BASIC);
+            Logger.warn(`系统核心剧变 (相似度 ${(sim*100).toFixed(1)}%)，重置所有缓存状态`);
             CacheState.staticCore = null;
-            CacheState.staticCoreNormalized = null;
             CacheState.absorbedMessages = [];
-            CacheState.absorbedNormalized = [];
-            CacheState.knownFloatsNormalized.clear();
+            CacheState.knownFloatsContent.clear();
             CacheState.lastBottomBlocks = [];
-            CacheState.lastPrefixSnapshotNormalized = null;
+            CacheState.lastPrefixSnapshot = null;
+            CacheState.lockedUserInstructions.clear();
             interceptAndRestructurePrompt(data);
             return;
         }
 
-        // ---- 浮动指令吸收 ----
+        // ---- 吸收新浮动指令（含固化逻辑） ----
         const { cleaned: cleanedChat, newlyAbsorbed } = detectAndAbsorbFloats(chatHistory);
 
-        // ---- 主动吸收：若 chatHistory 中存在以特定模式开头的 user 消息且连续出现，直接吸收
-        // 这里简单处理：检测所有不含明显对话内容（长度 > 50 且无称呼、情感词）的 user 消息，如果是连续两轮出现，提前吸收
-        // 考虑到安全，仅针对已知特征（如包含“输出由两个分区组成”）进行主动吸收
-        const proactivePattern = /输出由两个分区组成|指令遵循和召回能力测试|根据当前和后续正文展开/;
-        for (let i = 0; i < chatHistory.length; i++) {
-            const msg = chatHistory[i];
-            if (msg.role === 'user' && proactivePattern.test(msg.content)) {
-                const norm = normalizeText(msg.content);
-                if (!CacheState.knownFloatsNormalized.has(norm)) {
-                    CacheState.knownFloatsNormalized.add(norm);
-                    const entry = { role: 'user', content: msg.content };
-                    CacheState.absorbedMessages.push(entry);
-                    CacheState.absorbedNormalized.push(norm);
-                    Logger.warn(`主动吸收固定 user 指令 (匹配模式)，长度 ${msg.content.length} 字`, LOG_LEVELS.DETAIL);
-                    // 从 chatHistory 中移除
-                    chatHistory.splice(i, 1);
-                    i--; // 调整索引
+        // 如果开启了强制固化，用锁定值替换 cleanedChat 中对应位置的消息
+        if (CacheState.lockMode) {
+            for (let i = 0; i < cleanedChat.length; i++) {
+                const key = cleanedChat[i].role + '|' + i;
+                if (CacheState.lockedUserInstructions.has(key)) {
+                    const originalContent = cleanedChat[i].content;
+                    const lockedContent = CacheState.lockedUserInstructions.get(key);
+                    cleanedChat[i].content = lockedContent;
+                    if (originalContent !== lockedContent) {
+                        Logger.log(`固化替换: ${key} 内容已还原为首次锁定版本`, Logger.LOG_LEVELS.DEBUG);
+                    }
                 }
             }
         }
@@ -313,32 +306,33 @@ function interceptAndRestructurePrompt(data) {
         const finalMessages = [];
         finalMessages.push({ role: 'system', content: CacheState.staticCore });
         finalMessages.push(...CacheState.absorbedMessages);
-        finalMessages.push(...chatHistory); // 使用可能被主动吸收修改后的 chatHistory
+        finalMessages.push(...cleanedChat);
         finalMessages.push(...prefills);
 
-        const currentSnapshot = capturePrefixSnapshotNormalized();
-        const diffReport = comparePrefixSnapshotsNormalized(CacheState.lastPrefixSnapshotNormalized, currentSnapshot);
-        Logger.log(`前缀差异对比:\n${diffReport}`, LOG_LEVELS.DETAIL);
+        const currentSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedMessages);
+        const diffReport = comparePrefixSnapshots(CacheState.lastPrefixSnapshot, currentSnapshot);
+        Logger.log(`前缀差异对比:\n${diffReport}`, Logger.LOG_LEVELS.NORMAL);
 
-        const cacheHit = (CacheState.lastPrefixSnapshotNormalized &&
-                          CacheState.lastPrefixSnapshotNormalized.systemHash === currentSnapshot.systemHash &&
-                          CacheState.lastPrefixSnapshotNormalized.absorbedHashes.join(',') === currentSnapshot.absorbedHashes.join(','));
+        const cacheHit = (CacheState.lastPrefixSnapshot &&
+            CacheState.lastPrefixSnapshot.systemHash === currentSnapshot.systemHash &&
+            CacheState.lastPrefixSnapshot.absorbedHashes.join(',') === currentSnapshot.absorbedHashes.join(','));
 
         if (cacheHit) {
             CacheState.stats.hits++;
-            const newTokens = estimateTokens(finalMessages.map(m => m.content).join('')) - currentSnapshot.totalPrefixTokens;
+            const totalTokens = finalMessages.reduce((s, m) => s + estimateTokens(m.content), 0);
+            const newTokens = totalTokens - currentSnapshot.totalPrefixTokens;
             CacheState.stats.savedTokens += currentSnapshot.totalPrefixTokens;
-            Logger.log(`✅ 缓存完全命中！静态前缀未变，仅新对话 ${newTokens} tokens 需计算`, LOG_LEVELS.BASIC);
+            Logger.log(`✅ 缓存命中！静态前缀完全未变，仅尾部新增约 ${newTokens} tokens 需计算`, Logger.LOG_LEVELS.NORMAL);
         } else {
-            Logger.warn('⚠️ 前缀发生变化，部分缓存未命中（下一轮将重新稳定）', LOG_LEVELS.BASIC);
+            Logger.warn('⚠️ 前缀发生变化，部分缓存未命中（新前缀在下一轮将完全命中）', Logger.LOG_LEVELS.NORMAL);
         }
 
-        CacheState.lastPrefixSnapshotNormalized = currentSnapshot;
+        CacheState.lastPrefixSnapshot = currentSnapshot;
         CacheState.stats.prefixTokens = currentSnapshot.totalPrefixTokens;
 
         data.chat.splice(0, data.chat.length, ...finalMessages);
-        Logger.log(`重组完成：${original.length} 条 → ${finalMessages.length} 条`, LOG_LEVELS.BASIC);
-        Logger.log(`消息结构: system(${CacheState.staticCore.length}字) + ${CacheState.absorbedMessages.length}条固定指令 + ${chatHistory.length}条对话 + ${prefills.length}条预填充`, LOG_LEVELS.DEBUG);
+        Logger.log(`重组完成：${original.length} 条 → ${finalMessages.length} 条`, Logger.LOG_LEVELS.NORMAL);
+        Logger.log(`消息结构: system(${CacheState.staticCore.length}字) + ${CacheState.absorbedMessages.length}条固定指令 + ${cleanedChat.length}条对话 + ${prefills.length}条预填充`, Logger.LOG_LEVELS.DEBUG);
 
         updateStatsUI();
 
@@ -348,7 +342,7 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 模块 9：统计 UI
+// UI 初始化（含日志等级选择器）
 // ==========================================
 function updateStatsUI() {
     const el = document.getElementById('ds-cache-stats');
@@ -362,72 +356,90 @@ function updateStatsUI() {
     `;
 }
 
-// ==========================================
-// 模块 10：UI 界面（增加日志等级下拉）
-// ==========================================
 async function setupUI() {
     try {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 Cache Optimizer v3.2</b>
+                <b>🧠 DS V4 Cache Optimizer v4</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">冻结核心 + 吸收指令 + 归一化比对，日志等级可选</p>
+                <p style="font-size:0.9em;opacity:0.8;">冻结前缀 + 固化可选，日志等级可调。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
-                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
-                    <label class="checkbox_label" style="display:flex; align-items:center; gap:5px;">
-                        <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
-                    </label>
-                    <select id="ds-log-level" style="height:24px;">
-                        <option value="0">关闭日志</option>
-                        <option value="1">简要</option>
-                        <option value="2" selected>详细</option>
-                        <option value="3">调试</option>
+                <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
+                    <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
+                </label>
+                <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;margin-top:5px;">
+                    <input type="checkbox" id="ds-cache-lock" unchecked> 强制固化浮动指令（锁定首次版本）
+                </label>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                    <span style="font-size:0.9em;">日志等级:</span>
+                    <select id="ds-cache-loglevel">
+                        <option value="0">简洁</option>
+                        <option value="1">正常</option>
+                        <option value="2" selected>详细调试</option>
                     </select>
                 </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin-bottom:10px;">🔄 强制重置静态核心</button>
+                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置静态核心</button>
                 <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:220px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
-        Logger._uiTextarea = document.getElementById('ds-cache-log');
 
+        const logTextarea = document.getElementById('ds-cache-log');
+        Logger.setUI(logTextarea);
+
+        // 日志等级
+        const logLevelSelect = document.getElementById('ds-cache-loglevel');
+        logLevelSelect.addEventListener('change', function() {
+            Logger.setLevel(parseInt(this.value));
+            Logger.log(`日志等级切换为: ${this.options[this.selectedIndex].text}`, Logger.LOG_LEVELS.NORMAL);
+        });
+
+        // 启用开关
         $('#ds-cache-enable').on('change', function() {
             CacheState.enabled = $(this).is(':checked');
-            Logger.log(`状态: ${CacheState.enabled ? '启用' : '停用'}`);
+            Logger.log(`插件状态: ${CacheState.enabled ? '启用' : '停用'}`, Logger.LOG_LEVELS.NORMAL);
         });
 
-        $('#ds-log-level').on('change', function() {
-            const level = parseInt($(this).val());
-            Logger.setLevel(level);
+        // 强制固化开关
+        $('#ds-cache-lock').on('change', function() {
+            CacheState.lockMode = $(this).is(':checked');
+            if (CacheState.lockMode) {
+                // 如果当前已有 staticCore，则按当前状态锁定位置；若尚未初始化，静默开启
+                Logger.warn('强制固化模式已开启，后续浮动指令将使用首次锁定版本（需重置后生效）', Logger.LOG_LEVELS.NORMAL);
+            } else {
+                CacheState.lockedUserInstructions.clear();
+                Logger.log('强制固化模式已关闭，位置锁定池已清空', Logger.LOG_LEVELS.NORMAL);
+            }
         });
 
+        // 重置按钮
         $('#ds-cache-reset').on('click', () => {
             CacheState.staticCore = null;
-            CacheState.staticCoreNormalized = null;
             CacheState.absorbedMessages = [];
-            CacheState.absorbedNormalized = [];
-            CacheState.knownFloatsNormalized.clear();
+            CacheState.knownFloatsContent.clear();
             CacheState.lastBottomBlocks = [];
-            CacheState.lastPrefixSnapshotNormalized = null;
+            CacheState.lastPrefixSnapshot = null;
+            CacheState.lockedUserInstructions.clear();
             CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
             updateStatsUI();
-            Logger.warn('已完全重置');
+            Logger.warn('已完全重置，下一轮将重新冻结核心');
         });
 
         updateStatsUI();
+        Logger.log('UI 初始化完成', Logger.LOG_LEVELS.DEBUG);
     } catch (e) {
-        Logger.error('UI初始化失败', e);
+        Logger.error('UI 初始化失败', e);
     }
 }
 
 // ==========================================
-// 模块 11：启动
+// 启动
 // ==========================================
 jQuery(async () => {
-    console.log('DS V4 Optimizer v3.2 loading...');
+    console.log('DS V4 Optimizer v4 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
@@ -435,5 +447,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v3.2 就绪 ══════', LOG_LEVELS.BASIC);
+    Logger.log('══════ v4.0 就绪，可调日志等级与固化模式 ══════');
 });
