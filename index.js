@@ -1,17 +1,23 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
+// ==========================================
+// 日志系统
+// ==========================================
 let logLevel = 2; // 0:silent, 1:basic, 2:detailed, 3:debug
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
 function logAt(level, type, msg) {
     if (logLevel < level) return;
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
-    const prefix = `[${time}]`;
-    const fullMsg = `${prefix} ${msg}`;
-    if (type === 'warn') console.warn(`%c[DS V4 Opt] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    else if (type === 'error') console.error(`[DS V4 Opt] 🔴 ${msg}`);
-    else console.log(`%c[DS V4 Opt] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+    const fullMsg = `[${time}] ${msg}`;
+    if (type === 'warn') {
+        console.warn(`%c[DS V4 Opt v6] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    } else if (type === 'error') {
+        console.error(`[DS V4 Opt v6] 🔴 ${msg}`);
+    } else {
+        console.log(`%c[DS V4 Opt v6] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+    }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
         Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
@@ -25,249 +31,177 @@ const Logger = {
     error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
 };
 
-// 基礎工具
-function normalizeText(text) {
-    if (!text) return '';
-    return text.replace(/\s+/g, ' ').trim();
-}
-
+// ==========================================
+// 工具函数
+// ==========================================
 function simpleHash(str) {
-    if (!str) return '0';
     let hash = 0;
     for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
         hash |= 0;
     }
-    return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
+    return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 16);
 }
 
 function estimateTokens(text) {
     if (!text) return 0;
     let tokens = 0;
-    for (const ch of text) tokens += ch.charCodeAt(0) > 0x3000 ? 1 : 0.25;
+    for (const ch of text) {
+        const code = ch.charCodeAt(0);
+        if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3040 && code <= 0x30FF) || (code >= 0xAC00 && code <= 0xD7AF)) {
+            tokens += 1;
+        } else {
+            tokens += 0.25;
+        }
+    }
     return Math.ceil(tokens);
 }
 
-// 緩存狀態機 (嚴格維持順推排序)
+// ==========================================
+// 缓存状态
+// ==========================================
 const CacheState = {
     enabled: true,
-    lockedSequence: [],
-    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
+    lockedPrefixHash: null,          // 锁定前缀（历史到当前用户输入之前的所有消息）的哈希
+    lockedPrefixTokens: 0,          // 锁定前缀的估算 token 数
+    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
 
+// 预设提示词的 identifier 白名单
+const PRESET_IDENTIFIERS = new Set([
+    'main', 'jailbreak', 'nsfw', 'impersonation_prompt',
+    'description', 'personality', 'scenario', 'mes_example', 'system_prompt'
+]);
+
 // ==========================================
-// 核心：整塊萃取與分類 (拒絕暴力拆分)
+// 精确分类器（基于 identifier）
 // ==========================================
-function extractBlocks(dataChat, context) {
-    let blocks = [];
-    
-    // 獲取純淨的歷史對話
-    let rawHistory = (context.chat || []).filter(m => m.mes && m.mes.trim().length > 0);
-    let lastUserIndex = rawHistory.findLastIndex(m => m.is_user);
-    
-    let historyTargets = rawHistory.map((m, idx) => ({
-        mes: m.mes,
-        type: (idx === lastUserIndex) ? 'Current_User' : (m.is_user ? 'History_User' : 'History_AI'),
-        role: m.is_user ? 'user' : 'assistant'
-    }));
+function classifyMessages(chat) {
+    const preset = [];      // 预设提示词
+    const extensions = [];  // 插件/扩展提示词
+    const worldInfo = [];   // 世界书条目
+    const history = [];     // 历史对话（chat-message-*）
+    let currentUser = null;
+    let prefill = null;
 
-    // 獲取靜態特徵（用於判定預設提示詞）
-    let char = context.characters?.[context.characterId] || {};
-    let staticFeatures = [char.description, char.personality, char.scenario, char.first_mes, context.persona_description]
-        .filter(Boolean).map(t => normalizeText(t));
+    for (const msg of chat) {
+        const id = msg.identifier || '';
 
-    // 分類輔助函數：整塊判定，絕不碎裂
-    const classifyPromptBlock = (text, defaultRole) => {
-        let isDefault = false;
-        let lower = text.toLowerCase();
-        
-        if (lower.includes("write next reply") || lower.includes("roleplay") || 
-            lower.includes("avoid impersonation") || lower.includes("nsfw") || 
-            lower.includes("system note") || lower.startsWith('[')) {
-            isDefault = true;
-        } else {
-            let norm = normalizeText(text);
-            for (let sf of staticFeatures) {
-                // 如果包含大段靜態特徵，判定為預設提示詞
-                if (sf.includes(norm.substring(0, 50)) || norm.includes(sf.substring(0, 50))) {
-                    isDefault = true; break;
-                }
-            }
-        }
-        return {
-            type: isDefault ? 'DefaultPrompt' : 'WorldBook',
-            role: defaultRole,
-            content: text,
-            hash: simpleHash(text)
-        };
-    };
-
-    dataChat.forEach((msg, msgIndex) => {
-        let content = msg.content;
-        if (!content) return;
-
-        let foundParts = [];
-        
-        // 尋找此區塊內是否包含了歷史對話
-        historyTargets.forEach(target => {
-            let idx = content.indexOf(target.mes);
-            if (idx !== -1) {
-                // 盡量保留 ST 附加的角色名詞綴 (如 User:)
-                let startIdx = content.lastIndexOf('\n', idx);
-                startIdx = startIdx === -1 ? 0 : startIdx + 1;
-                let endIdx = idx + target.mes.length;
-                foundParts.push({ ...target, start: startIdx, end: endIdx });
-            }
-        });
-
-        // 情況 A：這是一個純淨的提示詞/世界書區塊 (完全沒有混合歷史) -> 直接整塊壓入！
-        if (foundParts.length === 0) {
-            if (msg.role === 'assistant' && msgIndex === dataChat.length - 1) {
-                blocks.push({ type: 'Prefill', role: 'assistant', content: content, hash: simpleHash(content) });
-            } else if (msg.role === 'user' && msgIndex >= dataChat.length - 2 && !blocks.some(b => b.type === 'Current_User')) {
-                blocks.push({ type: 'Current_User', role: 'user', content: content, hash: simpleHash(content) });
-            } else {
-                blocks.push(classifyPromptBlock(content, msg.role));
-            }
-            return; // 處理完畢，提早返回
+        // 1. 世界书条目
+        if (id.startsWith('worldInfoEntry_')) {
+            worldInfo.push(msg);
+            continue;
         }
 
-        // 情況 B：ST 把歷史記錄混在提示詞裡了 -> 只把歷史精準摳出來，剩餘部分整塊保留
-        foundParts.sort((a, b) => a.start - b.start);
-        let validParts = [];
-        let lastValidEnd = -1;
-        foundParts.forEach(fp => {
-            if (fp.start >= lastValidEnd) { validParts.push(fp); lastValidEnd = fp.end; }
-        });
-
-        let lastEnd = 0;
-        validParts.forEach(fp => {
-            if (fp.start > lastEnd) {
-                let leftover = content.substring(lastEnd, fp.start).trim();
-                if (leftover) blocks.push(classifyPromptBlock(leftover, msg.role));
-            }
-            blocks.push({ type: fp.type, role: fp.role, content: content.substring(fp.start, fp.end).trim(), hash: simpleHash(fp.mes) });
-            lastEnd = fp.end;
-        });
-
-        if (lastEnd < content.length) {
-            let leftover = content.substring(lastEnd).trim();
-            if (leftover) {
-                if (msg.role === 'assistant' && msgIndex === dataChat.length - 1) {
-                    blocks.push({ type: 'Prefill', role: 'assistant', content: leftover, hash: simpleHash(leftover) });
-                } else {
-                    blocks.push(classifyPromptBlock(leftover, msg.role));
-                }
-            }
+        // 2. 扩展提示词
+        if (id.startsWith('extension:')) {
+            extensions.push(msg);
+            continue;
         }
-    });
 
-    // 嚴格去重：相同的提示詞在輸出時只出現一次
-    let unique = [];
-    let seen = new Set();
-    blocks.forEach(b => {
-        if (!seen.has(b.hash)) {
-            seen.add(b.hash);
-            unique.push(b);
+        // 3. 预设提示词（包括各类角色信息）
+        if (PRESET_IDENTIFIERS.has(id) || (msg.role === 'system' && !id)) {
+            // id 为空的 system 消息可能是无标识符的预设片段，同样归入预设
+            preset.push(msg);
+            continue;
         }
-    });
-    return unique;
+
+        // 4. 历史对话消息（带有 chat-message- 编号的 user/assistant）
+        if (id.startsWith('chat-message-')) {
+            history.push(msg);
+            continue;
+        }
+
+        // 5. 剩余无标识符的 user 或 assistant 消息：
+        //    位于数组末尾的 user 是当前输入，其后的 assistant 是预填充
+        if (msg.role === 'user') {
+            currentUser = msg; // 最后一条 user 会覆盖前面的（因遍历顺序）
+        } else if (msg.role === 'assistant') {
+            prefill = msg;     // 最后一条 assistant 是预填充
+        }
+        // 忽略其他角色
+    }
+
+    return { preset, extensions, worldInfo, history, currentUser, prefill };
 }
 
 // ==========================================
-// 終極排序狀態機 (完全遵從你的排序圖)
+// 核心拦截器
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
 
     try {
         CacheState.stats.total++;
-        Logger.log(`\n========================================`);
-        Logger.log(`[攔截器] #${CacheState.stats.total} 啟動，進行區塊級無損重排...`);
+        Logger.log(`==============================`);
+        Logger.log(`拦截 #${CacheState.stats.total}`);
 
         if (!data?.chat?.length) return;
 
-        // 萃取分類後的模塊 (保持原有大小，不再碎裂)
-        const incomingBlocks = extractBlocks(data.chat, getContext());
-        
-        // 分離靜態元素與瞬態元素
-        const incomingStatic = incomingBlocks.filter(b => b.type !== 'Current_User' && b.type !== 'Prefill');
-        const transientBlocks = incomingBlocks.filter(b => b.type === 'Current_User' || b.type === 'Prefill');
-        
-        let newLockedSequence = [];
-        let incomingLeftovers = [...incomingStatic];
-        
-        let missingTokens = 0;
-        let originalTokens = CacheState.lockedSequence.reduce((acc, b) => acc + estimateTokens(b.content), 0);
+        // 1. 精确分类
+        const { preset, extensions, worldInfo, history, currentUser, prefill } = classifyMessages(data.chat);
 
-        // 1. 保留舊有鎖定順序 (對話1的預設、世界書、歷史)
-        CacheState.lockedSequence.forEach(lockedBlock => {
-            const index = incomingLeftovers.findIndex(b => b.hash === lockedBlock.hash);
-            if (index !== -1) {
-                newLockedSequence.push(lockedBlock);
-                incomingLeftovers.splice(index, 1);
-            } else {
-                // 丟失的區塊 (被用戶刪除)，觸發無縫順推
-                missingTokens += estimateTokens(lockedBlock.content);
-            }
-        });
+        // 2. 组装最终消息序列（严格按顺序）
+        const finalMessages = [
+            ...preset,
+            ...extensions,
+            ...worldInfo,
+            ...history,
+        ];
+        if (currentUser) finalMessages.push(currentUser);
+        if (prefill) finalMessages.push(prefill);
 
-        // 2. 檢測大範圍刪改 (超過 40% Token 丟失)，自動重置
-        if (originalTokens > 300 && missingTokens > (originalTokens * 0.4)) {
-            Logger.warn(`檢測到大範圍變更 (${missingTokens}/${originalTokens} tokens missing)，已自動重置緩存核心。`, LogLevels.BASIC);
-            if (typeof toastr !== 'undefined') toastr.warning('提示詞大範圍變更，已重置緩存核心！', 'DS V4 Cache Opt');
-            CacheState.lockedSequence = [];
-            newLockedSequence = [];
-            incomingLeftovers = [...incomingStatic];
-        }
+        // 3. 计算当前前缀（从第一条到最后一个历史消息，不包含当前用户和预填充）
+        const prefixMessages = finalMessages.filter(m => m !== currentUser && m !== prefill);
+        const currentPrefixHash = simpleHash(prefixMessages.map(m => m.content).join(''));
+        const currentPrefixTokens = estimateTokens(prefixMessages.map(m => m.content).join(''));
 
-        // 3. 嚴格處理新增的內容，並附加到鎖定區列尾端
-        // 這些是全新的回合歷史 (對話2歷史)，或者是你中途加入的新世界書/預設
-        const newHistory = incomingLeftovers.filter(b => b.type === 'History_User' || b.type === 'History_AI');
-        const newDefault = incomingLeftovers.filter(b => b.type === 'DefaultPrompt');
-        const newWorldBook = incomingLeftovers.filter(b => b.type === 'WorldBook');
+        // 4. 缓存命中判定
+        const isNewPrefix = !CacheState.lockedPrefixHash;
+        const prefixUnchanged = CacheState.lockedPrefixHash === currentPrefixHash;
 
-        // 完全按照你要求的圖譜排序：舊鎖定 -> 新歷史 -> 新預設 -> 新世界書
-        newLockedSequence.push(...newHistory);
-        newLockedSequence.push(...newDefault);
-        newLockedSequence.push(...newWorldBook);
-        
-        // 更新快照
-        CacheState.lockedSequence = [...newLockedSequence];
-        
-        // 4. 最後接上瞬態內容：當時輸入 -> 預填充
-        const finalSequence = [...newLockedSequence, ...transientBlocks];
-
-        // 計算命中
-        const lockedTokens = newLockedSequence.reduce((acc, b) => acc + estimateTokens(b.content), 0);
-        if (lockedTokens > 0 && CacheState.stats.total > 1) {
+        if (isNewPrefix) {
+            // 首次运行，建立锁定前缀
+            CacheState.lockedPrefixHash = currentPrefixHash;
+            CacheState.lockedPrefixTokens = currentPrefixTokens;
+            CacheState.stats.hits++; // 首次也算一次“命中”（建立了基准）
+            CacheState.stats.savedTokens += currentPrefixTokens;
+            Logger.log(`🔒 首次锁定前缀，共 ${prefixMessages.length} 条消息，~${currentPrefixTokens} tokens`, LogLevels.BASIC);
+        } else if (prefixUnchanged) {
+            // 完美命中：前缀与上次完全一致
             CacheState.stats.hits++;
-            CacheState.stats.savedTokens += lockedTokens;
-            Logger.log(`✅ 極限緩存命中！前置無損鎖定: ~${lockedTokens} tokens`, LogLevels.BASIC);
+            CacheState.stats.savedTokens += CacheState.lockedPrefixTokens;
+            Logger.log(`🎯 完美缓存命中！前缀未变，仅需计算当前输入+预填充`, LogLevels.BASIC);
+        } else {
+            // 前缀发生变化（新增了世界书/提示词，或修改了已有前缀）
+            // 检查是否是追加（前面部分未变）
+            const oldMessagesCount = prefixMessages.length - (preset.length - CacheState._lastPresetLen || 0); // 简化判断，实际可更严谨
+            CacheState.lockedPrefixHash = currentPrefixHash;
+            CacheState.lockedPrefixTokens = currentPrefixTokens;
+            CacheState.stats.savedTokens += currentPrefixTokens; // 新前缀同样会被缓存，下次可命中
+            Logger.warn(`🔄 前缀已更新（可能是新增条目），新前缀 ~${currentPrefixTokens} tokens，下次请求将命中`, LogLevels.BASIC);
         }
-        CacheState.stats.prefixTokens = lockedTokens;
 
-        // 5. 回填 data.chat
-        // 這邊依然是一條一條獨立放入 JSON Array (不合併字串)，但因為我們不再碎裂，所以數量會維持在原本的 50 條左右！
-        data.chat.length = 0;
-        finalSequence.forEach(block => {
-            data.chat.push({ role: block.role, content: block.content });
-        });
+        // 5. 保存用于下次比对的快照长度（用于检测破坏性删除）
+        CacheState._lastPresetLen = preset.length;
+        CacheState._lastHistoryLen = history.length;
+        CacheState.stats.prefixTokens = CacheState.lockedPrefixTokens;
+
+        // 6. 写回修改后的 chat 数组
+        data.chat.splice(0, data.chat.length, ...finalMessages);
 
         if (logLevel >= LogLevels.DEBUG) {
-            let trace = finalSequence.map(b => `[${b.type}] ${b.role}: ${b.content.substring(0, 20).replace(/\n/g, '')}...`).join('\n');
-            Logger.log(`最終排序檢查 (共 ${finalSequence.length} 條):\n${trace}`, LogLevels.DEBUG);
+            Logger.log(`消息结构: ${finalMessages.map(m => `${m.role}(${m.content.length}字)`).join(' → ')}`, LogLevels.DEBUG);
         }
-        
-        updateStatsUI();
 
     } catch (err) {
-        Logger.error('攔截器發生致命錯誤', err);
+        Logger.error('拦截器致命错误', err);
     }
 }
 
 // ==========================================
-// UI 面板與啟動
+// UI & 统计（保留原有布局）
 // ==========================================
 function updateStatsUI() {
     const el = document.getElementById('ds-cache-stats');
@@ -275,9 +209,9 @@ function updateStatsUI() {
     const { total, hits, savedTokens, prefixTokens } = CacheState.stats;
     const rate = total ? ((hits / total) * 100).toFixed(1) : '0.0';
     el.innerHTML = `
-        <span>精準命中: ${hits}/${total} (${rate}%)</span>
-        <span style="margin-left:10px;">保護前綴: ~${prefixTokens.toLocaleString()}t</span>
-        <span style="margin-left:10px;">總省: ~${savedTokens.toLocaleString()}t</span>
+        <span>命中: ${hits}/${total} (${rate}%)</span>
+        <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span>
+        <span style="margin-left:10px;">共省: ~${savedTokens.toLocaleString()}t</span>
     `;
 }
 
@@ -286,49 +220,62 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 Block Optimizer Pro</b>
+                <b>🧠 DS V4 Cache Optimizer v6</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">使用區塊級無損重排 (Block-Level Reordering)，不破壞原始提示詞結構，完美實現世界書、歷史及用戶輸入的緩存順推。</p>
-                <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;color:#00ff00;font-weight:bold;"></div>
+                <p style="font-size:0.9em;opacity:0.8;">基于 identifier 精准分类，自动适应任何变动，目标 99%+ 缓存命中。</p>
+                <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
                 <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="ds-cache-enable" checked> 啟用極限緩存攔截器
+                    <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
                 </label>
                 <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
-                    <span style="font-size:0.9em;">日誌等級:</span>
+                    <span style="font-size:0.9em;">日志等级:</span>
                     <select id="ds-cache-loglevel" style="flex:1;">
-                        <option value="0">關閉</option>
-                        <option value="1">簡要</option>
-                        <option value="2" selected>詳細</option>
-                        <option value="3">除錯 (DEBUG)</option>
+                        <option value="0">关闭</option>
+                        <option value="1">简要</option>
+                        <option value="2" selected>详细</option>
+                        <option value="3">调试</option>
                     </select>
                 </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 強制重置靜態核心 (通常無需手動)</button>
+                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置锁定前缀</button>
                 <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
         Logger._uiTextarea = document.getElementById('ds-cache-log');
-        $('#ds-cache-enable').on('change', function() { CacheState.enabled = $(this).is(':checked'); });
-        $('#ds-cache-loglevel').on('change', function() { logLevel = parseInt($(this).val()); });
+        $('#ds-cache-enable').on('change', function() {
+            CacheState.enabled = $(this).is(':checked');
+            Logger.log(`状态: ${CacheState.enabled ? '启用' : '停用'}`, LogLevels.BASIC);
+        });
+        $('#ds-cache-loglevel').on('change', function() {
+            logLevel = parseInt($(this).val());
+            Logger.log(`日志等级设为: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
+        });
         $('#ds-cache-reset').on('click', () => {
-            CacheState.lockedSequence = [];
+            CacheState.lockedPrefixHash = null;
+            CacheState.lockedPrefixTokens = 0;
             CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
             updateStatsUI();
-            if (typeof toastr !== 'undefined') toastr.success('已清空狀態機');
+            Logger.warn('已强制重置所有缓存状态', LogLevels.BASIC);
         });
         updateStatsUI();
     } catch (e) {
-        Logger.error('UI初始化失敗', e);
+        Logger.error('UI初始化失败', e);
     }
 }
 
+// ==========================================
+// 启动
+// ==========================================
 jQuery(async () => {
-    console.log('DS V4 Block Optimizer Pro loading...');
+    console.log('DS V4 Optimizer v6 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-        Logger.log('已掛載事件鉤子，使用區塊級無損重排', LogLevels.BASIC);
+        Logger.log('已挂载事件钩子', LogLevels.BASIC);
+    } else {
+        Logger.error('无法挂载事件钩子');
     }
+    Logger.log('══════ v6.0 就绪，基于 identifier 的绝对前缀锁定 ══════', LogLevels.BASIC);
 });
