@@ -2,23 +2,23 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 模块 1：日志系统
+// 模块 1：日志系统（增强）
 // ==========================================
 const Logger = {
     _uiTextarea: null,
     log: (msg) => {
         const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        console.log(`%c[DS V4 Opt v3] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS V4 Opt v3.1] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
         Logger._append(`[${time}] ✅ ${msg}`);
     },
     warn: (msg) => {
         const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        console.warn(`%c[DS V4 Opt v3] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS V4 Opt v3.1] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
         Logger._append(`[${time}] 🌪️ ${msg}`);
     },
     error: (msg, err) => {
         const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        console.error(`[DS V4 Opt v3] 🔴 ${msg}`, err || '');
+        console.error(`[DS V4 Opt v3.1] 🔴 ${msg}`, err || '');
         Logger._append(`[${time}] 🔴 ${msg}`);
     },
     _append(text) {
@@ -30,21 +30,17 @@ const Logger = {
 };
 
 // ==========================================
-// 模块 2：缓存状态机（v3 核心）
+// 模块 2：简单 hash 函数（用于内容指纹）
 // ==========================================
-const CacheState = {
-    enabled: true,
-    // 绝对冻结的 system 核心（纯净文本）
-    staticCore: null,
-    // 已吸收的浮动指令，作为独立 user 消息永久后置
-    absorbedMessages: [],
-    // 已知浮动内容指纹（用于快速过滤）
-    knownFloatsContent: new Set(),
-    // 上一轮底部区块特征（用于跨回合浮动检测）
-    lastBottomBlocks: [],
-    // 统计
-    stats: { total: 0, hits: 0, savedTokens: 0 }
-};
+function simpleHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash |= 0; // Convert to 32bit integer
+    }
+    return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
+}
 
 // ==========================================
 // 模块 3：Token 估算（CJK 感知）
@@ -64,7 +60,21 @@ function estimateTokens(text) {
 }
 
 // ==========================================
-// 模块 4：消息分类
+// 模块 4：缓存状态机（v3.1 增加前缀快照）
+// ==========================================
+const CacheState = {
+    enabled: true,
+    staticCore: null,               // 绝对冻结的 system 核心文本
+    absorbedMessages: [],           // 已吸收的固定 user 消息列表
+    knownFloatsContent: new Set(),
+    lastBottomBlocks: [],
+    // 新增：上一轮前缀快照，用于差异对比
+    lastPrefixSnapshot: null,      // { systemHash, absorbedHashes: [], absorbedLengths: [] }
+    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
+};
+
+// ==========================================
+// 模块 5：消息分类与合并
 // ==========================================
 function classifyMessages(chat) {
     const systems = [], chatHistory = [], prefills = [];
@@ -106,7 +116,7 @@ function similarity(oldText, newText) {
 }
 
 // ==========================================
-// 模块 5：浮动指令检测与吸收（不破坏前缀）
+// 模块 6：浮动指令检测与吸收（不变）
 // ==========================================
 function detectAndAbsorbFloats(chatHistory) {
     if (!chatHistory.length) return { cleaned: chatHistory, newlyAbsorbed: [] };
@@ -120,12 +130,11 @@ function detectAndAbsorbFloats(chatHistory) {
         const long = msg.content && msg.content.length > 25;
 
         if (CacheState.knownFloatsContent.has(msg.content)) {
-            continue; // 已吸收，剥离
+            continue;
         }
 
         const wasInLastBottom = CacheState.lastBottomBlocks.some(b => b.content === msg.content);
         if (isBottom && long && wasInLastBottom) {
-            // 新发现的浮动指令
             CacheState.knownFloatsContent.add(msg.content);
             const entry = { role: 'user', content: msg.content };
             CacheState.absorbedMessages.push(entry);
@@ -141,7 +150,45 @@ function detectAndAbsorbFloats(chatHistory) {
 }
 
 // ==========================================
-// 模块 6：核心拦截重组（v3 完全重写）
+// 模块 7：前缀快照与差异报告
+// ==========================================
+function capturePrefixSnapshot(systemText, absorbedList) {
+    return {
+        systemHash: simpleHash(systemText),
+        systemLen: systemText.length,
+        systemTokens: estimateTokens(systemText),
+        absorbedHashes: absorbedList.map(m => simpleHash(m.content)),
+        absorbedLengths: absorbedList.map(m => m.content.length),
+        absorbedTokens: absorbedList.map(m => estimateTokens(m.content)),
+        totalPrefixTokens: estimateTokens(systemText) + absorbedList.reduce((sum, m) => sum + estimateTokens(m.content), 0)
+    };
+}
+
+function comparePrefixSnapshots(prev, curr) {
+    if (!prev) return '首次建立前缀，无历史对比';
+    const diffs = [];
+    if (prev.systemHash !== curr.systemHash) {
+        diffs.push(`❌ System 核心变化 | 旧hash:${prev.systemHash} (${prev.systemLen}字) → 新hash:${curr.systemHash} (${curr.systemLen}字)`);
+    } else {
+        diffs.push(`✅ System 核心无变化 (${curr.systemLen}字)`);
+    }
+    if (prev.absorbedHashes.length !== curr.absorbedHashes.length) {
+        diffs.push(`🔶 吸收指令数量变化: ${prev.absorbedHashes.length} → ${curr.absorbedHashes.length}`);
+    }
+    for (let i = 0; i < Math.max(prev.absorbedHashes.length, curr.absorbedHashes.length); i++) {
+        const prevHash = prev.absorbedHashes[i] || '(无)';
+        const currHash = curr.absorbedHashes[i] || '(无)';
+        if (prevHash !== currHash) {
+            diffs.push(`🔸 吸收指令 #${i+1} 变化 | 旧hash:${prevHash} (${prev.absorbedLengths[i] || 0}字) → 新hash:${currHash} (${curr.absorbedLengths[i] || 0}字)`);
+        } else {
+            diffs.push(`✅ 吸收指令 #${i+1} 无变化 (${curr.absorbedLengths[i]}字)`);
+        }
+    }
+    return diffs.join('\n');
+}
+
+// ==========================================
+// 模块 8：核心拦截重组（增强日志版）
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
@@ -159,28 +206,31 @@ function interceptAndRestructurePrompt(data) {
         // ---- 初始化或重置静态核心 ----
         if (!CacheState.staticCore) {
             const { cleaned: cleanedChat, newlyAbsorbed } = detectAndAbsorbFloats(chatHistory);
-            // 从当前 system 中移除已知浮动内容，得到纯净核心
             const staticCoreLines = currentSystemRaw.split('\n').filter(line => {
                 const t = line.trim();
                 return t && !CacheState.knownFloatsContent.has(t);
             });
-            CacheState.staticCore = staticCoreLines.join('\n') || currentSystemRaw; // 防空白
+            CacheState.staticCore = staticCoreLines.join('\n') || currentSystemRaw;
             Logger.log(`首次冻结静态核心 (${estimateTokens(CacheState.staticCore)} tokens)`);
-            // 重组并发送一次以建立基线
+            
             const initMsgs = [];
             initMsgs.push({ role: 'system', content: CacheState.staticCore });
             initMsgs.push(...CacheState.absorbedMessages);
             initMsgs.push(...cleanedChat);
             initMsgs.push(...prefills);
             data.chat.splice(0, data.chat.length, ...initMsgs);
-            CacheState.stats.hits++; // 首次也算命中自己建立的缓存
-            CacheState.stats.savedTokens += estimateTokens(CacheState.staticCore);
+            
+            // 记录前缀快照
+            CacheState.lastPrefixSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedMessages);
+            CacheState.stats.prefixTokens = CacheState.lastPrefixSnapshot.totalPrefixTokens;
+            CacheState.stats.hits++;
+            CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
             Logger.log(`初始化完成，消息数: ${initMsgs.length}`);
             updateStatsUI();
             return;
         }
 
-        // ---- 相似度巨变检测（安全网） ----
+        // ---- 相似度巨变检测 ----
         const sim = similarity(CacheState.staticCore, currentSystemRaw);
         if (sim < 0.3 && currentSystemRaw.length > 50) {
             Logger.warn(`系统核心剧变 (相似度 ${(sim*100).toFixed(1)}%)，重置所有缓存状态`);
@@ -188,7 +238,7 @@ function interceptAndRestructurePrompt(data) {
             CacheState.absorbedMessages = [];
             CacheState.knownFloatsContent.clear();
             CacheState.lastBottomBlocks = [];
-            // 递归重新初始化
+            CacheState.lastPrefixSnapshot = null;
             interceptAndRestructurePrompt(data);
             return;
         }
@@ -198,29 +248,38 @@ function interceptAndRestructurePrompt(data) {
 
         // ---- 重组最终消息 ----
         const finalMessages = [];
-        // ① 绝对冻结的核心 system
         finalMessages.push({ role: 'system', content: CacheState.staticCore });
-        // ② 已吸收的固定指令（内容永不改变，新吸收仅追加）
         finalMessages.push(...CacheState.absorbedMessages);
-        // ③ 净化后的对话历史
         finalMessages.push(...cleanedChat);
-        // ④ AI 预填充
         finalMessages.push(...prefills);
 
-        // 缓存命中判定：前缀是否与上一轮完全一致
-        const cacheHit = (newlyAbsorbed.length === 0); // 无新吸收则前缀必然不变
+        // 捕获当前前缀快照
+        const currentSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedMessages);
+        
+        // 对比前缀，输出详细差异
+        const diffReport = comparePrefixSnapshots(CacheState.lastPrefixSnapshot, currentSnapshot);
+        Logger.log(`前缀差异对比:\n${diffReport}`);
+        
+        const cacheHit = (CacheState.lastPrefixSnapshot && 
+                          CacheState.lastPrefixSnapshot.systemHash === currentSnapshot.systemHash &&
+                          CacheState.lastPrefixSnapshot.absorbedHashes.join(',') === currentSnapshot.absorbedHashes.join(','));
+        
         if (cacheHit) {
             CacheState.stats.hits++;
-            CacheState.stats.savedTokens += estimateTokens(CacheState.staticCore) + 
-                CacheState.absorbedMessages.reduce((sum, m) => sum + estimateTokens(m.content), 0);
-            Logger.log(`✅ 缓存命中！静态前缀完全未变，仅计算 ${finalMessages.length - finalMessages.indexOf(cleanedChat[0] || prefills[0])} 条新消息`);
+            const newTokens = estimateTokens(finalMessages.map(m => m.content).join('')) - currentSnapshot.totalPrefixTokens;
+            CacheState.stats.savedTokens += currentSnapshot.totalPrefixTokens;
+            Logger.log(`✅ 缓存命中！静态前缀完全未变，仅尾部新增约 ${newTokens} tokens 需计算`);
         } else {
-            Logger.warn('⚠️ 新增吸收指令，前缀略微延长，但整体仍可部分命中（下一轮将完全命中新前缀）');
+            Logger.warn('⚠️ 前缀发生变化，部分缓存未命中（新前缀在下一轮将完全命中）');
         }
-
+        
+        CacheState.lastPrefixSnapshot = currentSnapshot;
+        CacheState.stats.prefixTokens = currentSnapshot.totalPrefixTokens;
+        
         data.chat.splice(0, data.chat.length, ...finalMessages);
         Logger.log(`重组完成：${original.length} 条 → ${finalMessages.length} 条`);
-
+        Logger.log(`消息结构: system(${CacheState.staticCore.length}字) + ${CacheState.absorbedMessages.length}条固定指令 + ${cleanedChat.length}条对话 + ${prefills.length}条预填充`);
+        
         updateStatsUI();
 
     } catch (err) {
@@ -229,35 +288,39 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 模块 7：UI
+// 模块 9：统计 UI 更新
 // ==========================================
 function updateStatsUI() {
     const el = document.getElementById('ds-cache-stats');
     if (!el) return;
-    const { total, hits, savedTokens } = CacheState.stats;
+    const { total, hits, savedTokens, prefixTokens } = CacheState.stats;
     const rate = total ? ((hits / total) * 100).toFixed(1) : '0.0';
     el.innerHTML = `
         <span>命中: ${hits}/${total} (${rate}%)</span>
-        <span style="margin-left:10px;">节省 ~${savedTokens.toLocaleString()} tokens</span>
+        <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span>
+        <span style="margin-left:10px;">共省: ~${savedTokens.toLocaleString()}t</span>
     `;
 }
 
+// ==========================================
+// 模块 10：UI 界面
+// ==========================================
 async function setupUI() {
     try {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 Cache Optimizer v3</b>
+                <b>🧠 DS V4 Cache Optimizer v3.1</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">冻结静态核心 + 吸收指令后置，实现 100% 缓存命中。</p>
+                <p style="font-size:0.9em;opacity:0.8;">冻结静态核心 + 吸收指令后置，最大化缓存命中（详情看日志）</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
                 <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
                     <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
                 </label>
                 <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置静态核心</button>
-                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:180px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
+                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:220px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
@@ -271,9 +334,10 @@ async function setupUI() {
             CacheState.absorbedMessages = [];
             CacheState.knownFloatsContent.clear();
             CacheState.lastBottomBlocks = [];
-            CacheState.stats = { total: 0, hits: 0, savedTokens: 0 };
+            CacheState.lastPrefixSnapshot = null;
+            CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
             updateStatsUI();
-            Logger.warn('已完全重置，下一轮将重新冻结核心');
+            Logger.warn('已完全重置');
         });
         updateStatsUI();
     } catch (e) {
@@ -282,10 +346,10 @@ async function setupUI() {
 }
 
 // ==========================================
-// 模块 8：启动
+// 模块 11：启动
 // ==========================================
 jQuery(async () => {
-    console.log('DS V4 Optimizer v3 loading...');
+    console.log('DS V4 Optimizer v3.1 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
@@ -293,5 +357,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v3 就绪，策略：绝对冻结 + 吸收后置 ══════');
+    Logger.log('══════ v3.1 就绪，前缀差异报告已启用 ══════');
 });
