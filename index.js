@@ -2,7 +2,38 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 简易 hash（用于内容指纹）
+// 日志等级 & 基础日志函数
+// ==========================================
+let logLevel = 2; // 0:silent, 1:basic, 2:detailed, 3:debug
+const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
+
+function logAt(level, type, msg) {
+    if (logLevel < level) return;
+    const time = new Date().toISOString().split('T')[1].slice(0, -1);
+    const prefix = `[${time}]`;
+    const fullMsg = `${prefix} ${msg}`;
+    if (type === 'warn') {
+        console.warn(`%c[DS V4 Opt v4] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    } else if (type === 'error') {
+        console.error(`[DS V4 Opt v4] 🔴 ${msg}`);
+    } else {
+        console.log(`%c[DS V4 Opt v4] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+    }
+    if (Logger._uiTextarea) {
+        Logger._uiTextarea.value += fullMsg + '\n';
+        Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
+    }
+}
+
+const Logger = {
+    _uiTextarea: null,
+    log: (msg, level = LogLevels.DETAILED) => logAt(level, 'log', msg),
+    warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
+    error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
+};
+
+// ==========================================
+// 简单 hash 与 token 估算
 // ==========================================
 function simpleHash(str) {
     let hash = 0;
@@ -14,9 +45,6 @@ function simpleHash(str) {
     return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
 }
 
-// ==========================================
-// Token 估算（CJK 感知）
-// ==========================================
 function estimateTokens(text) {
     if (!text) return 0;
     let tokens = 0;
@@ -32,67 +60,27 @@ function estimateTokens(text) {
 }
 
 // ==========================================
-// 日志系统（带等级过滤）
-// ==========================================
-const LOG_LEVELS = { QUIET: 0, NORMAL: 1, DEBUG: 2 };
-const Logger = (() => {
-    let uiTextarea = null;
-    let currentLevel = LOG_LEVELS.DEBUG; // 默认详细模式
-
-    function log(msg, level = LOG_LEVELS.NORMAL) {
-        if (level > currentLevel) return;
-        const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        const logStr = `[${time}] ✅ ${msg}`;
-        console.log(`%c[DS V4 Opt v4] ${msg}`, 'color: #00ff00; font-weight: bold;');
-        append(logStr);
-    }
-    function warn(msg, level = LOG_LEVELS.NORMAL) {
-        if (level > currentLevel) return;
-        const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        const logStr = `[${time}] 🌪️ ${msg}`;
-        console.warn(`%c[DS V4 Opt v4] ${msg}`, 'color: #ffaa00; font-weight: bold;');
-        append(logStr);
-    }
-    function error(msg, err) {
-        const time = new Date().toISOString().split('T')[1].slice(0, -1);
-        const logStr = `[${time}] 🔴 ${msg}`;
-        console.error(`[DS V4 Opt v4] ${msg}`, err || '');
-        append(logStr);
-    }
-    function append(text) {
-        if (uiTextarea) {
-            uiTextarea.value += text + '\n';
-            uiTextarea.scrollTop = uiTextarea.scrollHeight;
-        }
-    }
-    function setUI(ta) { uiTextarea = ta; }
-    function setLevel(lvl) { currentLevel = lvl; }
-    function getLevel() { return currentLevel; }
-    return { log, warn, error, setUI, setLevel, getLevel, LOG_LEVELS };
-})();
-
-// ==========================================
 // 缓存状态机
 // ==========================================
 const CacheState = {
     enabled: true,
     staticCore: null,               // 冻结的 system 核心
-    absorbedMessages: [],           // 已吸收的固定 user 消息列表
-    knownFloatsContent: new Set(),  // 内容完全匹配的吸收池
-    lastBottomBlocks: [],           // 底部特征
-    lastPrefixSnapshot: null,
-    // 新增：强制固化模式（开启后，后续浮动指令使用首次锁定的版本，不更新）
-    lockMode: false,
-    lockedUserInstructions: new Map(), // role@index 映射到首次内容
+    absorbedUserInstructions: '',   // 合并后的固定 user 指令
+    fixedPrefillContent: null,      // 固定 AI 预填充内容
+    knownFloatsContent: new Set(),  // 已捕获的浮动内容指纹
+    lastBottomBlocks: [],
+    lastFirstUserFingerprint: null, // 上一轮对话历史第一条 user 消息的指纹（用于重复检测）
+    lastPrefixSnapshot: null,       // 前缀快照（用于差异报告）
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
 };
 
 // ==========================================
-// 消息分类与合并
+// 消息分类
 // ==========================================
 function classifyMessages(chat) {
     const systems = [], chatHistory = [], prefills = [];
     const working = [...chat];
+    // 末尾连续的 assistant 视为预填充
     while (working.length > 0 && working[working.length - 1].role === 'assistant') {
         prefills.unshift(working.pop());
     }
@@ -129,65 +117,93 @@ function similarity(oldText, newText) {
     return common / newLines.length;
 }
 
+// 标准化字符串用于指纹比对（处理多余空格、常见标点差异）
+function normalizeForFingerprint(text) {
+    return text
+        .replace(/\s+/g, ' ')          // 合并空白
+        .replace(/[“”]/g, '"')
+        .replace(/[‘’]/g, "'")
+        .replace(/[，。！？、；：]/g, (m) => ({'，':',','。':'.','！':'!','？':'?','、':',','；':';','：':':'})[m] || m)
+        .trim();
+}
+
 // ==========================================
-// 浮动指令检测与固化吸收
+// 浮动指令检测与吸收（合并到 absorbedUserInstructions）
 // ==========================================
 function detectAndAbsorbFloats(chatHistory) {
-    if (!chatHistory.length) return { cleaned: chatHistory, newlyAbsorbed: [] };
+    if (!chatHistory.length) return { cleaned: chatHistory, newlyAbsorbed: false };
     const currentBottoms = chatHistory.slice(-3);
     const cleaned = [];
-    const newlyAbsorbed = [];
+    let absorbedAny = false;
 
     for (let i = 0; i < chatHistory.length; i++) {
         const msg = chatHistory[i];
         const isBottom = i >= chatHistory.length - 3;
         const long = msg.content && msg.content.length > 25;
-        const key = msg.role + '|' + i; // 用角色+索引作为固化键（简单方式）
 
-        // 强制固化模式：如果该位置已有锁定内容，直接使用锁定值，跳过当前消息
-        if (CacheState.lockMode && CacheState.lockedUserInstructions.has(key)) {
-            continue; // 被锁定的消息完全剔除出对话历史，并忽略
-        }
-
-        // 已完全匹配的吸收池
         if (CacheState.knownFloatsContent.has(msg.content)) {
-            continue;
+            absorbedAny = true;
+            continue; // 已吸收，移除
         }
 
         const wasInLastBottom = CacheState.lastBottomBlocks.some(b => b.content === msg.content);
         if (isBottom && long && wasInLastBottom) {
-            // 吸收为固定指令
             CacheState.knownFloatsContent.add(msg.content);
-            const entry = { role: 'user', content: msg.content };
-            CacheState.absorbedMessages.push(entry);
-            newlyAbsorbed.push(entry);
-            // 如果开启了强制固化，记录该位置的锁定内容
-            if (CacheState.lockMode) {
-                CacheState.lockedUserInstructions.set(key, msg.content);
-            }
-            Logger.warn(`吸收新浮动指令 (${msg.role}, ${msg.content.length}字)，已作为固定 user 消息后置`);
+            // 合并到固定 user 指令中
+            CacheState.absorbedUserInstructions += (CacheState.absorbedUserInstructions ? '\n\n' : '') + msg.content;
+            Logger.warn(`吸收浮动指令 (${msg.role}, ${msg.content.length}字) 并合并入固定 user 指令`, LogLevels.DETAILED);
+            absorbedAny = true;
             continue;
         }
-
         cleaned.push(msg);
     }
 
     CacheState.lastBottomBlocks = cleaned.slice(-3).map(m => ({ role: m.role, content: m.content }));
-    return { cleaned, newlyAbsorbed };
+    return { cleaned, newlyAbsorbed: absorbedAny };
+}
+
+// 检测并吸收对话历史开头重复的 user 消息（可能是指令）
+function detectAndAbsorbRepeatedFirstUser(chatHistory) {
+    if (!chatHistory.length) return { cleaned: chatHistory, absorbed: false };
+    const firstMsg = chatHistory[0];
+    if (firstMsg.role !== 'user' || !firstMsg.content || firstMsg.content.length < 25) {
+        // 无法作为重复指令，记录指纹用于后续
+        if (firstMsg.role === 'user') {
+            CacheState.lastFirstUserFingerprint = normalizeForFingerprint(firstMsg.content);
+        } else {
+            CacheState.lastFirstUserFingerprint = null;
+        }
+        return { cleaned: chatHistory, absorbed: false };
+    }
+
+    const fingerprint = normalizeForFingerprint(firstMsg.content);
+    if (CacheState.lastFirstUserFingerprint && fingerprint === CacheState.lastFirstUserFingerprint) {
+        // 连续两轮相同，吸收
+        CacheState.knownFloatsContent.add(firstMsg.content);
+        CacheState.absorbedUserInstructions += (CacheState.absorbedUserInstructions ? '\n\n' : '') + firstMsg.content;
+        Logger.warn(`吸收重复首条 user 指令 (${firstMsg.content.length}字) 并合并`, LogLevels.DETAILED);
+        CacheState.lastFirstUserFingerprint = fingerprint; // 保持
+        chatHistory.shift(); // 移除
+        return { cleaned: chatHistory, absorbed: true };
+    } else {
+        // 记录本次指纹，为下一轮做准备
+        CacheState.lastFirstUserFingerprint = fingerprint;
+        return { cleaned: chatHistory, absorbed: false };
+    }
 }
 
 // ==========================================
-// 前缀快照与差异报告
+// 捕获前缀快照
 // ==========================================
-function capturePrefixSnapshot(systemText, absorbedList) {
+function capturePrefixSnapshot(systemText, absorbedUser, fixedPrefill) {
     return {
         systemHash: simpleHash(systemText),
-        systemLen: systemText.length,
         systemTokens: estimateTokens(systemText),
-        absorbedHashes: absorbedList.map(m => simpleHash(m.content)),
-        absorbedLengths: absorbedList.map(m => m.content.length),
-        absorbedTokens: absorbedList.map(m => estimateTokens(m.content)),
-        totalPrefixTokens: estimateTokens(systemText) + absorbedList.reduce((sum, m) => sum + estimateTokens(m.content), 0)
+        userInstructionsHash: simpleHash(absorbedUser),
+        userInstructionsTokens: estimateTokens(absorbedUser),
+        prefillHash: simpleHash(fixedPrefill || ''),
+        prefillTokens: estimateTokens(fixedPrefill || ''),
+        totalPrefixTokens: estimateTokens(systemText) + estimateTokens(absorbedUser) + estimateTokens(fixedPrefill || '')
     };
 }
 
@@ -195,146 +211,174 @@ function comparePrefixSnapshots(prev, curr) {
     if (!prev) return '首次建立前缀，无历史对比';
     const diffs = [];
     if (prev.systemHash !== curr.systemHash) {
-        diffs.push(`❌ System 核心变化 | 旧hash:${prev.systemHash} (${prev.systemLen}字) → 新hash:${curr.systemHash} (${curr.systemLen}字)`);
+        diffs.push(`❌ System 核心变化 旧hash:${prev.systemHash} -> ${curr.systemHash}`);
     } else {
-        diffs.push(`✅ System 核心无变化 (${curr.systemLen}字)`);
+        diffs.push(`✅ System 核心不变 (${curr.systemTokens} tokens)`);
     }
-    if (prev.absorbedHashes.length !== curr.absorbedHashes.length) {
-        diffs.push(`🔶 吸收指令数量变化: ${prev.absorbedHashes.length} → ${curr.absorbedHashes.length}`);
+    if (prev.userInstructionsHash !== curr.userInstructionsHash) {
+        diffs.push(`❌ 固定 user 指令变化 旧hash:${prev.userInstructionsHash} -> ${curr.userInstructionsHash}`);
+    } else {
+        diffs.push(`✅ 固定 user 指令不变 (${curr.userInstructionsTokens} tokens)`);
     }
-    for (let i = 0; i < Math.max(prev.absorbedHashes.length, curr.absorbedHashes.length); i++) {
-        const prevHash = prev.absorbedHashes[i] || '(无)';
-        const currHash = curr.absorbedHashes[i] || '(无)';
-        if (prevHash !== currHash) {
-            diffs.push(`🔸 吸收指令 #${i+1} 变化 | 旧hash:${prevHash} (${prev.absorbedLengths[i] || 0}字) → 新hash:${currHash} (${curr.absorbedLengths[i] || 0}字)`);
-        } else {
-            diffs.push(`✅ 吸收指令 #${i+1} 无变化 (${curr.absorbedLengths[i]}字)`);
-        }
+    if (prev.prefillHash !== curr.prefillHash) {
+        diffs.push(`❌ 固定预填充变化 旧hash:${prev.prefillHash} -> ${curr.prefillHash}`);
+    } else {
+        diffs.push(`✅ 固定预填充不变 (${curr.prefillTokens} tokens)`);
     }
     return diffs.join('\n');
 }
 
 // ==========================================
-// 核心拦截重组（完整版，含固化逻辑和详细日志）
+// 核心拦截重组
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
 
     try {
         CacheState.stats.total++;
-        Logger.log(`==============================`, Logger.LOG_LEVELS.NORMAL);
-        Logger.log(`拦截器 #${CacheState.stats.total}`, Logger.LOG_LEVELS.NORMAL);
+        Logger.log(`==============================`);
+        Logger.log(`拦截器 #${CacheState.stats.total}`);
 
         if (!data?.chat?.length) return;
         const original = [...data.chat];
         const { systems, chatHistory, prefills } = classifyMessages(original);
         const currentSystemRaw = mergeSystemText(systems);
 
-        // ---- 初始化或重置静态核心 ----
+        // ---- 初始化或重置 ----
         if (!CacheState.staticCore) {
-            const { cleaned: cleanedChat, newlyAbsorbed } = detectAndAbsorbFloats(chatHistory);
+            // 从 system 中剥离已知浮动内容
             const staticCoreLines = currentSystemRaw.split('\n').filter(line => {
                 const t = line.trim();
                 return t && !CacheState.knownFloatsContent.has(t);
             });
             CacheState.staticCore = staticCoreLines.join('\n') || currentSystemRaw;
-            Logger.log(`首次冻结静态核心 (${estimateTokens(CacheState.staticCore)} tokens)`, Logger.LOG_LEVELS.NORMAL);
+            // 处理浮动指令和重复用户
+            let hist = [...chatHistory];
+            const { cleaned: clean1, newlyAbsorbed: f1 } = detectAndAbsorbFloats(hist);
+            hist = clean1;
+            const { cleaned: clean2, absorbed: f2 } = detectAndAbsorbRepeatedFirstUser(hist);
+            hist = clean2;
 
-            // 如果开启了强制固化，将当前 cleanedChat 中的 user/assistant 的位置记录下来
-            if (CacheState.lockMode) {
-                // 遍历 cleanedChat 的索引，记录 user 和 assistant 的位置
-                for (let i = 0; i < cleanedChat.length; i++) {
-                    const msg = cleanedChat[i];
-                    const key = msg.role + '|' + i;
-                    // 只锁定 user 或 assistant 消息（避免 system）
-                    if (msg.role === 'user' || msg.role === 'assistant') {
-                        CacheState.lockedUserInstructions.set(key, msg.content);
-                    }
-                }
-                Logger.log(`强制固化模式已记录 ${CacheState.lockedUserInstructions.size} 个位置的消息`, Logger.LOG_LEVELS.DEBUG);
+            // 固定预填充
+            if (prefills.length > 0) {
+                CacheState.fixedPrefillContent = prefills[0].content;
+            } else {
+                CacheState.fixedPrefillContent = null;
             }
 
-            const initMsgs = [];
-            initMsgs.push({ role: 'system', content: CacheState.staticCore });
-            initMsgs.push(...CacheState.absorbedMessages);
-            initMsgs.push(...cleanedChat);
-            initMsgs.push(...prefills);
-            data.chat.splice(0, data.chat.length, ...initMsgs);
+            // 组装初始消息
+            const finalMessages = [];
+            finalMessages.push({ role: 'system', content: CacheState.staticCore });
+            if (CacheState.absorbedUserInstructions.trim().length > 0) {
+                finalMessages.push({ role: 'user', content: CacheState.absorbedUserInstructions });
+            }
+            if (CacheState.fixedPrefillContent && CacheState.fixedPrefillContent.trim().length > 0) {
+                finalMessages.push({ role: 'assistant', content: CacheState.fixedPrefillContent });
+            }
+            // 添加处理后的历史（已经移除了吸收的user和浮动指令） 和 剩余预填充（可能为空）
+            finalMessages.push(...hist);
+            // 如果原来预填充被吸收，这里 prefills 应该为空
+            if (prefills.length > 0 && CacheState.fixedPrefillContent && prefills[0].content === CacheState.fixedPrefillContent) {
+                prefills.shift(); // 移除已吸收的
+            }
+            finalMessages.push(...prefills);
 
-            CacheState.lastPrefixSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedMessages);
+            data.chat.splice(0, data.chat.length, ...finalMessages);
+            CacheState.lastPrefixSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedUserInstructions, CacheState.fixedPrefillContent);
             CacheState.stats.prefixTokens = CacheState.lastPrefixSnapshot.totalPrefixTokens;
             CacheState.stats.hits++;
             CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
-            Logger.log(`初始化完成，消息数: ${initMsgs.length}`, Logger.LOG_LEVELS.NORMAL);
-            updateStatsUI();
+            Logger.log(`初始化完成，消息数: ${finalMessages.length}，前缀 tokens: ~${CacheState.stats.prefixTokens}`, LogLevels.BASIC);
+            if (logLevel >= LogLevels.DEBUG) {
+                Logger.log(`消息结构预览: ${finalMessages.map(m => `${m.role}(${m.content.length}字)`).join(' → ')}`, LogLevels.DEBUG);
+            }
             return;
         }
 
-        // ---- 相似度巨变检测 ----
+        // ---- 相似度剧变检测 ----
         const sim = similarity(CacheState.staticCore, currentSystemRaw);
         if (sim < 0.3 && currentSystemRaw.length > 50) {
-            Logger.warn(`系统核心剧变 (相似度 ${(sim*100).toFixed(1)}%)，重置所有缓存状态`);
+            Logger.warn(`系统核心剧变 (相似度 ${(sim*100).toFixed(1)}%)，重置所有缓存状态`, LogLevels.BASIC);
             CacheState.staticCore = null;
-            CacheState.absorbedMessages = [];
+            CacheState.absorbedUserInstructions = '';
+            CacheState.fixedPrefillContent = null;
             CacheState.knownFloatsContent.clear();
             CacheState.lastBottomBlocks = [];
+            CacheState.lastFirstUserFingerprint = null;
             CacheState.lastPrefixSnapshot = null;
-            CacheState.lockedUserInstructions.clear();
             interceptAndRestructurePrompt(data);
             return;
         }
 
-        // ---- 吸收新浮动指令（含固化逻辑） ----
-        const { cleaned: cleanedChat, newlyAbsorbed } = detectAndAbsorbFloats(chatHistory);
+        // ---- 吸收浮动指令 & 重复首条 user ----
+        let hist = [...chatHistory];
+        const { cleaned: clean1, newlyAbsorbed: f1 } = detectAndAbsorbFloats(hist);
+        hist = clean1;
+        const { cleaned: clean2, absorbed: f2 } = detectAndAbsorbRepeatedFirstUser(hist);
+        hist = clean2;
 
-        // 如果开启了强制固化，用锁定值替换 cleanedChat 中对应位置的消息
-        if (CacheState.lockMode) {
-            for (let i = 0; i < cleanedChat.length; i++) {
-                const key = cleanedChat[i].role + '|' + i;
-                if (CacheState.lockedUserInstructions.has(key)) {
-                    const originalContent = cleanedChat[i].content;
-                    const lockedContent = CacheState.lockedUserInstructions.get(key);
-                    cleanedChat[i].content = lockedContent;
-                    if (originalContent !== lockedContent) {
-                        Logger.log(`固化替换: ${key} 内容已还原为首次锁定版本`, Logger.LOG_LEVELS.DEBUG);
-                    }
+        // ---- 处理预填充 ----
+        let remainingPrefills = [...prefills];
+        if (CacheState.fixedPrefillContent) {
+            if (remainingPrefills.length > 0 && remainingPrefills[0].content === CacheState.fixedPrefillContent) {
+                remainingPrefills.shift(); // 移除，因为会由前缀提供
+            } else {
+                // 预填充内容变化，更新并报告
+                Logger.warn('固定预填充内容发生变化，前缀将更新', LogLevels.DETAILED);
+                if (remainingPrefills.length > 0) {
+                    CacheState.fixedPrefillContent = remainingPrefills[0].content;
+                    remainingPrefills.shift();
+                } else {
+                    CacheState.fixedPrefillContent = null;
                 }
+            }
+        } else {
+            if (remainingPrefills.length > 0) {
+                CacheState.fixedPrefillContent = remainingPrefills[0].content;
+                remainingPrefills.shift();
+                Logger.log(`首次捕获固定预填充 (${CacheState.fixedPrefillContent.length}字)`, LogLevels.DETAILED);
             }
         }
 
-        // ---- 重组最终消息 ----
+        // ---- 组装最终消息 ----
         const finalMessages = [];
         finalMessages.push({ role: 'system', content: CacheState.staticCore });
-        finalMessages.push(...CacheState.absorbedMessages);
-        finalMessages.push(...cleanedChat);
-        finalMessages.push(...prefills);
+        if (CacheState.absorbedUserInstructions.trim().length > 0) {
+            finalMessages.push({ role: 'user', content: CacheState.absorbedUserInstructions });
+        }
+        if (CacheState.fixedPrefillContent && CacheState.fixedPrefillContent.trim().length > 0) {
+            finalMessages.push({ role: 'assistant', content: CacheState.fixedPrefillContent });
+        }
+        finalMessages.push(...hist);
+        finalMessages.push(...remainingPrefills);
 
-        const currentSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedMessages);
+        // 快照与差异
+        const currentSnapshot = capturePrefixSnapshot(CacheState.staticCore, CacheState.absorbedUserInstructions, CacheState.fixedPrefillContent);
         const diffReport = comparePrefixSnapshots(CacheState.lastPrefixSnapshot, currentSnapshot);
-        Logger.log(`前缀差异对比:\n${diffReport}`, Logger.LOG_LEVELS.NORMAL);
+        Logger.log(`前缀差异对比:\n${diffReport}`, LogLevels.DETAILED);
 
-        const cacheHit = (CacheState.lastPrefixSnapshot &&
+        const cacheHit = CacheState.lastPrefixSnapshot &&
             CacheState.lastPrefixSnapshot.systemHash === currentSnapshot.systemHash &&
-            CacheState.lastPrefixSnapshot.absorbedHashes.join(',') === currentSnapshot.absorbedHashes.join(','));
+            CacheState.lastPrefixSnapshot.userInstructionsHash === currentSnapshot.userInstructionsHash &&
+            CacheState.lastPrefixSnapshot.prefillHash === currentSnapshot.prefillHash;
 
         if (cacheHit) {
             CacheState.stats.hits++;
-            const totalTokens = finalMessages.reduce((s, m) => s + estimateTokens(m.content), 0);
-            const newTokens = totalTokens - currentSnapshot.totalPrefixTokens;
             CacheState.stats.savedTokens += currentSnapshot.totalPrefixTokens;
-            Logger.log(`✅ 缓存命中！静态前缀完全未变，仅尾部新增约 ${newTokens} tokens 需计算`, Logger.LOG_LEVELS.NORMAL);
+            const newTokens = estimateTokens(finalMessages.map(m => m.content).join('')) - currentSnapshot.totalPrefixTokens;
+            Logger.log(`✅ 缓存命中！静态前缀完全未变，仅尾部新增约 ${newTokens} tokens 需计算`, LogLevels.BASIC);
         } else {
-            Logger.warn('⚠️ 前缀发生变化，部分缓存未命中（新前缀在下一轮将完全命中）', Logger.LOG_LEVELS.NORMAL);
+            Logger.warn('⚠️ 前缀发生变化，部分缓存未命中（新前缀将在下一轮完全命中）', LogLevels.BASIC);
         }
 
         CacheState.lastPrefixSnapshot = currentSnapshot;
         CacheState.stats.prefixTokens = currentSnapshot.totalPrefixTokens;
 
         data.chat.splice(0, data.chat.length, ...finalMessages);
-        Logger.log(`重组完成：${original.length} 条 → ${finalMessages.length} 条`, Logger.LOG_LEVELS.NORMAL);
-        Logger.log(`消息结构: system(${CacheState.staticCore.length}字) + ${CacheState.absorbedMessages.length}条固定指令 + ${cleanedChat.length}条对话 + ${prefills.length}条预填充`, Logger.LOG_LEVELS.DEBUG);
-
-        updateStatsUI();
+        Logger.log(`重组完成：${original.length} 条 → ${finalMessages.length} 条`, LogLevels.BASIC);
+        if (logLevel >= LogLevels.DEBUG) {
+            Logger.log(`消息结构: ${finalMessages.map(m => `${m.role}(${m.content.length}字)`).join(' → ')}`, LogLevels.DEBUG);
+        }
 
     } catch (err) {
         Logger.error('拦截器致命错误', err);
@@ -342,7 +386,7 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// UI 初始化（含日志等级选择器）
+// UI 与统计
 // ==========================================
 function updateStatsUI() {
     const el = document.getElementById('ds-cache-stats');
@@ -361,77 +405,53 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 Cache Optimizer v4</b>
+                <b>🧠 DS V4 Cache Optimizer v4.0</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">冻结前缀 + 固化可选，日志等级可调。</p>
+                <p style="font-size:0.9em;opacity:0.8;">绝对冻结 + 合并重复指令 + 吸收预填充，最大化命中率。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
                 <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
                     <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
                 </label>
-                <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;margin-top:5px;">
-                    <input type="checkbox" id="ds-cache-lock" unchecked> 强制固化浮动指令（锁定首次版本）
-                </label>
-                <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+                <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
                     <span style="font-size:0.9em;">日志等级:</span>
-                    <select id="ds-cache-loglevel">
-                        <option value="0">简洁</option>
-                        <option value="1">正常</option>
-                        <option value="2" selected>详细调试</option>
+                    <select id="ds-cache-loglevel" style="flex:1;">
+                        <option value="0">关闭</option>
+                        <option value="1">简要</option>
+                        <option value="2" selected>详细</option>
+                        <option value="3">调试</option>
                     </select>
                 </div>
                 <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置静态核心</button>
-                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:220px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
+                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
-
-        const logTextarea = document.getElementById('ds-cache-log');
-        Logger.setUI(logTextarea);
-
-        // 日志等级
-        const logLevelSelect = document.getElementById('ds-cache-loglevel');
-        logLevelSelect.addEventListener('change', function() {
-            Logger.setLevel(parseInt(this.value));
-            Logger.log(`日志等级切换为: ${this.options[this.selectedIndex].text}`, Logger.LOG_LEVELS.NORMAL);
-        });
-
-        // 启用开关
+        Logger._uiTextarea = document.getElementById('ds-cache-log');
         $('#ds-cache-enable').on('change', function() {
             CacheState.enabled = $(this).is(':checked');
-            Logger.log(`插件状态: ${CacheState.enabled ? '启用' : '停用'}`, Logger.LOG_LEVELS.NORMAL);
+            Logger.log(`状态: ${CacheState.enabled ? '启用' : '停用'}`, LogLevels.BASIC);
         });
-
-        // 强制固化开关
-        $('#ds-cache-lock').on('change', function() {
-            CacheState.lockMode = $(this).is(':checked');
-            if (CacheState.lockMode) {
-                // 如果当前已有 staticCore，则按当前状态锁定位置；若尚未初始化，静默开启
-                Logger.warn('强制固化模式已开启，后续浮动指令将使用首次锁定版本（需重置后生效）', Logger.LOG_LEVELS.NORMAL);
-            } else {
-                CacheState.lockedUserInstructions.clear();
-                Logger.log('强制固化模式已关闭，位置锁定池已清空', Logger.LOG_LEVELS.NORMAL);
-            }
+        $('#ds-cache-loglevel').on('change', function() {
+            logLevel = parseInt($(this).val());
+            Logger.log(`日志等级设为: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
         });
-
-        // 重置按钮
         $('#ds-cache-reset').on('click', () => {
             CacheState.staticCore = null;
-            CacheState.absorbedMessages = [];
+            CacheState.absorbedUserInstructions = '';
+            CacheState.fixedPrefillContent = null;
             CacheState.knownFloatsContent.clear();
             CacheState.lastBottomBlocks = [];
+            CacheState.lastFirstUserFingerprint = null;
             CacheState.lastPrefixSnapshot = null;
-            CacheState.lockedUserInstructions.clear();
             CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
             updateStatsUI();
-            Logger.warn('已完全重置，下一轮将重新冻结核心');
+            Logger.warn('已完全重置', LogLevels.BASIC);
         });
-
         updateStatsUI();
-        Logger.log('UI 初始化完成', Logger.LOG_LEVELS.DEBUG);
     } catch (e) {
-        Logger.error('UI 初始化失败', e);
+        Logger.error('UI初始化失败', e);
     }
 }
 
@@ -443,9 +463,9 @@ jQuery(async () => {
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-        Logger.log('已挂载事件钩子');
+        Logger.log('已挂载事件钩子', LogLevels.BASIC);
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v4.0 就绪，可调日志等级与固化模式 ══════');
+    Logger.log('══════ v4.0 就绪，前缀锁定 + 重复指令合并 + 预填充吸收 ══════', LogLevels.BASIC);
 });
