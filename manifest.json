@@ -4,8 +4,7 @@
   "requires": [],
   "optional": [],
   "js": "index.js",
-  "css": "style.css",
   "author": "Superbia000",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "homePage": "https://github.com/Superbia000/deepseek-v4-cache-optimizer"
 }
