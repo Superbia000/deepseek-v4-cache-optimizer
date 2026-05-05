@@ -1,7 +1,7 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, substituteParams } from '../../../../script.js';
 
-// ========== 日志 ==========
+// ========== 日志系统 ==========
 let logLevel = 2;
 const Logger = {
     _uiTextarea: null,
@@ -16,9 +16,9 @@ const Logger = {
             Logger._uiTextarea.value += line + '\n';
             Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
         }
-        if (type === 'error') console.error('[DS V4 Opt v5.6]', text);
-        else if (type === 'warn') console.warn('[DS V4 Opt v5.6]', text);
-        else console.log('%c[DS V4 Opt v5.6]', 'color:#00ff00;font-weight:bold', text);
+        if (type === 'error') console.error('[DS V4 Opt v5.7]', text);
+        else if (type === 'warn') console.warn('[DS V4 Opt v5.7]', text);
+        else console.log('%c[DS V4 Opt v5.7]', 'color:#00ff00;font-weight:bold', text);
     }
 };
 function append(type, msg) { Logger._appendLine(type, msg); }
@@ -60,19 +60,17 @@ const CacheState = {
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
 };
 
-// 判断字符串是否包含世界书占位宏
+// 判断 prompt 内容是否为世界书占位符宏
 function isWorldInfoMacro(content) {
-    // 匹配可能的宏，例如 {{worldInfo}}, {{wiBefore}}, {{wiAfter}}, {{world}}, 等等
-    return /\{\{(worldInfo|wiBefore|wiAfter|world)\b/i.test(content) ||
-           /\{\{world\s*\}\}/i.test(content);
+    return /\{\{(worldInfo|wiBefore|wiAfter|world)\b/i.test(content);
 }
 
-// 获取预设提示词（排除世界书占位符条目）
+// 获取预设提示词（已过滤世界书占位符）
 function getPresetPrompts() {
     const pw = window['power_user'];
     if (!pw || !pw.prompts) return [];
     return pw.prompts
-        .filter(p => p.is_enabled && !isWorldInfoMacro(p.content)) // 过滤掉世界书占位符
+        .filter(p => p.is_enabled && !isWorldInfoMacro(p.content))
         .sort((a, b) => a.order - b.order)
         .map(p => {
             try {
@@ -83,7 +81,7 @@ function getPresetPrompts() {
         .filter(Boolean);
 }
 
-// 获取世界书条目（已渲染）
+// 获取世界书条目（逐条渲染，作为独立消息）
 function getWorldEntries() {
     const ctx = getContext();
     if (!ctx || !ctx.worldInfo) return [];
@@ -99,7 +97,7 @@ function getWorldEntries() {
         .filter(Boolean);
 }
 
-// 获取完整对话历史（来自 chat，不含 system 消息）
+// 获取完整对话历史（来自 ST 的 chat 对象，不含 system 消息）
 function getFullChatHistory() {
     const ctx = getContext();
     if (!ctx || !ctx.chat) return [];
@@ -112,7 +110,7 @@ function getFullChatHistory() {
         .filter(m => m.content.length > 0);
 }
 
-// 从 data.chat 提取不属于预设和世界书的 system 消息作为“其他提示词”
+// 从 data.chat 提取不属于预设和世界书的 system 消息，作为“其他提示词”
 function extractOtherPrompts(dataChat, presetSet, worldSet) {
     const others = [];
     for (const msg of dataChat) {
@@ -138,49 +136,80 @@ function interceptAndRestructurePrompt(data) {
         const original = data.chat;
         if (!original || !original.length) return;
 
-        // 1. 预填充
+        // 1. 提取预填充和当前用户输入（需要保留原始 data.chat 中的结构以获取真实预填充）
+        const messages = [...original];
         const prefills = [];
-        let lastIdx = original.length - 1;
-        while (lastIdx >= 0 && original[lastIdx].role === 'assistant') {
-            prefills.unshift(original[lastIdx]);
-            lastIdx--;
+        while (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+            prefills.unshift(messages.pop());
+        }
+        // 当前用户输入是 messages 中最后一条 user 消息
+        let currentUserMsg = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'user') {
+                currentUserMsg = messages.splice(i, 1)[0];
+                break;
+            }
+        }
+        if (!currentUserMsg) {
+            Logger.warn('未找到当前用户输入', 1);
+            return;
         }
 
-        // 2. 获取世界书条目
+        // 2. 获取权威的世界书条目列表（我们自行渲染）
         const currentWorlds = getWorldEntries();
         const worldSet = new Set(currentWorlds.map(w => normalize(w.content)));
 
-        // 3. 获取预设提示词（已排除世界书占位符）
+        // 3. 获取预设提示词（已过滤世界书占位符）
         const currentPresets = getPresetPrompts();
         const presetSet = new Set(currentPresets.map(p => normalize(p.content)));
 
-        // 4. 历史对话
+        // 4. 获取完整对话历史（来自 ST chat，不包括 system 消息）
         const fullHistory = getFullChatHistory();
         if (fullHistory.length === 0) {
-            Logger.warn('没有对话历史', 1);
+            Logger.warn('对话历史为空', 1);
             return;
         }
-        const currentUserMsg = fullHistory[fullHistory.length - 1];
-        if (currentUserMsg.role !== 'user') {
-            Logger.warn('最后一条消息不是 user', 1);
+        const currentUserIndex = fullHistory.findIndex(
+            m => m.role === 'user' && normalize(m.content) === normalize(currentUserMsg.content)
+        );
+        if (currentUserIndex === -1) {
+            Logger.error('无法在完整历史中定位当前用户输入', null, 1);
             return;
         }
-        const previousHistory = fullHistory.slice(0, -1);
+        const previousHistory = fullHistory.slice(0, currentUserIndex);
 
-        // 5. 其他提示词
-        const currentOthers = extractOtherPrompts(original, presetSet, worldSet);
+        // 5. 提取“其他提示词”：从 data.chat 的 system 消息中，排除预设和世界书条目，
+        //    同时也要排除那些可能包裹了世界书内容的 system 消息（即消息中包含了任一世界书条目文本）
+        const otherPromises = [];
+        for (const msg of messages) {  // 注意 messages 已经移除了当前用户输入和预填充
+            if (msg.role !== 'system') continue;
+            const n = normalize(msg.content);
+            // 如果该消息内容完全匹配某个预设条目 -> 跳过（预设已单独生成）
+            if (presetSet.has(n)) continue;
+            // 如果该消息内容包含任何世界书条目的文本（可能是包裹后的合并消息），则整条丢弃
+            const containsWorldContent = currentWorlds.some(w => msg.content.includes(w.content));
+            if (containsWorldContent) {
+                Logger.log(`丢弃包含世界书内容的 system 消息: ${msg.content.substring(0, 50)}...`, 3);
+                continue;
+            }
+            // 剩余的非重复消息作为“其他提示词”
+            if (!otherPromises.some(o => normalize(o.content) === n)) {
+                otherPromises.push({ role: 'system', content: msg.content });
+            }
+        }
+        // 注意：messages 中可能还剩下一些 user/assistant 消息（极少情况），但我们不使用它们，因为历史已经由 previousHistory 提供
 
-        // 6. 指纹
+        // 6. 指纹计算
         const newPresetFp = currentPresets.map(m => simpleHash(normalize(m.content))).join('|');
-        const newOtherFp = currentOthers.map(m => simpleHash(normalize(m.content))).join('|');
+        const newOtherFp = otherPromises.map(m => simpleHash(normalize(m.content))).join('|');
         const newWorldFp = currentWorlds.map(m => simpleHash(normalize(m.content))).join('|');
         const newHistoryFp = previousHistory.map(m => simpleHash(normalize(m.content))).join('|');
 
-        // 7. 初始化/重置
+        // 7. 初始化或重置检测
         if (!CacheState.lockedPresetPrompts) {
             Object.assign(CacheState, {
                 lockedPresetPrompts: currentPresets,
-                lockedOtherPrompts: currentOthers,
+                lockedOtherPrompts: otherPromises,
                 lockedWorldEntries: currentWorlds,
                 lockedHistory: previousHistory,
                 presetFp: newPresetFp,
@@ -188,7 +217,7 @@ function interceptAndRestructurePrompt(data) {
                 worldFp: newWorldFp,
                 historyFp: newHistoryFp
             });
-            Logger.log(`[初始化] 预设${currentPresets.length}条, 其他${currentOthers.length}条, 世界书${currentWorlds.length}条, 历史${previousHistory.length}条`, 2);
+            Logger.log(`[初始化] 预设${currentPresets.length}条, 其他${otherPromises.length}条, 世界书${currentWorlds.length}条, 历史${previousHistory.length}条`, 2);
             const finalMessages = [
                 ...CacheState.lockedPresetPrompts,
                 ...CacheState.lockedOtherPrompts,
@@ -213,9 +242,10 @@ function interceptAndRestructurePrompt(data) {
         const isWorldAppend = worldChanged && newWorldFp.startsWith(CacheState.worldFp);
         const isHistoryAppend = historyChanged && newHistoryFp.startsWith(CacheState.historyFp);
 
+        // 任何非追加性变化 -> 重置
         if ((presetChanged && !isPresetAppend) || (otherChanged && !isOtherAppend) || (worldChanged && !isWorldAppend) || (historyChanged && !isHistoryAppend)) {
-            Logger.warn('[核心重置] 提示词/世界书/历史发生非追加性变化，自动重置', 1);
-            if (typeof toastr !== 'undefined') toastr.warning('提示词结构变化，缓存前缀已重置。', '缓存优化器');
+            Logger.warn('[核心重置] 提示词/世界书/历史发生修改或删除，自动重置', 1);
+            if (typeof toastr !== 'undefined') toastr.warning('内容结构变化，缓存前缀已重置。', '缓存优化器');
             CacheState.lockedPresetPrompts = null;
             CacheState.lockedOtherPrompts = null;
             CacheState.lockedWorldEntries = null;
@@ -229,7 +259,7 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        // 9. 追加新增
+        // 9. 处理新增条目
         let appendedPresets = [];
         let appendedOthers = [];
         let appendedWorlds = [];
@@ -243,8 +273,8 @@ function interceptAndRestructurePrompt(data) {
         }
         if (isOtherAppend) {
             const oldLen = CacheState.lockedOtherPrompts.length;
-            appendedOthers = currentOthers.slice(oldLen);
-            CacheState.lockedOtherPrompts = currentOthers;
+            appendedOthers = otherPromises.slice(oldLen);
+            CacheState.lockedOtherPrompts = otherPromises;
             CacheState.otherFp = newOtherFp;
             Logger.warn(`[追加] ${appendedOthers.length} 条其他提示词`, 2);
         }
@@ -260,7 +290,7 @@ function interceptAndRestructurePrompt(data) {
             CacheState.historyFp = newHistoryFp;
         }
 
-        // 10. 最终序列
+        // 10. 构建最终消息序列：预设提示词 → 其他提示词 → 世界书条目 → 锁定历史 → 新增条目 → 当前输入 → 预填充
         const finalMessages = [
             ...CacheState.lockedPresetPrompts,
             ...CacheState.lockedOtherPrompts,
@@ -284,10 +314,6 @@ function interceptAndRestructurePrompt(data) {
         CacheState.stats.savedTokens += prefixTokens;
         Logger.log(`✅ 缓存命中！静态前缀 ${prefixTokens} tokens`, 2);
 
-        if (logLevel >= 3) {
-            const preview = finalMessages.map(m => `[${m.role}] ${m.content.substring(0, 40)}...`).join('\n');
-            Logger.log('[最终消息序列]\n' + preview, 3);
-        }
         updateStats();
 
     } catch (err) {
@@ -309,11 +335,11 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 缓存优化器 v5.6</b>
+                <b>🧠 DS V4 缓存优化器 v5.7</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">严格排序：预设提示词 → 其他提示词 → 世界书条目 → 历史对话 → 当前输入 → 预填充。世界书占位符自动过滤。</p>
+                <p style="font-size:0.9em;opacity:0.8;">严格排序：预设→其他→世界书（逐条）→历史→当前输入→预填充。所有世界书条目均独立成块，绝不混入预设。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
                 <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用自动化缓存优化</label>
                 <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
@@ -354,7 +380,7 @@ async function setupUI() {
 
 // ========== 启动 ==========
 jQuery(async () => {
-    console.log('DS V4 Optimizer v5.6 loading...');
+    console.log('DS V4 Optimizer v5.7 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
@@ -362,5 +388,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v5.6 就绪，世界书占位符已彻底过滤 ══════', 2);
+    Logger.log('══════ v5.7 就绪，世界书彻底独立，绝对排序 ══════', 2);
 });
