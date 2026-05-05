@@ -2,139 +2,81 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 日志与等级控制
+// 日志 & 工具函数
 // ==========================================
-let logLevel = 2; // 0:silent, 1:basic, 2:detailed, 3:debug
-const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
-
-function logAt(level, type, msg) {
-    if (logLevel < level) return;
-    const time = new Date().toISOString().split('T')[1].slice(0, -1);
-    const prefix = `[${time}]`;
-    const fullMsg = `${prefix} ${msg}`;
-    if (type === 'warn') {
-        console.warn(`%c[DS V4 Opt v5] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    } else if (type === 'error') {
-        console.error(`[DS V4 Opt v5] 🔴 ${msg}`);
-    } else {
-        console.log(`%c[DS V4 Opt v5] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
-    }
-    const ta = document.getElementById('ds-cache-log');
-    if (ta) {
-        ta.value += fullMsg + '\n';
-        ta.scrollTop = ta.scrollHeight;
-    }
-}
-
 const Logger = {
-    log: (msg, level = LogLevels.DETAILED) => logAt(level, 'log', msg),
-    warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
-    error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
+    _uiTextarea: null,
+    log: (msg, level = 2) => { if (logLevel >= level) append('log', msg); },
+    warn: (msg, level = 1) => { if (logLevel >= level) append('warn', msg); },
+    error: (msg, err, level = 1) => { if (logLevel >= level) append('error', err ? msg + ' ' + err : msg); },
+    _appendLine(type, text) {
+        const time = new Date().toISOString().split('T')[1].slice(0, -1);
+        const prefix = type === 'error' ? '🔴' : (type === 'warn' ? '🌪️' : '✅');
+        const line = `[${time}] ${prefix} ${text}`;
+        if (Logger._uiTextarea) {
+            Logger._uiTextarea.value += line + '\n';
+            Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
+        }
+        if (type === 'error') console.error('[DS V4 Opt v5.1]', text);
+        else if (type === 'warn') console.warn('[DS V4 Opt v5.1]', text);
+        else console.log('%c[DS V4 Opt v5.1]', 'color:#00ff00;font-weight:bold', text);
+    }
 };
+function append(type, msg) { Logger._appendLine(type, msg); }
 
-// ==========================================
-// 消息比对工具
-// ==========================================
-function messagesEqual(a, b) {
-    if (a.role !== b.role) return false;
-    // 内容标准化比对，忽略末尾空格差异
-    return (a.content || '').trim() === (b.content || '').trim();
+let logLevel = 2;
+
+// 简单 hash
+function simpleHash(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; }
+    return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-// 找出 curr 中所有不在 prev 中的条目（新增条目），保持 curr 中的顺序
-function extractNewItems(prev, curr) {
-    const used = new Array(prev.length).fill(false);
-    const newItems = [];
-    // 遍历 curr，用贪心匹配跳过 prev 中已匹配的条目
-    let pi = 0;
-    for (let ci = 0; ci < curr.length; ci++) {
-        if (pi < prev.length && messagesEqual(prev[pi], curr[ci])) {
-            pi++; // 匹配成功，继续
-        } else {
-            // 尝试在剩余的 prev 中寻找匹配（允许 prev 中有被删除的条目造成的不匹配）
-            let found = false;
-            for (let pj = pi; pj < prev.length; pj++) {
-                if (!used[pj] && messagesEqual(prev[pj], curr[ci])) {
-                    // 匹配到一个晚出现的 prev 条目，说明中间有删除
-                    // 标记已用，但当前 ci 不是新增，而是旧条目位置偏移
-                    used[pj] = true;
-                    found = true;
-                    // 需要调整 pi？不调整全局 pi，复杂。
-                    break;
-                }
-            }
-            if (!found) {
-                newItems.push(curr[ci]); // 确实未在 prev 中出现过
-            }
-        }
-    }
-    return newItems;
-}
-
-// 判断 curr 是否是 prev 的超集（prev 所有条目在 curr 中按相同顺序出现，且无修改）
-// 返回 { isSuperset, newItems, cleanCurr }，其中 cleanCurr 是移除 newItems 后的子序列
-function checkSuperset(prev, curr) {
-    // 将 prev 的条目按顺序在 curr 中匹配，允许 curr 中间插入新条目
-    const matches = [];
-    let pi = 0;
-    for (let ci = 0; ci < curr.length && pi < prev.length; ci++) {
-        if (messagesEqual(prev[pi], curr[ci])) {
-            matches.push(ci);
-            pi++;
-        }
-    }
-    if (pi < prev.length) {
-        return { isSuperset: false, newItems: [], cleanCurr: null }; // 不是超集，有缺失
-    }
-    // 收集不在 matches 中的 curr 条目即为新增条目
-    const matchSet = new Set(matches);
-    const newItems = curr.filter((_, idx) => !matchSet.has(idx));
-    // 从 curr 中移除 newItems 后，应等于 prev（顺序一致）
-    const cleanCurr = curr.filter((_, idx) => matchSet.has(idx));
-    // 验证 cleanCurr 是否与 prev 完全匹配（可能因内容微小差异而不等）
-    if (cleanCurr.length !== prev.length) return { isSuperset: false, newItems: [], cleanCurr: null };
-    for (let i = 0; i < prev.length; i++) {
-        if (!messagesEqual(prev[i], cleanCurr[i])) {
-            return { isSuperset: false, newItems: [], cleanCurr: null };
-        }
-    }
-    return { isSuperset: true, newItems, cleanCurr };
-}
-
-// 计算最长公共前缀长度
-function longestCommonPrefix(arr1, arr2) {
-    let i = 0;
-    while (i < arr1.length && i < arr2.length && messagesEqual(arr1[i], arr2[i])) {
-        i++;
-    }
-    return i;
-}
-
-// ==========================================
-// 状态管理
-// ==========================================
-const CacheState = {
-    enabled: true,
-    lastSentMessages: null,         // 上一轮实际发送的消息数组快照
-    stats: { total: 0, hits: 0, savedTokens: 0 }
-};
-
+// Token 估算
 function estimateTokens(text) {
     if (!text) return 0;
     let t = 0;
     for (const ch of text) {
         const code = ch.charCodeAt(0);
-        if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3040 && code <= 0x30FF) || (code >= 0xAC00 && code <= 0xD7AF)) {
-            t += 1;
-        } else {
-            t += 0.25;
-        }
+        if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3040 && code <= 0x30FF) || (code >= 0xAC00 && code <= 0xD7AF)) t += 1;
+        else t += 0.25;
     }
     return Math.ceil(t);
 }
 
-function arrayTokens(messages) {
-    return messages.reduce((sum, m) => sum + estimateTokens(m.content || ''), 0);
+// 标准化指纹（消除空格和标点差异）
+function normalize(text) {
+    return text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+        .replace(/[，。！？、；：]/g, m => ({'，':',','。':'.','！':'!','？':'?','、':',','；':';','：':':'})[m] || m).trim();
+}
+
+// ==========================================
+// 缓存状态机
+// ==========================================
+const CacheState = {
+    enabled: true,
+    stableSequence: null,       // 已稳定的完整消息序列
+    lastSystemSeq: null,        // 上次系统提示词组（不含世界书）
+    lastWorldSeq: null,         // 上次世界书条目组
+    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
+};
+
+// ==========================================
+// 从上下文获取当前激活的世界书条目（标准化后的内容）
+// ==========================================
+function getActiveWorldEntries() {
+    const ctx = getContext();
+    if (!ctx || !ctx.worldInfo) return [];
+    const entries = ctx.worldInfo.entries || [];
+    // 只保留启用的条目，返回标准化后的内容数组
+    return entries.filter(e => !e.disable).map(e => normalize(e.content || '')).filter(c => c.length > 0);
+}
+
+// 判断一条消息是否是世界书条目（与激活列表中的任一匹配）
+function isWorldEntry(content, activeWorldEntries) {
+    const norm = normalize(content);
+    return activeWorldEntries.some(entry => entry === norm);
 }
 
 // ==========================================
@@ -142,104 +84,187 @@ function arrayTokens(messages) {
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
+
     try {
         CacheState.stats.total++;
-        Logger.log(`==============================`);
-        Logger.log(`拦截器 #${CacheState.stats.total}`);
+        Logger.log(`====== [请求 #${CacheState.stats.total}] ======`, 2);
 
-        if (!data?.chat?.length) return;
-        const currMessages = [...data.chat]; // 当前原始数组
-        const prev = CacheState.lastSentMessages;
+        const original = data.chat;
+        if (!original || !original.length) return;
 
-        // 首次或重置后
-        if (!prev) {
-            // 直接发送原始数组，作为基准
-            CacheState.lastSentMessages = currMessages.map(m => ({ role: m.role, content: m.content }));
-            const tokens = arrayTokens(currMessages);
-            CacheState.stats.savedTokens += tokens; // 首次无法命中，但计入前缀建立
-            Logger.log(`首次建立基准消息序列，共 ${currMessages.length} 条，~${tokens} tokens`, LogLevels.BASIC);
-            if (logLevel >= LogLevels.DEBUG) {
-                Logger.log(`序列结构: ${currMessages.map(m => `${m.role}(${m.content.length})`).join(' → ')}`, LogLevels.DEBUG);
-            }
-            updateStatsUI();
-            return; // data.chat 保持不变
+        const ctx = getContext();
+        const activeWorldEntries = getActiveWorldEntries(); // 标准化后的世界书内容数组
+
+        // ---------- 1. 提取并分类消息 ----------
+        // 先剥离末尾的预填充（连续 assistant）
+        const messages = [...original];
+        const prefills = [];
+        while (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+            prefills.unshift(messages.pop());
         }
 
-        // 超集检测（仅新增，无删除/修改）
-        const { isSuperset, newItems, cleanCurr } = checkSuperset(prev, currMessages);
-        if (isSuperset) {
-            // 完美复用前缀，新条目追加到末尾（历史最后，新用户输入之前）
-            // 注意：我们需要保持 prev 的顺序不变，然后将新条目按原来相对顺序放在 prev 之后
-            const finalMessages = [...prev, ...newItems];
-            data.chat.splice(0, data.chat.length, ...finalMessages);
-            CacheState.stats.hits++;
-            const saved = arrayTokens(prev);
-            CacheState.stats.savedTokens += saved;
-            Logger.log(`✅ 仅新增 ${newItems.length} 条内容，前缀完全复用！缓存命中，节省 ~${saved} tokens`, LogLevels.BASIC);
-            if (logLevel >= LogLevels.DEBUG) {
-                Logger.log(`新增条目: ${newItems.map(m => `${m.role}(${m.content.length})`).join(', ')}`, LogLevels.DEBUG);
+        // 找到当前用户输入（最后一条 user 消息）
+        let currentUserInput = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'user') {
+                currentUserInput = messages.splice(i, 1)[0];
+                break;
             }
-            // 更新快照：当前发送的序列
-            CacheState.lastSentMessages = finalMessages.map(m => ({ role: m.role, content: m.content }));
-            updateStatsUI();
+        }
+        if (!currentUserInput) {
+            // 没有当前输入（极端情况），无法处理
             return;
         }
 
-        // 降级处理：计算最长公共前缀，并检测是否发生剧变
-        const lcpLen = longestCommonPrefix(prev, currMessages);
-        const prevTotal = prev.length;
-        const changeRatio = (prevTotal - lcpLen) / prevTotal;
-        
-        Logger.warn(`前缀发生变动：仅前 ${lcpLen}/${prevTotal} 条未变 (变化比例 ${(changeRatio*100).toFixed(1)}%)`, LogLevels.BASIC);
-        
-        // 如果变化比例很大（比如超过 70% 的条目消失或变化），判定为角色卡/预设大范围替换
-        if (changeRatio > 0.7 && prevTotal > 5) {
-            // 弹窗提醒用户（若在浏览器环境下）
-            if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) {
-                // 使用 toastr 或 alert
-                if (typeof toastr !== 'undefined') {
-                    toastr.warning('检测到提示词结构发生巨大变化（可能更换了角色或大量删改），建议重置缓存优化器状态以获得最佳缓存效果。', '缓存优化器', { timeOut: 10000 });
+        // 剩余 messages 分为: 系统/世界书 和 历史对话（user/assistant）
+        const remaining = messages;
+        const systemGroup = [];   // 预设提示词 + 其他提示词
+        const worldGroup = [];    // 世界书条目
+        const history = [];       // 对话历史 (user/assistant)
+
+        for (const msg of remaining) {
+            if (msg.role === 'system') {
+                // 判断是世界书还是系统提示词
+                if (isWorldEntry(msg.content, activeWorldEntries)) {
+                    worldGroup.push(msg);
                 } else {
-                    alert('提示词结构剧变，请考虑手动重置缓存优化器。');
+                    systemGroup.push(msg);
                 }
+            } else {
+                // user 或 assistant 都归为对话历史
+                history.push(msg);
             }
-            Logger.warn('⚠️ 系统检测到提示词大幅变动，建议重置插件状态。', LogLevels.BASIC);
         }
 
-        // 构建降级数组：公共前缀 + 剩余部分
-        const lcp = currMessages.slice(0, lcpLen);
-        const rest = currMessages.slice(lcpLen);
-        const finalMessages = [...lcp, ...rest];
-        data.chat.splice(0, data.chat.length, ...finalMessages);
-        
-        // 缓存部分命中（前缀部分可命中）
-        const cachedTokens = arrayTokens(lcp);
-        CacheState.stats.savedTokens += cachedTokens;
-        if (lcpLen > 0) {
-            // 如果前缀长度大于0，可视为部分命中，但为了统计命中请求，我们仍认为本轮未完全命中，但节省了前缀token
-            Logger.log(`⚠️ 部分命中：前缀 ${lcpLen} 条 (~${cachedTokens} tokens) 复用，其余需重新计算`, LogLevels.BASIC);
+        // 世界书条目需要保持它们在原始数据中出现的顺序（与激活顺序可能不同，但这样更忠实）
+        // systemGroup 已经保持了原始顺序
+
+        // ---------- 2. 状态初始化或重置检测 ----------
+        // 生成当前系统/世界书的指纹
+        const currentSystemFingerprint = systemGroup.map(m => simpleHash(normalize(m.content))).join('|');
+        const currentWorldFingerprint = worldGroup.map(m => simpleHash(normalize(m.content))).join('|');
+
+        if (!CacheState.stableSequence) {
+            // 首次或重置后，构建稳定序列：系统组 + 世界书组 + 当前历史对话 + 当前用户输入
+            const initSeq = [...systemGroup, ...worldGroup, ...history, currentUserInput];
+            CacheState.stableSequence = initSeq;
+            CacheState.lastSystemSeq = { seq: systemGroup, fp: currentSystemFingerprint };
+            CacheState.lastWorldSeq = { seq: worldGroup, fp: currentWorldFingerprint };
+            Logger.log(`[初始化] 稳定序列已锁定，共 ${initSeq.length} 条消息`, 2);
+            // 发送：稳定序列 + 预填充
+            const finalMessages = [...initSeq, ...prefills];
+            data.chat.splice(0, data.chat.length, ...finalMessages);
+            updateStats(true, initSeq);
+            return;
         }
-        // 更新快照为本次发送的序列
-        CacheState.lastSentMessages = finalMessages.map(m => ({ role: m.role, content: m.content }));
-        updateStatsUI();
-        
+
+        // 已存在 stableSequence，检查 core 是否有变化
+        const lastSysFp = CacheState.lastSystemSeq.fp;
+        const lastWorldFp = CacheState.lastWorldSeq.fp;
+
+        // 如果系统提示词组或世界书条目组发生了非追加性变化（修改/删除/乱序），则重置
+        if (currentSystemFingerprint !== lastSysFp || currentWorldFingerprint !== lastWorldFp) {
+            // 进一步判断是否为“纯追加”（即在原有序列末尾增加新条目）
+            const isSystemAppend = currentSystemFingerprint.startsWith(lastSysFp) && 
+                currentSystemFingerprint.substring(lastSysFp.length).startsWith('|');
+            const isWorldAppend = currentWorldFingerprint.startsWith(lastWorldFp) && 
+                currentWorldFingerprint.substring(lastWorldFp.length).startsWith('|');
+
+            if (!isSystemAppend || !isWorldAppend) {
+                Logger.warn('[核心重置] 检测到预设/世界书条目被修改或删除，将重置稳定序列', 1);
+                if (typeof toastr !== 'undefined') toastr.warning('检测到提示词核心内容发生变化，缓存前缀已自动重置。', '缓存优化器');
+                CacheState.stableSequence = null;
+                CacheState.lastSystemSeq = null;
+                CacheState.lastWorldSeq = null;
+                CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
+                interceptAndRestructurePrompt(data); // 重新初始化
+                return;
+            } else {
+                // 纯追加，更新系统/世界书组，并通知
+                if (isSystemAppend) {
+                    const newSystemEntries = systemGroup.slice(CacheState.lastSystemSeq.seq.length);
+                    Logger.warn(`[增量追加] 新增 ${newSystemEntries.length} 条系统提示词，追加到序列末尾`, 2);
+                }
+                if (isWorldAppend) {
+                    const newWorldEntries = worldGroup.slice(CacheState.lastWorldSeq.seq.length);
+                    Logger.warn(`[增量追加] 新增 ${newWorldEntries.length} 条世界书条目，追加到序列末尾`, 2);
+                }
+                // 更新记录
+                CacheState.lastSystemSeq = { seq: systemGroup, fp: currentSystemFingerprint };
+                CacheState.lastWorldSeq = { seq: worldGroup, fp: currentWorldFingerprint };
+            }
+        }
+
+        // ---------- 3. 构建最终发送序列 ----------
+        // stableSequence 应包含所有已完成的对话（即上一轮及之前的所有消息，但不包含本次新增的历史对话）
+        // 我们需要将 stableSequence 与 current history 比较，找出新增的对话轮次
+        // 简单处理：将 history 中 stableSequence 未包含的部分追加到 stableSequence 中（因为 stableSequence 可能已经包含了之前的对话）
+        // 实际上，stableSequence 是在上一轮发送后更新的，所以它应该等于上一轮的完整发送消息（不含预填充）。
+        // 本次的 history 应包含上一轮的全部对话 + 可能新增的中间轮次（如果用户删除了某些消息又会怎样？）
+        // 为了可靠，我们比较 stableSequence 最后一条消息与 history 的第一条消息，如果不匹配视为剧烈变动，触发重置。
+        // 否则，找到需要追加的新增轮次。
+
+        const lastStable = CacheState.stableSequence;
+        // 查找 history 中与 stableSequence 共同的前缀长度
+        let prefixLen = 0;
+        for (let i = 0; i < lastStable.length && i < history.length; i++) {
+            if (lastStable[i].role === history[i].role && normalize(lastStable[i].content) === normalize(history[i].content)) {
+                prefixLen++;
+            } else {
+                break;
+            }
+        }
+
+        if (prefixLen < lastStable.length) {
+            // 历史前缀不匹配，说明用户删除了早期历史，触发重置
+            Logger.warn('[核心重置] 检测到对话历史被修改或删除，将重置稳定序列', 1);
+            if (typeof toastr !== 'undefined') toastr.warning('对话历史发生变化，缓存前缀已自动重置。', '缓存优化器');
+            CacheState.stableSequence = null;
+            CacheState.lastSystemSeq = null;
+            CacheState.lastWorldSeq = null;
+            CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
+            interceptAndRestructurePrompt(data);
+            return;
+        }
+
+        // 追加新完成的对话轮次（history 中多出的部分）
+        const newHistory = history.slice(prefixLen);
+        if (newHistory.length > 0) {
+            CacheState.stableSequence.push(...newHistory);
+        }
+
+        // 构建最终发送数组：stableSequence（不含当前输入） + 当前用户输入 + 预填充
+        // 注意 stableSequence 已经包含了上一次的用户输入和 AI 回复，所以这次我们要发送的完整序列应该是
+        // [系统组, 世界书组, 历史(不含当前输入), 当前用户输入, 预填充]
+        // 我们可以简单使用：stableSequence (已含所有旧对话) + [currentUserInput] + prefills
+        const finalSeq = [...CacheState.stableSequence, currentUserInput];
+        const finalMessages = [...finalSeq, ...prefills];
+
+        data.chat.splice(0, data.chat.length, ...finalMessages);
+
+        // 更新统计（计算缓存命中）
+        const prefixTokens = estimateTokens(CacheState.stableSequence.map(m => m.content).join(''));
+        CacheState.stats.prefixTokens = prefixTokens;
+        CacheState.stats.hits++;  // 因为前缀没有变化（除新增外，而新增也会成为未来的缓存）
+        CacheState.stats.savedTokens += prefixTokens;
+        Logger.log(`✅ 缓存命中！稳定前缀 ~${prefixTokens} tokens 完全复用`, 2);
+        updateStats(false, CacheState.stableSequence);
+
     } catch (err) {
-        Logger.error('拦截器致命错误', err);
+        Logger.error('拦截器致命错误', err, 1);
     }
 }
 
 // ==========================================
-// UI 与统计
+// UI 与统计更新
 // ==========================================
-function updateStatsUI() {
-    const el = document.getElementById('ds-cache-stats');
-    if (!el) return;
-    const { total, hits, savedTokens } = CacheState.stats;
+function updateStats(isInit, stableSeq) {
+    const { total, hits, savedTokens, prefixTokens } = CacheState.stats;
     const rate = total ? ((hits / total) * 100).toFixed(1) : '0.0';
-    el.innerHTML = `
-        <span>命中: ${hits}/${total} (${rate}%)</span>
-        <span style="margin-left:10px;">共省: ~${savedTokens.toLocaleString()}t</span>
-    `;
+    const el = document.getElementById('ds-cache-stats');
+    if (el) {
+        el.innerHTML = `命中: ${hits}/${total} (${rate}%) | 前缀: ~${prefixTokens.toLocaleString()}t | 节省: ~${savedTokens.toLocaleString()}t`;
+    }
 }
 
 async function setupUI() {
@@ -247,60 +272,55 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 Cache Optimizer v5.0</b>
+                <b>🧠 DS V4 缓存优化器 v5.1 (全自动分类重组)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">智能消息数组比对，新增自动追加，变动最大限度保留（弹窗提醒剧变）。</p>
+                <p style="font-size:0.9em;opacity:0.8;">自动识别预设/世界书/对话，按指定顺序重组，新增条目追加末尾，实现最高缓存命中。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
                 <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
+                    <input type="checkbox" id="ds-cache-enable" checked> 启用自动化缓存优化
                 </label>
                 <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
                     <span style="font-size:0.9em;">日志等级:</span>
-                    <select id="ds-cache-loglevel" style="flex:1;">
+                    <select id="ds-cache-loglevel">
                         <option value="0">关闭</option>
                         <option value="1">简要</option>
                         <option value="2" selected>详细</option>
                         <option value="3">调试</option>
                     </select>
                 </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置静态核心</button>
+                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置 (下次请求自动重建)</button>
                 <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
-        $('#ds-cache-enable').on('change', function() {
-            CacheState.enabled = $(this).is(':checked');
-            Logger.log(`状态: ${CacheState.enabled ? '启用' : '停用'}`, LogLevels.BASIC);
-        });
-        $('#ds-cache-loglevel').on('change', function() {
-            logLevel = parseInt($(this).val());
-            Logger.log(`日志等级设为: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
-        });
+        Logger._uiTextarea = document.getElementById('ds-cache-log');
+        $('#ds-cache-enable').on('change', function() { CacheState.enabled = $(this).is(':checked'); });
+        $('#ds-cache-loglevel').on('change', function() { logLevel = parseInt($(this).val()); });
         $('#ds-cache-reset').on('click', () => {
-            CacheState.lastSentMessages = null;
-            CacheState.stats = { total: 0, hits: 0, savedTokens: 0 };
-            updateStatsUI();
-            Logger.warn('已重置，下一轮将重新建立基准序列。', LogLevels.BASIC);
+            CacheState.stableSequence = null;
+            CacheState.lastSystemSeq = null;
+            CacheState.lastWorldSeq = null;
+            CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
+            Logger.warn('已强制重置，下一轮将重新锁定前缀', 1);
+            updateStats();
         });
-        updateStatsUI();
-    } catch (e) {
-        Logger.error('UI初始化失败', e);
-    }
+        updateStats();
+    } catch (e) { Logger.error('UI初始化失败', e); }
 }
 
 // ==========================================
 // 启动
 // ==========================================
 jQuery(async () => {
-    console.log('DS V4 Optimizer v5 loading...');
+    console.log('DS V4 Optimizer v5.1 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-        Logger.log('已挂载事件钩子', LogLevels.BASIC);
+        Logger.log('[系统] 已挂载钩子', 2);
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v5.0 就绪：智能数组比对，新增追加，最大命中率 ══════', LogLevels.BASIC);
+    Logger.log('══════ v5.1 就绪，全自动提示词分类 + 绝对锁定前缀 ══════', 2);
 });
