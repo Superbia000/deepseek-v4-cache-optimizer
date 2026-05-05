@@ -1,6 +1,6 @@
 {
   "display_name": "deepseek-v4-cache-optimizer",
-  "loading_order": 150,
+  "loading_order": 200,
   "requires": [],
   "optional": [],
   "js": "index.js",
