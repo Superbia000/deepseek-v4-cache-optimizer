@@ -1,272 +1,357 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
-// ==========================================
-// 日志系统
-// ==========================================
-let logLevel = 2; // 0:silent, 1:basic, 2:detailed, 3:debug
-const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
-
-function logAt(level, type, msg) {
-    if (logLevel < level) return;
-    const time = new Date().toISOString().split('T')[1].slice(0, -1);
-    const fullMsg = `[${time}] ${msg}`;
-    if (type === 'warn') {
-        console.warn(`%c[DS V4 Opt v7] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    } else if (type === 'error') {
-        console.error(`[DS V4 Opt v7] 🔴 ${msg}`);
-    } else {
-        console.log(`%c[DS V4 Opt v7] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
-    }
-    if (Logger._uiTextarea) {
-        Logger._uiTextarea.value += fullMsg + '\n';
-        Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
-    }
-}
-
+// ========== 日志 ==========
+let logLevel = 2;
 const Logger = {
     _uiTextarea: null,
-    log: (msg, level = LogLevels.DETAILED) => logAt(level, 'log', msg),
-    warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
-    error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
+    log: (msg, level = 2) => { if (logLevel >= level) append('log', msg); },
+    warn: (msg, level = 1) => { if (logLevel >= level) append('warn', msg); },
+    error: (msg, err, level = 1) => { if (logLevel >= level) append('error', err ? msg + ' ' + err : msg); },
+    _appendLine(type, text) {
+        const time = new Date().toISOString().split('T')[1].slice(0, -1);
+        const prefix = type === 'error' ? '🔴' : (type === 'warn' ? '🌪️' : '✅');
+        const line = `[${time}] ${prefix} ${text}`;
+        if (Logger._uiTextarea) {
+            Logger._uiTextarea.value += line + '\n';
+            Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
+        }
+        if (type === 'error') console.error('[DS V4 Opt v7.0]', text);
+        else if (type === 'warn') console.warn('[DS V4 Opt v7.0]', text);
+        else console.log('%c[DS V4 Opt v7.0]', 'color:#00ff00;font-weight:bold', text);
+    }
 };
+function append(type, msg) { Logger._appendLine(type, msg); }
 
-// ==========================================
-// 工具函数
-// ==========================================
+// ========== 工具 ==========
 function simpleHash(str) {
     let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash |= 0;
-    }
-    return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 16);
+    for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; }
+    return (hash >>> 0).toString(16).padStart(8, '0');
 }
-
 function estimateTokens(text) {
     if (!text) return 0;
-    let tokens = 0;
+    let t = 0;
     for (const ch of text) {
         const code = ch.charCodeAt(0);
-        if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3040 && code <= 0x30FF) || (code >= 0xAC00 && code <= 0xD7AF)) {
-            tokens += 1;
-        } else {
-            tokens += 0.25;
-        }
+        if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3040 && code <= 0x30FF) || (code >= 0xAC00 && code <= 0xD7AF)) t += 1;
+        else t += 0.25;
     }
-    return Math.ceil(tokens);
+    return Math.ceil(t);
+}
+function normalize(text) {
+    return text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+        .replace(/[，。！？、；：]/g, m => ({
+            '，': ',', '。': '.', '！': '!', '？': '?', '、': ',', '；': ';', '：': ':'
+        })[m] || m).trim();
 }
 
-// ==========================================
-// 缓存状态
-// ==========================================
+// ========== 状态机 ==========
 const CacheState = {
     enabled: true,
-    // 锁定的前缀哈希（不含当前用户消息和预填充）
-    lockedPrefixHash: null,
-    // 锁定的前缀 token 数
-    lockedPrefixTokens: 0,
-    // 统计信息
-    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
+    // 永久锁定的提示词序列 (按顺序)
+    lockedPresetPrompts: [],    // 预设提示词 + 角色信息等 (system)
+    lockedOtherPrompts: [],     // 插件注入等不可分类的提示词 (system)
+    lockedWorldEntries: [],     // 世界书条目 (逐条, system)
+    lockedHistory: [],          // 历史对话 (user/assistant, 不含当前输入)
+    // 指纹
+    presetFp: null,
+    otherFp: null,
+    worldFp: null,
+    historyFp: null,
+    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
 };
 
-// ==========================================
-// 基于 identifier 的消息分类规则
-// ==========================================
-const PRESET_IDENTIFIERS = new Set([
-    'main', 'nsfw', 'jailbreak', 'enhanceDefinitions',
-    'impersonation_prompt',
-    'description', 'personality', 'scenario', 'mes_example',
-    'system_prompt', 'char_other'
-]);
-
-const EXTENSION_PREFIX = 'extension:';
-const WORLDINFO_PREFIX = 'worldInfo';
-const HISTORY_PREFIX = 'chat-message-';
-
-// ==========================================
-// 精确分类函数
-// ==========================================
-function classifyMessages(chat) {
-    const presetPrompts = [];
-    const extensionPrompts = [];
-    const worldInfoEntries = [];
-    const historyConversation = [];
-    let currentUserMessage = null;
-    let prefillMessage = null;
-
-    for (const msg of chat) {
-        const identifier = msg.identifier || '';
-
-        // 世界书条目 (worldInfoBefore, worldInfoAfter 等)
-        if (identifier.startsWith(WORLDINFO_PREFIX)) {
-            worldInfoEntries.push(msg);
-            continue;
-        }
-
-        // 扩展/插件提示词
-        if (identifier.startsWith(EXTENSION_PREFIX)) {
-            extensionPrompts.push(msg);
-            continue;
-        }
-
-        // 预置/角色卡提示词
-        if (PRESET_IDENTIFIERS.has(identifier)) {
-            presetPrompts.push(msg);
-            continue;
-        }
-
-        // 历史对话消息
-        if (identifier.startsWith(HISTORY_PREFIX)) {
-            historyConversation.push(msg);
-            continue;
-        }
-
-        // 无标识符的消息
-        if (!identifier) {
-            if (msg.role === 'user') {
-                currentUserMessage = msg; // 最后一条 user 就是当前输入
-            } else if (msg.role === 'assistant') {
-                prefillMessage = msg; // 最后一条 assistant 就是预填充
-            }
-            // 意外情况：无标识的 system 消息，人为归入扩展提示词
-            else if (msg.role === 'system') {
-                extensionPrompts.push(msg);
-            }
-            continue;
-        }
-
-        // 如果有其他未知标识符，按角色大致归类
-        if (msg.role === 'system') {
-            extensionPrompts.push(msg);
-        } else {
-            Logger.warn(`未知标识符消息: ${identifier} (role: ${msg.role})，将忽略`, LogLevels.DEBUG);
+// ========== 世界书条目识别 (核心突破) ==========
+function buildWorldUIDSet() {
+    const ctx = getContext();
+    if (!ctx || !ctx.worldInfo || !ctx.worldInfo.entries) return new Set();
+    const uids = new Set();
+    for (const entry of ctx.worldInfo.entries) {
+        if (!entry.disable && entry.uid !== undefined) {
+            uids.add(String(entry.uid));
         }
     }
+    return uids;
+}
 
+// 判断一条 system 消息是否为世界书条目
+// 通过检测内容中是否包含世界书条目的 UID (ST 渲染时会添加)
+function isWorldEntryByUID(content, worldUIDSet) {
+    // 匹配可能的 UID 标记: [World Info: 123] 或 [WI: 123] 或 (WI:123) 等
+    const uidMatch = content.match(/\[(?:World Info|WI)\s*:\s*([^\]]+)\]/i);
+    if (uidMatch) {
+        const uid = uidMatch[1].trim();
+        return worldUIDSet.has(uid);
+    }
+    return false;
+}
+
+// 判断一条 system 消息是否包含世界书内容（通过关键词）
+function isWorldEntryByContent(content) {
+    // 世界书条目通常包裹在特定容器中
+    return content.includes('<Lore>') || content.includes('</Lore>') ||
+           content.includes('World Info') || content.includes('World Loading') ||
+           content.includes('Loading complete');
+}
+
+// ========== 从 data.chat 精准分类 ==========
+function classifyDataChat(dataChat) {
+    const worldUIDSet = buildWorldUIDSet();
+    
+    const presetPrompts = [];    // 预设提示词
+    const worldEntries = [];     // 世界书条目
+    const otherPrompts = [];     // 其他提示词
+    const prefills = [];         // 预填充
+    let currentUserMsg = null;   // 当前用户输入
+    
+    // 倒序查找预填充
+    const messages = [...dataChat];
+    while (messages.length > 0 && messages[messages.length - 1].role === 'assistant') {
+        prefills.unshift(messages.pop());
+    }
+    
+    // 找到当前用户输入 (最后一条 user)
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+            currentUserMsg = messages.splice(i, 1)[0];
+            break;
+        }
+    }
+    
+    // 分类剩余的 system 消息
+    for (const msg of messages) {
+        if (msg.role !== 'system') {
+            // user/assistant 消息保留到 other 中作为历史
+            otherPrompts.push(msg);
+            continue;
+        }
+        
+        const content = msg.content || '';
+        
+        // 1. 先检查是否是世界书相关 (UID 匹配 或 容器标记)
+        if (isWorldEntryByUID(content, worldUIDSet) || isWorldEntryByContent(content)) {
+            // 如果是包裹容器，尝试提取内部条目
+            if (content.includes('<Lore>') && content.includes('</Lore>')) {
+                // 提取容器内的每条世界书条目 (以系统消息形式逐条输出)
+                const loreMatch = content.match(/<Lore>\s*([\s\S]*?)\s*<\/Lore>/);
+                if (loreMatch) {
+                    const innerContent = loreMatch[1].trim();
+                    // 按条目分隔符拆分 (可能是 [WI:uid]content 格式)
+                    const entryParts = innerContent.split(/\[(?:WI|World Info)\s*:\s*[^\]]+\]/i).filter(s => s.trim());
+                    if (entryParts.length > 0) {
+                        for (const part of entryParts) {
+                            const trimmed = part.trim();
+                            if (trimmed) {
+                                worldEntries.push({ role: 'system', content: trimmed });
+                            }
+                        }
+                    } else {
+                        // 无法拆分，将内部内容作为整体
+                        worldEntries.push({ role: 'system', content: innerContent.trim() });
+                    }
+                }
+            } else {
+                worldEntries.push(msg);
+            }
+        }
+        // 2. 检查是否是不相关的容器/标记 (World Loading 等)
+        else if (content.includes('[World Loading ...]') || content.includes('[SYSTEM:Loading complete.]') ||
+                 content.includes('World Loading') || content.includes('Loading complete')) {
+            // 这些是 ST 内部标记，直接丢弃
+            continue;
+        }
+        // 3. 剩下的是预设提示词或其他
+        else {
+            presetPrompts.push(msg);
+        }
+    }
+    
     return {
         presetPrompts,
-        extensionPrompts,
-        worldInfoEntries,
-        historyConversation,
-        currentUserMessage,
-        prefillMessage
+        worldEntries,
+        otherPrompts,
+        currentUserMsg,
+        prefills
     };
 }
 
-// ==========================================
-// 核心拦截重组函数
-// ==========================================
+// ========== 从 ST 内部获取数据 (备用/补充) ==========
+function getFullChatHistory() {
+    const ctx = getContext();
+    if (!ctx || !ctx.chat) return [];
+    return ctx.chat
+        .filter(msg => !msg.is_system)
+        .map(msg => ({
+            role: msg.is_user ? 'user' : 'assistant',
+            content: msg.mes || ''
+        }))
+        .filter(m => m.content.length > 0);
+}
+
+// ========== 核心重组 ==========
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
 
     try {
         CacheState.stats.total++;
-        Logger.log(`==============================`);
-        Logger.log(`拦截 #${CacheState.stats.total}`);
+        Logger.log(`====== [请求 #${CacheState.stats.total}] ======`, 2);
 
-        if (!data?.chat?.length) return;
+        const original = data.chat;
+        if (!original || !original.length) return;
 
-        // 1. 精确分类所有消息
-        const {
-            presetPrompts,
-            extensionPrompts,
-            worldInfoEntries,
-            historyConversation,
-            currentUserMessage,
-            prefillMessage
-        } = classifyMessages(data.chat);
+        // 1. 精准分类 data.chat
+        const classified = classifyDataChat(original);
+        
+        if (logLevel >= 3) {
+            Logger.log(`分类结果: 预设${classified.presetPrompts.length}条, 世界书${classified.worldEntries.length}条, 其他${classified.otherPrompts.length}条, 预填充${classified.prefills.length}条`, 3);
+        }
 
-        // 2. 构建最终排序数组（严格按顺序）
-        const finalChat = [
-            ...presetPrompts,
-            ...extensionPrompts,
-            ...worldInfoEntries,
-            ...historyConversation,
-        ];
-        if (currentUserMessage) finalChat.push(currentUserMessage);
-        if (prefillMessage) finalChat.push(prefillMessage);
+        // 2. 检查当前用户输入
+        if (!classified.currentUserMsg) {
+            Logger.warn('未找到当前用户输入，取消重组', 1);
+            return;
+        }
 
-        // 3. 计算当前“可缓存前缀”（不含当前用户消息和预填充）
-        const prefixForCache = finalChat.filter(
-            msg => msg !== currentUserMessage && msg !== prefillMessage
-        );
-        const prefixContent = prefixForCache.map(m => m.content).join('');
-        const currentPrefixHash = simpleHash(prefixContent);
-        const currentPrefixTokens = estimateTokens(prefixContent);
-
-        // 4. 缓存状态管理
-        const isFirstLock = (CacheState.lockedPrefixHash === null);
-        const cacheHit = (currentPrefixHash === CacheState.lockedPrefixHash);
-
-        if (isFirstLock) {
-            // 首次运行：建立锁定前缀
-            CacheState.lockedPrefixHash = currentPrefixHash;
-            CacheState.lockedPrefixTokens = currentPrefixTokens;
-            CacheState.stats.hits++;
-            CacheState.stats.savedTokens += currentPrefixTokens;
-            Logger.log(`🔒 首次锁定前缀，共 ${prefixForCache.length} 条消息，约 ${currentPrefixTokens} tokens`, LogLevels.BASIC);
-        } else if (cacheHit) {
-            // 完美命中：前缀完全一致
-            CacheState.stats.hits++;
-            CacheState.stats.savedTokens += CacheState.lockedPrefixTokens;
-            Logger.log(`🎯 完美缓存命中！前缀未变，仅需计算当前输入+预填充`, LogLevels.BASIC);
-        } else {
-            // 前缀发生变化（新增世界书/提示词，或前缀被破坏）
-            // 检查是否是破坏性修改：前缀是否缩短或前面部分不匹配
-            const oldLockedContentHash = CacheState.lockedPrefixHash;
-            const isDestructive = !prefixContent.includes(oldLockedContentHash.substring(0, 8)); // 简单判断
-
-            if (isDestructive) {
-                // 弹窗提醒，并完全重置
-                if (typeof toastr !== 'undefined' && toastr.warning) {
-                    toastr.warning('检测到前缀结构发生变化（提示词或世界书被删改），缓存前缀已重置。', 'DS V4 缓存优化器');
-                }
-                Logger.warn('⚠️ 前缀破坏性修改，重置所有缓存状态', LogLevels.BASIC);
-                CacheState.lockedPrefixHash = null;
-                CacheState.lockedPrefixTokens = 0;
-                CacheState.stats = { total: CacheState.stats.total, hits: 0, savedTokens: 0, prefixTokens: 0 };
-                // 对当前数据重新初始化
-                return interceptAndRestructurePrompt(data);
-            } else {
-                // 正常追加：更新锁定哈希，下次即可命中
-                CacheState.lockedPrefixHash = currentPrefixHash;
-                CacheState.lockedPrefixTokens = currentPrefixTokens;
-                CacheState.stats.savedTokens += currentPrefixTokens; // 本次节省依然为新前缀
-                Logger.warn('📌 前缀正常追加（新增内容已锁定），下次请求将完美命中', LogLevels.BASIC);
+        // 3. 补全历史对话 (从 ST 内部获取完整历史)
+        const fullHistory = getFullChatHistory();
+        const currentInputContent = normalize(classified.currentUserMsg.content);
+        let currentInputIndex = -1;
+        for (let i = fullHistory.length - 1; i >= 0; i--) {
+            if (fullHistory[i].role === 'user' && normalize(fullHistory[i].content) === currentInputContent) {
+                currentInputIndex = i;
+                break;
             }
         }
+        const previousHistory = currentInputIndex > 0 ? fullHistory.slice(0, currentInputIndex) : [];
 
-        // 5. 更新统计数据
-        CacheState.stats.prefixTokens = CacheState.lockedPrefixTokens;
+        // 4. 指纹计算
+        const newPresetFp = classified.presetPrompts.map(m => simpleHash(normalize(m.content))).join('|');
+        const newOtherFp = classified.otherPrompts.map(m => simpleHash(normalize(m.content))).join('|');
+        const newWorldFp = classified.worldEntries.map(m => simpleHash(normalize(m.content))).join('|');
+        const newHistoryFp = previousHistory.map(m => simpleHash(normalize(m.content))).join('|');
 
-        // 6. 将重组后的数组写回 data.chat
-        data.chat.splice(0, data.chat.length, ...finalChat);
-
-        // 调试输出
-        if (logLevel >= LogLevels.DEBUG) {
-            Logger.log(`重组后消息结构: ${finalChat.map(m => `${m.role}(${m.content.length}字)`).join(' → ')}`, LogLevels.DEBUG);
+        // 5. 初始化或变化检测
+        if (!CacheState.lockedPresetPrompts) {
+            Object.assign(CacheState, {
+                lockedPresetPrompts: classified.presetPrompts,
+                lockedOtherPrompts: classified.otherPrompts,
+                lockedWorldEntries: classified.worldEntries,
+                lockedHistory: previousHistory,
+                presetFp: newPresetFp,
+                otherFp: newOtherFp,
+                worldFp: newWorldFp,
+                historyFp: newHistoryFp
+            });
+            Logger.log(`[初始化] 预设${classified.presetPrompts.length}条, 其他${classified.otherPrompts.length}条, 世界书${classified.worldEntries.length}条, 历史${previousHistory.length}条`, 2);
+            const finalMessages = [
+                ...CacheState.lockedPresetPrompts,
+                ...CacheState.lockedOtherPrompts,
+                ...CacheState.lockedWorldEntries,
+                ...CacheState.lockedHistory,
+                classified.currentUserMsg,
+                ...classified.prefills
+            ];
+            data.chat.splice(0, data.chat.length, ...finalMessages);
+            updateStats();
+            return;
         }
 
+        // 6. 变化检测
+        const presetChanged = newPresetFp !== CacheState.presetFp;
+        const otherChanged = newOtherFp !== CacheState.otherFp;
+        const worldChanged = newWorldFp !== CacheState.worldFp;
+        const historyChanged = newHistoryFp !== CacheState.historyFp;
+
+        const isPresetAppend = presetChanged && newPresetFp.startsWith(CacheState.presetFp);
+        const isOtherAppend = otherChanged && newOtherFp.startsWith(CacheState.otherFp);
+        const isWorldAppend = worldChanged && newWorldFp.startsWith(CacheState.worldFp);
+        const isHistoryAppend = historyChanged && newHistoryFp.startsWith(CacheState.historyFp);
+
+        if ((presetChanged && !isPresetAppend) || (otherChanged && !isOtherAppend) || 
+            (worldChanged && !isWorldAppend) || (historyChanged && !isHistoryAppend)) {
+            Logger.warn('[核心重置] 检测到非追加性变化，自动重置', 1);
+            if (typeof toastr !== 'undefined') toastr.warning('提示词结构变化，缓存前缀已重置。', '缓存优化器');
+            CacheState.lockedPresetPrompts = null;
+            CacheState.lockedOtherPrompts = null;
+            CacheState.lockedWorldEntries = null;
+            CacheState.lockedHistory = null;
+            CacheState.presetFp = null;
+            CacheState.otherFp = null;
+            CacheState.worldFp = null;
+            CacheState.historyFp = null;
+            CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
+            interceptAndRestructurePrompt(data);
+            return;
+        }
+
+        // 7. 收集新增条目
+        let appendedPresets = [];
+        let appendedOthers = [];
+        let appendedWorlds = [];
+
+        if (isPresetAppend) {
+            appendedPresets = classified.presetPrompts.slice(CacheState.lockedPresetPrompts.length);
+            CacheState.lockedPresetPrompts = classified.presetPrompts;
+            CacheState.presetFp = newPresetFp;
+            Logger.warn(`[追加] ${appendedPresets.length} 条新预设提示词`, 2);
+        }
+        if (isOtherAppend) {
+            appendedOthers = classified.otherPrompts.slice(CacheState.lockedOtherPrompts.length);
+            CacheState.lockedOtherPrompts = classified.otherPrompts;
+            CacheState.otherFp = newOtherFp;
+            Logger.warn(`[追加] ${appendedOthers.length} 条其他提示词`, 2);
+        }
+        if (isWorldAppend) {
+            appendedWorlds = classified.worldEntries.slice(CacheState.lockedWorldEntries.length);
+            CacheState.lockedWorldEntries = classified.worldEntries;
+            CacheState.worldFp = newWorldFp;
+            Logger.warn(`[追加] ${appendedWorlds.length} 条世界书条目`, 2);
+        }
+        if (isHistoryAppend) {
+            CacheState.lockedHistory = previousHistory;
+            CacheState.historyFp = newHistoryFp;
+        }
+
+        // 8. 构建最终消息序列
+        const finalMessages = [
+            ...CacheState.lockedPresetPrompts,
+            ...CacheState.lockedOtherPrompts,
+            ...CacheState.lockedWorldEntries,
+            ...CacheState.lockedHistory,
+            ...appendedPresets,
+            ...appendedOthers,
+            ...appendedWorlds,
+            classified.currentUserMsg,
+            ...classified.prefills
+        ];
+
+        data.chat.splice(0, data.chat.length, ...finalMessages);
+
+        // 9. 统计缓存命中
+        const prefixTokens = estimateTokens(
+            CacheState.lockedPresetPrompts.concat(CacheState.lockedOtherPrompts, CacheState.lockedWorldEntries, CacheState.lockedHistory)
+                .map(m => m.content).join('')
+        );
+        CacheState.stats.prefixTokens = prefixTokens;
+        CacheState.stats.hits++;
+        CacheState.stats.savedTokens += prefixTokens;
+        Logger.log(`✅ 缓存命中！静态前缀 ${prefixTokens} tokens`, 2);
+
+        updateStats();
+
     } catch (err) {
-        Logger.error('拦截器致命错误', err);
+        Logger.error('拦截器致命错误', err, 1);
     }
 }
 
-// ==========================================
-// UI & 统计更新
-// ==========================================
-function updateStatsUI() {
+// ========== UI ==========
+function updateStats() {
     const el = document.getElementById('ds-cache-stats');
     if (!el) return;
     const { total, hits, savedTokens, prefixTokens } = CacheState.stats;
     const rate = total ? ((hits / total) * 100).toFixed(1) : '0.0';
-    el.innerHTML = `
-        <span>命中: ${hits}/${total} (${rate}%)</span>
-        <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span>
-        <span style="margin-left:10px;">共省: ~${savedTokens.toLocaleString()}t</span>
-    `;
+    el.innerHTML = `命中: ${hits}/${total} (${rate}%) | 前缀: ~${prefixTokens.toLocaleString()}t | 节省: ~${savedTokens.toLocaleString()}t`;
 }
 
 async function setupUI() {
@@ -274,66 +359,57 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 Cache Optimizer v7</b>
+                <b>🧠 DS V4 缓存优化器 v7.0 (UID精准分类版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">基于 identifier 精准分类 + 动态前缀锁定，自动适应变动，目标 99%+ 缓存命中。</p>
+                <p style="font-size:0.9em;opacity:0.8;">通过 World Info UID 精准识别世界书条目。排序：预设提示词 → 其他提示词 → 世界书条目 → 历史对话 → 当前输入 → 预填充。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
-                <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
-                </label>
+                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用自动化缓存优化</label>
                 <div style="display:flex;align-items:center;gap:8px;margin:8px 0;">
-                    <span style="font-size:0.9em;">日志等级:</span>
-                    <select id="ds-cache-loglevel" style="flex:1;">
+                    <span>日志等级:</span>
+                    <select id="ds-cache-loglevel">
                         <option value="0">关闭</option>
                         <option value="1">简要</option>
                         <option value="2" selected>详细</option>
                         <option value="3">调试</option>
                     </select>
                 </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置所有缓存状态</button>
+                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置</button>
                 <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
         Logger._uiTextarea = document.getElementById('ds-cache-log');
-
-        $('#ds-cache-enable').on('change', function() {
-            CacheState.enabled = $(this).is(':checked');
-            Logger.log(`拦截器状态: ${CacheState.enabled ? '启用' : '停用'}`, LogLevels.BASIC);
-        });
-
-        $('#ds-cache-loglevel').on('change', function() {
-            logLevel = parseInt($(this).val());
-            Logger.log(`日志等级设为: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
-        });
-
+        $('#ds-cache-enable').on('change', function() { CacheState.enabled = $(this).is(':checked'); });
+        $('#ds-cache-loglevel').on('change', function() { logLevel = parseInt($(this).val()); });
         $('#ds-cache-reset').on('click', () => {
-            CacheState.lockedPrefixHash = null;
-            CacheState.lockedPrefixTokens = 0;
+            CacheState.lockedPresetPrompts = null;
+            CacheState.lockedOtherPrompts = null;
+            CacheState.lockedWorldEntries = null;
+            CacheState.lockedHistory = null;
+            CacheState.presetFp = null;
+            CacheState.otherFp = null;
+            CacheState.worldFp = null;
+            CacheState.historyFp = null;
             CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
-            updateStatsUI();
-            Logger.warn('用户手动重置所有缓存状态', LogLevels.BASIC);
+            updateStats();
+            Logger.warn('已强制重置', 1);
         });
-
-        updateStatsUI();
+        updateStats();
     } catch (e) {
         Logger.error('UI初始化失败', e);
     }
 }
 
-// ==========================================
-// 扩展启动
-// ==========================================
 jQuery(async () => {
-    console.log('DS V4 Optimizer v7 loading...');
+    console.log('DS V4 Optimizer v7.0 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-        Logger.log('已挂载 CHAT_COMPLETION_PROMPT_READY 事件钩子', LogLevels.BASIC);
+        Logger.log('[系统] 已挂载钩子', 2);
     } else {
-        Logger.error('无法挂载事件钩子（eventSource 或 event_types 缺失）');
+        Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v7.0 就绪，基于 identifier 的绝对前缀锁定，自动适应所有变动 ══════', LogLevels.BASIC);
+    Logger.log('══════ v7.0 就绪，UID 精准分类世界书 ══════', 2);
 });
