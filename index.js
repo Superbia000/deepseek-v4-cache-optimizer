@@ -33,16 +33,30 @@ const Logger = {
 };
 
 // ==========================================
-// 简单 hash 与 token 估算
+// 通用工具
 // ==========================================
-function simpleHash(str) {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        const char = str.charCodeAt(i);
-        hash = ((hash << 5) - hash) + char;
-        hash |= 0;
+function msgToString(msg) {
+    return `${msg.role}:${msg.name || ''}:${msg.content || ''}`;
+}
+
+function messagesEqual(a, b) {
+    return a.role === b.role && a.content === b.content && (a.name || '') === (b.name || '');
+}
+
+function arraysEqual(arr1, arr2) {
+    if (arr1.length !== arr2.length) return false;
+    for (let i = 0; i < arr1.length; i++) {
+        if (!messagesEqual(arr1[i], arr2[i])) return false;
     }
-    return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
+    return true;
+}
+
+function isSubsequence(short, long) {
+    let i = 0;
+    for (const msg of long) {
+        if (i < short.length && messagesEqual(short[i], msg)) i++;
+    }
+    return i === short.length;
 }
 
 function estimateTokens(text) {
@@ -59,59 +73,33 @@ function estimateTokens(text) {
     return Math.ceil(tokens);
 }
 
+function totalTokensOfMessages(msgs) {
+    return msgs.reduce((sum, m) => sum + estimateTokens(m.content), 0);
+}
+
 // ==========================================
 // 缓存状态机
 // ==========================================
 const CacheState = {
     enabled: true,
-    frozenArray: [],             // 已冻结的消息序列（完整对象）
-    frozenSystemFingerprints: new Set(),  // system 提示词指纹 (role::content)
-    frozenChatMesIds: new Set(),         // 已有 mesId 的消息 ID 集合
-    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 }
+    frozenSystem: [],       // 冻结的系统消息（保持原始顺序，逐条未合并）
+    frozenHistory: [],     // 冻结的对话历史（user / assistant）
+    stats: {
+        total: 0,
+        hits: 0,
+        savedTokens: 0,
+        prefixTokens: 0
+    }
 };
 
-// 生成消息的唯一标识（优先使用 mesId，否则用 role::content 指纹）
-function getMessageKey(msg) {
-    if (msg.mesId !== undefined && msg.mesId !== null) {
-        return `id:${msg.mesId}`;
-    }
-    return `fp:${msg.role}::${msg.content}`;
-}
-
-function isSystemMessage(msg) {
-    return msg.role === 'system';
-}
-
-// 完全重置缓存状态，并用当前 chat 重新初始化
-function handleReset(data, reason) {
-    Logger.warn(`🔄 缓存重置：${reason}`, LogLevels.BASIC);
-    CacheState.frozenArray = [];
-    CacheState.frozenSystemFingerprints.clear();
-    CacheState.frozenChatMesIds.clear();
+function resetState(reason) {
+    CacheState.frozenSystem = [];
+    CacheState.frozenHistory = [];
     CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
+    Logger.warn(`重置所有冻结状态：${reason}`, LogLevels.BASIC);
     if (typeof toastr !== 'undefined') {
-        toastr.warning(`缓存已重置：${reason}`, 'DS 缓存优化器');
+        toastr.warning(`缓存已重置：${reason}`, 'DS V4 Optimizer');
     }
-    // 重新用当前 chat 初始化
-    initializeFromChat(data);
-}
-
-// 首次或重置后从当前 chat 构建冻结状态
-function initializeFromChat(data) {
-    const chat = data.chat;
-    CacheState.frozenArray = chat.map(msg => ({ ...msg })); // 浅拷贝足够
-    for (const msg of CacheState.frozenArray) {
-        const key = getMessageKey(msg);
-        if (isSystemMessage(msg)) {
-            CacheState.frozenSystemFingerprints.add(key);
-        }
-        if (msg.mesId !== undefined && msg.mesId !== null) {
-            CacheState.frozenChatMesIds.add(msg.mesId);
-        }
-    }
-    const tokens = estimateTokens(CacheState.frozenArray.map(m => m.content || '').join(''));
-    CacheState.stats.prefixTokens = tokens;
-    Logger.log(`初始化冻结前缀，${CacheState.frozenArray.length} 条消息，~${tokens} tokens`, LogLevels.BASIC);
 }
 
 // ==========================================
@@ -119,104 +107,128 @@ function initializeFromChat(data) {
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
+    const chat = data.chat;
+    if (!chat || !Array.isArray(chat) || chat.length === 0) return;
+
+    CacheState.stats.total++;
 
     try {
-        CacheState.stats.total++;
-        Logger.log(`==============================`);
-        Logger.log(`拦截器 #${CacheState.stats.total}`);
-
-        if (!data?.chat?.length) return;
-
-        // 首次初始化
-        if (CacheState.frozenArray.length === 0) {
-            initializeFromChat(data);
-            return;
-        }
-
-        const currentChat = data.chat;
-
-        // ---- 检测已冻结的系统提示词是否被删除或修改 ----
-        let systemDeleted = false;
-        for (const frozenMsg of CacheState.frozenArray) {
-            if (!isSystemMessage(frozenMsg)) continue;
-            const key = getMessageKey(frozenMsg);
-            // 在 currentChat 中寻找完全相同的系统消息（用指纹匹配）
-            const found = currentChat.some(msg => isSystemMessage(msg) && getMessageKey(msg) === key);
-            if (!found) {
-                systemDeleted = true;
+        // 找到最后一个 user 消息的索引，将其之前作为前缀（历史+系统），之后作为当前轮次输入
+        let lastUserIdx = -1;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (chat[i].role === 'user') {
+                lastUserIdx = i;
                 break;
             }
         }
-        if (systemDeleted) {
-            handleReset(data, '已冻结的系统提示词被删除或修改，缓存失效');
+        if (lastUserIdx === -1) {
+            // 没有 user 消息，极罕见情况，原样返回
             return;
         }
 
-        // ---- 检测核心对话历史的消息 ID 是否缺失（如用户删除了消息） ----
-        let historyMissing = false;
-        for (const frozenMsg of CacheState.frozenArray) {
-            if (frozenMsg.mesId !== undefined && frozenMsg.mesId !== null) {
-                if (!CacheState.frozenChatMesIds.has(frozenMsg.mesId)) continue; // 不作为历史追踪的
-                const stillExists = currentChat.some(msg => msg.mesId === frozenMsg.mesId);
-                if (!stillExists) {
-                    historyMissing = true;
-                    break;
-                }
-            }
-        }
-        if (historyMissing) {
-            handleReset(data, '对话历史被修改（消息删除或重新生成），缓存失效');
-            return;
-        }
-
-        // ---- 收集新增消息（保持原顺序，去重系统提示词） ----
-        const newMessages = [];
-        for (const msg of currentChat) {
-            const key = getMessageKey(msg);
-            if (isSystemMessage(msg)) {
-                // 如果此系统消息指纹不在冻结集中，则为新增
-                if (!CacheState.frozenSystemFingerprints.has(key)) {
-                    newMessages.push(msg);
-                    // 立即加入指纹防止同一轮内重复
-                    CacheState.frozenSystemFingerprints.add(key);
-                }
+        const prefixPart = chat.slice(0, lastUserIdx);      // 系统 + 历史
+        const currentTurn = chat.slice(lastUserIdx);        // [user, (可能的assistant prefill)]
+        
+        // 分离系统消息与对话历史
+        const newSystemMessages = [];
+        const newHistory = [];
+        for (const msg of prefixPart) {
+            if (msg.role === 'system') {
+                newSystemMessages.push(msg);
             } else {
-                // 非系统消息：通过 mesId 或指纹判断是否新增
-                const isNew = msg.mesId !== undefined && msg.mesId !== null
-                    ? !CacheState.frozenChatMesIds.has(msg.mesId)
-                    : !CacheState.frozenSystemFingerprints.has(key) && !CacheState.frozenChatMesIds.has(msg.mesId); // 兜底
-                if (isNew) {
-                    newMessages.push(msg);
-                    if (msg.mesId !== undefined && msg.mesId !== null) {
-                        CacheState.frozenChatMesIds.add(msg.mesId);
-                    }
-                }
+                newHistory.push(msg);
             }
         }
 
-        // ---- 组装最终消息序列 ----
-        const finalMessages = [...CacheState.frozenArray, ...newMessages];
-
-        // 计算统计
-        const prefixTokens = estimateTokens(CacheState.frozenArray.map(m => m.content || '').join(''));
-        CacheState.stats.prefixTokens = prefixTokens;
-        CacheState.stats.hits++;
-        CacheState.stats.savedTokens += prefixTokens;
-
-        if (newMessages.length > 0) {
-            Logger.log(`✅ 缓存命中！冻结前缀 ${CacheState.frozenArray.length} 条不变，新增 ${newMessages.length} 条`, LogLevels.BASIC);
-        } else {
-            Logger.log(`✅ 完全命中，无新增消息`, LogLevels.DETAILED);
+        // ---------- 初始化状态 ----------
+        if (CacheState.frozenSystem.length === 0 && CacheState.frozenHistory.length === 0) {
+            // 首次运行，直接冻结当前前缀
+            CacheState.frozenSystem = [...newSystemMessages];
+            CacheState.frozenHistory = [...newHistory];
+            const finalChat = [...CacheState.frozenSystem, ...CacheState.frozenHistory, ...currentTurn];
+            data.chat.splice(0, data.chat.length, ...finalChat);
+            CacheState.stats.hits++;
+            const prefixTokens = totalTokensOfMessages([...CacheState.frozenSystem, ...CacheState.frozenHistory]);
+            CacheState.stats.prefixTokens = prefixTokens;
+            CacheState.stats.savedTokens += prefixTokens;
+            Logger.log(`首次冻结 ${CacheState.frozenSystem.length} 条系统消息 + ${CacheState.frozenHistory.length} 条对话历史`, LogLevels.BASIC);
+            return;
         }
 
-        // 更新冻结数组（扩展至包含新消息）
-        CacheState.frozenArray = finalMessages.map(msg => ({ ...msg }));
+        // ---------- 检测系统消息变化 ----------
+        const systemChanged = !arraysEqual(CacheState.frozenSystem, newSystemMessages);
+        const historyChanged = !arraysEqual(CacheState.frozenHistory, newHistory);
 
-        // 替换 data.chat 为新序列
-        data.chat.splice(0, data.chat.length, ...finalMessages);
+        if (!systemChanged && !historyChanged) {
+            // 完美命中：前缀完全不变，直接拼接
+            const finalChat = [...CacheState.frozenSystem, ...CacheState.frozenHistory, ...currentTurn];
+            data.chat.splice(0, data.chat.length, ...finalChat);
+            CacheState.stats.hits++;
+            const prefixTokens = totalTokensOfMessages([...CacheState.frozenSystem, ...CacheState.frozenHistory]);
+            CacheState.stats.savedTokens += prefixTokens;
+            Logger.log('✅ 缓存完美命中', LogLevels.DETAILED);
+            return;
+        }
 
+        // ---------- 变化处理 ----------
+        // 1. 检查是否仅增加了系统消息（顺序保持，原有部分保留）
+        if (!historyChanged && isSubsequence(CacheState.frozenSystem, newSystemMessages)) {
+            // 新增系统消息
+            const addedSystem = newSystemMessages.slice(CacheState.frozenSystem.length);
+            Logger.log(`检测到 ${addedSystem.length} 条新增系统指令，追加至历史之后`, LogLevels.BASIC);
+            // 更新冻结状态
+            CacheState.frozenSystem = [...newSystemMessages];
+            const finalChat = [...CacheState.frozenSystem, ...CacheState.frozenHistory, ...currentTurn];
+            data.chat.splice(0, data.chat.length, ...finalChat);
+            CacheState.stats.hits++;
+            const prefixTokens = totalTokensOfMessages([...CacheState.frozenSystem, ...CacheState.frozenHistory]);
+            CacheState.stats.savedTokens += prefixTokens;
+            CacheState.stats.prefixTokens = prefixTokens;
+            return;
+        }
+
+        // 2. 发生了系统消息删除或修改，或对话历史变化
+        const prevSystemTokens = totalTokensOfMessages(CacheState.frozenSystem);
+        const newSystemTokens = totalTokensOfMessages(newSystemMessages);
+        const systemChangeRatio = prevSystemTokens > 0 ? Math.abs(newSystemTokens - prevSystemTokens) / prevSystemTokens : 1;
+
+        const prevHistoryTokens = totalTokensOfMessages(CacheState.frozenHistory);
+        const newHistoryTokens = totalTokensOfMessages(newHistory);
+        const historyChangeRatio = prevHistoryTokens > 0 ? Math.abs(newHistoryTokens - prevHistoryTokens) / prevHistoryTokens : 1;
+
+        const isDrasticChange = (systemChangeRatio > 0.3 && newSystemTokens < prevSystemTokens * 0.7) // 系统消息大幅缩减
+            || (historyChangeRatio > 0.3 && newHistoryTokens < prevHistoryTokens * 0.7) // 历史大幅缩减
+            || (systemChanged && !isSubsequence(CacheState.frozenSystem, newSystemMessages) && newSystemTokens < prevSystemTokens * 0.5)
+            || (historyChanged && !isSubsequence(CacheState.frozenHistory, newHistory) && newHistoryTokens < prevHistoryTokens * 0.5);
+
+        if (isDrasticChange) {
+            resetState('检测到大规模删减或更换预设/角色卡');
+            // 重置后重新初始化
+            CacheState.frozenSystem = [...newSystemMessages];
+            CacheState.frozenHistory = [...newHistory];
+            const finalChat = [...CacheState.frozenSystem, ...CacheState.frozenHistory, ...currentTurn];
+            data.chat.splice(0, data.chat.length, ...finalChat);
+            CacheState.stats.hits++;
+            const prefixTokens = totalTokensOfMessages([...CacheState.frozenSystem, ...CacheState.frozenHistory]);
+            CacheState.stats.prefixTokens = prefixTokens;
+            CacheState.stats.savedTokens += prefixTokens;
+            Logger.warn('已重置并重建冻结状态', LogLevels.BASIC);
+            return;
+        }
+
+        // 3. 非剧烈变化：更新冻结状态，部分缓存失效
+        Logger.warn('提示词或对话历史发生小幅变化，缓存局部失效，冻结状态已更新', LogLevels.BASIC);
+        CacheState.frozenSystem = [...newSystemMessages];
+        CacheState.frozenHistory = [...newHistory];
+        const finalChat = [...CacheState.frozenSystem, ...CacheState.frozenHistory, ...currentTurn];
+        data.chat.splice(0, data.chat.length, ...finalChat);
+        // 仍计为一次命中（因为后续会重新稳定）
+        CacheState.stats.hits++;
+        const prefixTokens = totalTokensOfMessages([...CacheState.frozenSystem, ...CacheState.frozenHistory]);
+        CacheState.stats.savedTokens += prefixTokens;
+        CacheState.stats.prefixTokens = prefixTokens;
     } catch (err) {
-        Logger.error('拦截器致命错误', err);
+        Logger.error('拦截器错误', err);
     }
 }
 
@@ -232,6 +244,7 @@ function updateStatsUI() {
         <span>命中: ${hits}/${total} (${rate}%)</span>
         <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span>
         <span style="margin-left:10px;">共省: ~${savedTokens.toLocaleString()}t</span>
+        <span style="margin-left:10px;">冻结消息: ${CacheState.frozenSystem.length + CacheState.frozenHistory.length} 条</span>
     `;
 }
 
@@ -244,7 +257,7 @@ async function setupUI() {
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">绝对冻结 + mesId 追踪，自动适应变化，无需手动重置。</p>
+                <p style="font-size:0.9em;opacity:0.8;">逐条冻结 · 新指令后置 · 极致缓存命中率</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
                 <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
                     <input type="checkbox" id="ds-cache-enable" checked> 启用拦截器
@@ -258,7 +271,7 @@ async function setupUI() {
                         <option value="3">调试</option>
                     </select>
                 </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置静态核心</button>
+                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置冻结状态</button>
                 <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
@@ -273,13 +286,8 @@ async function setupUI() {
             Logger.log(`日志等级设为: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
         });
         $('#ds-cache-reset').on('click', () => {
-            CacheState.frozenArray = [];
-            CacheState.frozenSystemFingerprints.clear();
-            CacheState.frozenChatMesIds.clear();
-            CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
+            resetState('手动重置');
             updateStatsUI();
-            Logger.warn('已完全重置（手动）', LogLevels.BASIC);
-            if (typeof toastr !== 'undefined') toastr.info('缓存核心已手动重置');
         });
         updateStatsUI();
     } catch (e) {
@@ -291,7 +299,7 @@ async function setupUI() {
 // 启动
 // ==========================================
 jQuery(async () => {
-    console.log('DS V4 Optimizer v4 loading...');
+    console.log('DS V4 Optimizer v4.1 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
@@ -299,5 +307,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v4.1 就绪，绝对前缀冻结 + 自动变更检测 ══════', LogLevels.BASIC);
+    Logger.log('══════ v4.1 就绪，逐条冻结 + 新增指令后置 ══════', LogLevels.BASIC);
 });
