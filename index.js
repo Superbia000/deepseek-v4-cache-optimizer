@@ -1,5 +1,6 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
+import { callPopup } from '../../../popup.js';
 
 // ==========================================
 // 日志系统
@@ -12,11 +13,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v6.3] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v6.4] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v6.3] 🔴 ${msg}`);
+        console.error(`[DS Cache v6.4] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v6.3] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v6.4] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -32,7 +33,8 @@ const Logger = {
     simpleHash: (str) => {
         let hash = 0;
         for (let i = 0; i < str.length; i++) {
-            hash = ((hash << 5) - hash) + str.charCodeAt(i);
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
             hash |= 0;
         }
         return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
@@ -54,21 +56,21 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机 v6.3
+// 状态机
 // ==========================================
 const CacheState = {
     enabled: true,
-    backgroundBlock: null,      // 固定背景消息（system + 固定提示词），按首次出现顺序去重
-    dialogueHistory: null,      // 对话历史（真实用户/AI消息），按对话轮次顺序
+    backgroundBlock: null,
+    dialogueHistory: null,
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
     pendingReset: false,
-    awaitingDialog: false,
 };
 
 // ==========================================
-// 消息分类（与原始聊天关联）
+// 消息分类
 // ==========================================
 function classifyMessage(msg, originalChat) {
+    // 1. 先尝试精确匹配原始消息
     const orig = originalChat.find(m => m.mes === msg.content);
     if (orig) {
         if (orig.is_user) return { isRealUser: true, isRealAI: false, isInstructional: false };
@@ -78,7 +80,20 @@ function classifyMessage(msg, originalChat) {
         }
         return { isRealUser: false, isRealAI: false, isInstructional: true };
     }
-    return { isRealUser: false, isRealAI: false, isInstructional: true };
+
+    // 2. 未匹配到原始消息：根据角色和内容启发式判断
+    // 若角色是 system，必然是提示词
+    if (msg.role === 'system') return { isRealUser: false, isRealAI: false, isInstructional: true };
+    // 若角色是 user 且内容极短且含有特殊符号，可能是世界书注入，否则视为真实用户（保守）
+    if (msg.role === 'user') {
+        // 简单启发：如果内容被包裹在 {{ }} 或含有 setvar 等标记，大概率是提示词
+        if (/^\s*\{.*\}\s*$/.test(msg.content) || msg.content.includes('{{setvar')) {
+            return { isRealUser: false, isRealAI: false, isInstructional: true };
+        }
+        return { isRealUser: true, isRealAI: false, isInstructional: false };
+    }
+    // assistant 且未匹配，默认为真实 AI
+    return { isRealUser: false, isRealAI: true, isInstructional: false };
 }
 
 function createMessageObj(msg, cls, uid) {
@@ -94,19 +109,16 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理当前请求流
+// 处理流
 // ==========================================
 function processStream(stream, originalChat) {
-    // 找预填充
     let prefillStart = stream.length;
     while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
         prefillStart--;
     }
     const prefills = stream.slice(prefillStart);
-
     const nonPrefill = stream.slice(0, prefillStart);
 
-    // 找出当前用户输入（非预填充部分最后一个 isRealUser 的 user 消息）
     let currentUserMsg = null;
     const others = [];
     for (let i = nonPrefill.length - 1; i >= 0; i--) {
@@ -119,8 +131,6 @@ function processStream(stream, originalChat) {
             others.unshift(obj);
         }
     }
-    // others 现在保持原始顺序，但可能混合了 system 和其他角色
-
     return { currentUserMsg, others, prefills };
 }
 
@@ -133,7 +143,7 @@ function interceptAndRestructurePrompt(data) {
     try {
         CacheState.stats.total++;
         Logger.log(`==============================`);
-        Logger.log(`[请求 #${CacheState.stats.total}] 开始处理...`);
+        Logger.log(`[请求 #${CacheState.stats.total}] 开始...`);
 
         if (!data?.chat?.length) return;
         const stream = data.chat;
@@ -142,95 +152,74 @@ function interceptAndRestructurePrompt(data) {
 
         const { currentUserMsg, others, prefills } = processStream(stream, originalChat);
 
-        // 1. 分离背景信息（system + 某些无对应真实用户的提示词）和对话历史
-        // 我们定义背景信息：所有 isInstructional 且不在当前用户输入之前的对话历史中。
-        // 简单规则：遍历 others，将 isInstructional 的消息归入背景，非 isInstructional 归入对话。
         const currentBg = others.filter(m => m.isInstructional);
-        const currentDialogue = others.filter(m => !m.isInstructional);  // 真实用户/助手对话
+        const currentDialogue = others.filter(m => !m.isInstructional);
 
-        // 2. 背景信息去重（按归一化内容）
+        // 背景去重
         const seenBgNorm = new Set();
         const dedupBg = [];
         for (const m of currentBg) {
             if (!seenBgNorm.has(m.norm)) {
                 seenBgNorm.add(m.norm);
                 dedupBg.push(m);
-            } else {
-                Logger.log(`[背景去重] 跳过重复: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG);
             }
         }
 
-        // 3. 初始化状态
+        // 初始化
         if (!CacheState.backgroundBlock || !CacheState.dialogueHistory) {
             CacheState.backgroundBlock = dedupBg;
             CacheState.dialogueHistory = currentDialogue;
-            Logger.log(`[初始化] 背景块: ${dedupBg.length} 条, 对话历史: ${currentDialogue.length} 条`, LogLevels.BASIC);
+            Logger.log(`[初始化] 背景:${dedupBg.length}条, 对话历史:${currentDialogue.length}条`, LogLevels.BASIC);
             buildAndApply(stream, dedupBg, currentDialogue, currentUserMsg, prefills);
-            updateStats(true);
+            updateStats();
             return;
         }
 
-        // 4. 检测背景块是否重大变化
-        const bgSimilarity = computeSetSimilarity(
-            new Set(CacheState.backgroundBlock.map(m => m.norm)),
-            new Set(dedupBg.map(m => m.norm))
-        );
-        Logger.log(`[背景块相似度] ${(bgSimilarity*100).toFixed(1)}%`, LogLevels.DEBUG);
+        // 检测背景变化
+        const bgSetOld = new Set(CacheState.backgroundBlock.map(m => m.norm));
+        const bgSetNew = new Set(dedupBg.map(m => m.norm));
+        const bgSim = computeSetSimilarity(bgSetOld, bgSetNew);
+        Logger.log(`[背景相似度] ${(bgSim*100).toFixed(1)}%`, LogLevels.DEBUG);
 
-        if (bgSimilarity < 0.9) {
-            triggerResetAlert('检测到系统提示词核心变动（如更换角色卡或预设），是否需要重置缓存前缀？');
-            // 本次不修改，直接发送原始消息
+        if (bgSim < 0.9) {
+            Logger.warn('[重大变动] 背景提示词相似度不足，建议重置', LogLevels.BASIC);
+            triggerResetAlert('检测到角色卡/预设变更，为保障缓存命中率，建议重置前缀。');
             return;
         }
 
-        // 5. 对话历史增量匹配：找出新增的对话条目
-        // 使用 uid 比较（对话内容可能不同，准确的 uid 能识别同一轮对话的重新生成）
-        const newDialogueEntries = findNewEntries(CacheState.dialogueHistory, currentDialogue);
-        if (newDialogueEntries.length > 0) {
-            Logger.warn(`[对话增量] 新增 ${newDialogueEntries.length} 条对话`, LogLevels.DETAILED);
-            newDialogueEntries.forEach(e => Logger.warn(`  + ${e.role}: ${e.content.substring(0, 40)}...`, LogLevels.DEBUG));
-            CacheState.dialogueHistory = CacheState.dialogueHistory.concat(newDialogueEntries);
+        // 对话增量
+        const oldUids = new Set(CacheState.dialogueHistory.map(m => m.uid));
+        const newDialogue = currentDialogue.filter(m => !oldUids.has(m.uid));
+        if (newDialogue.length > 0) {
+            Logger.warn(`[对话增量] +${newDialogue.length}条`, LogLevels.DETAILED);
+            CacheState.dialogueHistory = CacheState.dialogueHistory.concat(newDialogue);
         }
 
-        // 6. 检测对话历史是否被大幅删减
-        if (currentDialogue.length < CacheState.dialogueHistory.length * 0.7) {
-            triggerResetAlert('检测到对话历史被大幅删除，可能导致缓存命中率降低，是否重置前缀？');
+        // 大幅度删减检测
+        if (currentDialogue.length < CacheState.dialogueHistory.length * 0.6) {
+            Logger.warn('[大幅删减] 对话历史被大量删除', LogLevels.BASIC);
+            triggerResetAlert('对话历史被大幅度删减，可能会影响缓存命中，建议重置。');
             return;
         }
 
-        // 7. 构建最终序列：背景块（不变） + 对话历史（锁定前缀） + 当前用户输入 + 预填充
         buildAndApply(stream, CacheState.backgroundBlock, CacheState.dialogueHistory, currentUserMsg, prefills);
-        updateStats(false);
-
+        updateStats();
     } catch (err) {
-        Logger.error('拦截器致命错误', err);
+        Logger.error('拦截器错误', err);
     }
 }
 
-function buildAndApply(stream, bgBlock, dialogueHist, currentUser, prefills) {
+function buildAndApply(stream, bg, dialogue, user, prefills) {
     const final = [];
-    // 背景块
-    bgBlock.forEach(b => final.push({ role: b.role, content: b.content }));
-    // 对话历史
-    dialogueHist.forEach(d => final.push({ role: d.role, content: d.content }));
-    // 当前用户输入
-    if (currentUser) final.push({ role: currentUser.role, content: currentUser.content });
-    // 预填充
+    bg.forEach(b => final.push({ role: b.role, content: b.content }));
+    dialogue.forEach(d => final.push({ role: d.role, content: d.content }));
+    if (user) final.push({ role: user.role, content: user.content });
     prefills.forEach(p => final.push({ role: p.role, content: p.content }));
 
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[最终序列] 背景:${bgBlock.length} 对话:${dialogueHist.length} 用户输入:${currentUser?1:0} 预填充:${prefills.length}`, LogLevels.DEBUG);
-        final.forEach((m, i) => {
-            Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG);
-        });
+        Logger.log(`[最终序列] 背景:${bg.length} 对话:${dialogue.length} 用户:${user?1:0} 预填充:${prefills.length}`, LogLevels.DEBUG);
     }
     stream.splice(0, stream.length, ...final);
-}
-
-// 找出 newSeq 中不在 oldSeq 中的条目（基于 uid）
-function findNewEntries(oldSeq, newSeq) {
-    const oldUids = new Set(oldSeq.map(m => m.uid));
-    return newSeq.filter(m => !oldUids.has(m.uid));
 }
 
 function computeSetSimilarity(setA, setB) {
@@ -241,10 +230,10 @@ function computeSetSimilarity(setA, setB) {
     return union.size === 0 ? 1 : intersection / union.size;
 }
 
-function updateStats(isInit = false) {
+function updateStats() {
     const bgTokens = CacheState.backgroundBlock?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
-    const dialogueTokens = CacheState.dialogueHistory?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
-    CacheState.stats.prefixTokens = bgTokens + dialogueTokens;
+    const dlTokens = CacheState.dialogueHistory?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
+    CacheState.stats.prefixTokens = bgTokens + dlTokens;
     CacheState.stats.hits++;
     CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
     updateStatsUI();
@@ -255,88 +244,115 @@ function updateStatsUI() {
     if (!el) return;
     const { total, hits, savedTokens, prefixTokens } = CacheState.stats;
     const rate = total ? ((hits / total) * 100).toFixed(1) : '0.0';
-    el.innerHTML = `
-        <span>命中: ${hits}/${total} (${rate}%)</span>
-        <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span>
-        <span style="margin-left:10px;">节省: ~${savedTokens.toLocaleString()}t</span>
-    `;
+    el.innerHTML = `<span>命中: ${hits}/${total} (${rate}%)</span> <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span> <span style="margin-left:10px;">节省: ~${savedTokens.toLocaleString()}t</span>`;
 }
 
 // ==========================================
-// 弹窗逻辑（同前）
+// 弹窗系统（完全自定义，确保显示）
 // ==========================================
+let currentDialog = null;
+
 function triggerResetAlert(reason) {
-    if (CacheState.pendingReset || CacheState.awaitingDialog) return;
-    CacheState.awaitingDialog = true;
+    if (CacheState.pendingReset) return;
+    Logger.warn(`[弹窗触发] ${reason}`, LogLevels.BASIC);
+    CacheState.pendingReset = true;
     showResetDialog(reason);
 }
+
 function showResetDialog(reason) {
-    const dialog = document.getElementById('ds-reset-dialog');
-    const text = document.getElementById('ds-reset-dialog-text');
-    if (!dialog || !text) {
-        if (confirm(reason + '\n确定重置？取消保持。')) performReset();
-        CacheState.awaitingDialog = false;
-        return;
+    // 移除可能残留的旧弹窗
+    if (currentDialog) {
+        currentDialog.remove();
+        currentDialog = null;
     }
-    text.textContent = reason;
-    dialog.style.display = 'flex';
-    CacheState.pendingReset = true;
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:100000; display:flex; align-items:center; justify-content:center;';
+    overlay.id = 'ds-reset-overlay';
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'background:#2b2b2b; color:#ddd; padding:24px; border-radius:12px; box-shadow:0 0 30px black; max-width:480px; width:90%; font-family:sans-serif;';
+    dialog.innerHTML = `
+        <h3 style="margin-top:0; color:#ffaa00;">⚠️ 缓存优化器提醒</h3>
+        <p style="margin:16px 0;">${reason}</p>
+        <div style="display:flex; justify-content:flex-end; gap:10px;">
+            <button id="ds-dialog-cancel" style="padding:8px 20px; background:#555; color:white; border:none; border-radius:6px; cursor:pointer;">取消</button>
+            <button id="ds-dialog-reset" style="padding:8px 20px; background:#c0392b; color:white; border:none; border-radius:6px; cursor:pointer;">重置前缀</button>
+        </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    currentDialog = overlay;
+
+    document.getElementById('ds-dialog-cancel').onclick = () => {
+        Logger.warn('用户选择不重置', LogLevels.BASIC);
+        hideResetDialog();
+    };
+    document.getElementById('ds-dialog-reset').onclick = () => {
+        performReset();
+    };
+
+    // 点击遮罩外部也可取消（可选）
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            hideResetDialog();
+        }
+    });
 }
+
 function hideResetDialog() {
-    const d = document.getElementById('ds-reset-dialog');
-    if (d) d.style.display = 'none';
+    if (currentDialog) {
+        currentDialog.remove();
+        currentDialog = null;
+    }
     CacheState.pendingReset = false;
-    CacheState.awaitingDialog = false;
 }
+
 function performReset() {
     CacheState.backgroundBlock = null;
     CacheState.dialogueHistory = null;
     CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
     updateStatsUI();
-    Logger.warn('[重置] 前缀已清空，下次请求自动重建', LogLevels.BASIC);
+    Logger.warn('[重置] 前缀已清空，下次请求重建', LogLevels.BASIC);
     hideResetDialog();
 }
 
 // ==========================================
-// UI
+// UI 初始化
 // ==========================================
 async function setupUI() {
     try {
+        // 扩展面板
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS Cache Optimizer v6.3 (背景/对话分离)</b>
+                <b>🧠 DS Cache Optimizer v6.4</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">分离固定背景与动态对话，彻底解决插入位置变动导致的序列膨胀，实现稳定前缀。</p>
+                <p style="font-size:0.9em;opacity:0.7;">分离固定背景与动态对话，完美命中前缀缓存。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
-                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
-                <div style="margin:8px 0;">
-                    <span style="font-size:0.9em;">日志等级:</span>
-                    <select id="ds-cache-loglevel" style="flex:1;">
+                <label class="checkbox_label">
+                    <input type="checkbox" id="ds-cache-enable" checked> 启用优化
+                </label>
+                <div style="margin:10px 0;">
+                    <span>日志等级:</span>
+                    <select id="ds-cache-loglevel" style="margin-left:8px;">
                         <option value="0">关闭</option><option value="1">简要</option>
                         <option value="2" selected>详细</option><option value="3">调试</option>
                     </select>
                 </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:5px 0;">🔄 强制重置</button>
-                <button id="ds-cache-clearlog" class="menu_button" style="width:100%;margin:5px 0;">🗑️ 清空日志</button>
-                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
-            </div>
-        </div>
-        <div id="ds-reset-dialog" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:9999; align-items:center; justify-content:center;">
-            <div style="background:#2b2b2b; padding:20px; border-radius:8px; max-width:500px;">
-                <h3>缓存优化器提醒</h3>
-                <p id="ds-reset-dialog-text"></p>
-                <div style="display:flex; justify-content:flex-end; gap:8px;">
-                    <button id="ds-reset-dialog-cancel" class="menu_button" style="background:#444;">取消</button>
-                    <button id="ds-reset-dialog-reset" class="menu_button" style="background:#c0392b; color:white;">重置前缀</button>
-                </div>
+                <button id="ds-cache-reset" class="menu_button" style="width:100%;">🔄 强制重置缓存前缀</button>
+                <button id="ds-cache-clearlog" class="menu_button" style="width:100%; margin-top:5px;">🗑️ 清空日志</button>
+                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%; height:180px; background:#121212; color:#4af626; font-family:Consolas,monospace; font-size:11px; margin-top:8px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
+
         Logger._uiTextarea = document.getElementById('ds-cache-log');
 
+        // 事件绑定
         $('#ds-cache-enable').on('change', function() {
             CacheState.enabled = $(this).is(':checked');
             Logger.log(`插件 ${CacheState.enabled?'启用':'停用'}`, LogLevels.BASIC);
@@ -349,25 +365,38 @@ async function setupUI() {
         $('#ds-cache-clearlog').on('click', () => {
             if (Logger._uiTextarea) Logger._uiTextarea.value = '';
         });
-        $('#ds-reset-dialog-cancel').on('click', () => {
-            Logger.warn('用户取消重置', LogLevels.BASIC);
-            hideResetDialog();
-        });
-        $('#ds-reset-dialog-reset').on('click', () => performReset());
+
+        // 添加右上角菜单按钮（集成到SillyTavern的功能菜单）
+        if (window.PowerUser?.addToolbarButton) {
+            window.PowerUser.addToolbarButton('🧠 重置DS缓存', performReset, '重置DeepSeek缓存前缀');
+            Logger.log('[菜单] 已添加快捷重置按钮', LogLevels.BASIC);
+        } else {
+            // fallback: 如果SillyTavern版本不支持，我们手动添加一个浮动按钮
+            const btn = document.createElement('div');
+            btn.style.cssText = 'position:fixed; bottom:20px; right:20px; z-index:9999; background:#c0392b; color:white; padding:10px 15px; border-radius:8px; cursor:pointer; font-weight:bold; box-shadow:0 0 10px black;';
+            btn.textContent = '🧠 重置DS前缀';
+            btn.onclick = performReset;
+            document.body.appendChild(btn);
+            Logger.log('[菜单] 已添加浮动重置按钮', LogLevels.BASIC);
+        }
+
         updateStatsUI();
     } catch (e) {
         Logger.error('UI初始化错误', e);
     }
 }
 
+// ==========================================
 // 启动
+// ==========================================
 jQuery(async () => {
+    console.log('DS Cache Optimizer v6.4 loading...');
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         Logger.log('[系统] 钩子已挂载', LogLevels.BASIC);
     } else {
-        Logger.error('无法挂载关键事件钩子');
+        Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.3 就绪，策略：背景锁定 + 对话增量 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，背景锁定+对话增量+全新弹窗 ══════', LogLevels.BASIC);
 });
