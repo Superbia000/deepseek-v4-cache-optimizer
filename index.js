@@ -1,8 +1,9 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
+import { POPUP_TYPE, callGenericPopup } from '../../../popup.js';
 
 // ==========================================
-// 日志系统
+// 日志系统 (增强版，支持日志等级)
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 let logLevel = 2;
@@ -13,11 +14,11 @@ function logAt(level, type, msg) {
     const prefix = `[${time}]`;
     const fullMsg = `${prefix} ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS V4 Opt v5] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS V4 Opt v5.1] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS V4 Opt v5] 🔴 ${msg}`);
+        console.error(`[DS V4 Opt v5.1] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS V4 Opt v5] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS V4 Opt v5.1] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -52,6 +53,7 @@ const Logger = {
         }
         return Math.ceil(tokens);
     },
+    // 标准化字符串用于指纹比对（消除空格和标点差异）
     normalizeForFingerprint: (text) => {
         return text
             .replace(/\s+/g, ' ')
@@ -63,110 +65,29 @@ const Logger = {
 };
 
 // ==========================================
-// 缓存状态机
+// 缓存状态机 (v5.1 核心：位置锁定与增量追加，增强去重与自适应重置)
 // ==========================================
 const CacheState = {
     enabled: true,
+    // 核心：被“钉住”的提示词序列 (包含内容和角色的对象列表)
     pinnedSequence: null,
+    // 指纹快照，用于快速判断核心内容是否发生变化
     cachedFingerprint: null,
-    lastSentSequence: null,
+    // 记录上一轮请求的消息指纹，用于快速比对缓存命中
+    lastSentFingerprint: null,
+    // 统计
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
-    // 新增：是否已触发重置弹窗
-    resetDialogShown: false
+    // 新增：待重置的原因，用于触发弹窗
+    pendingResetReason: null,
+    // 新增：记录当前角色ID和预设名称，用于检测变更
+    currentCharacterId: null,
+    currentPresetName: null
 };
 
 // ==========================================
-// 预设监控
+// 核心拦截与重组 (v5.1 完全重写)
 // ==========================================
-let lastPresetName = null;
-
-function getCurrentPresetName() {
-    try {
-        const context = getContext();
-        return context?.power_user?.preset;
-    } catch (e) {
-        return null;
-    }
-}
-
-function monitorPresetChange() {
-    const currentPreset = getCurrentPresetName();
-    if (lastPresetName !== null && currentPreset !== lastPresetName) {
-        Logger.warn(`[预设变更] 检测到预设从 "${lastPresetName}" 变更为 "${currentPreset}"`, LogLevels.BASIC);
-        showResetDialog('预设变更', `检测到预设已从 "${lastPresetName}" 变更为 "${currentPreset}"。`);
-    }
-    lastPresetName = currentPreset;
-}
-
-// ==========================================
-// 弹窗工具
-// ==========================================
-function showResetDialog(reason, detail) {
-    // 避免重复弹窗
-    if (CacheState.resetDialogShown) {
-        Logger.log(`[弹窗] 弹窗已存在，跳过重复触发`, LogLevels.DEBUG);
-        return;
-    }
-    CacheState.resetDialogShown = true;
-
-    const message = `
-        <div style="font-size: 1.1em; margin-bottom: 10px;">
-            <b>DeepSeek 缓存优化器</b>
-        </div>
-        <div style="margin-bottom: 15px;">
-            检测到核心提示词变更：<b>${reason}</b>。
-            <br>${detail || '建议重置缓存前缀以优化性能。'}
-        </div>
-        <div style="font-size: 0.9em; opacity: 0.8;">
-            请选择是否重置缓存：
-        </div>
-    `;
-
-    const confirmButton = {
-        text: '重置',
-        result: true,
-        classes: ['btn', 'btn-primary'],
-        action: () => {
-            resetCache();
-            CacheState.resetDialogShown = false;
-        }
-    };
-
-    const cancelButton = {
-        text: '取消',
-        result: false,
-        classes: ['btn', 'btn-default'],
-        action: () => {
-            Logger.warn(`[弹窗] 用户选择不重置缓存，可能导致缓存未命中`, LogLevels.BASIC);
-            CacheState.resetDialogShown = false;
-        }
-    };
-
-    // 使用 SillyTavern 内置弹窗 API
-    if (typeof callGenericPopup === 'function') {
-        callGenericPopup(message, POPUP_TYPE.CONFIRM, '', { customButtons: [confirmButton, cancelButton] });
-    } else {
-        // 降级处理：使用原生 confirm
-        Logger.warn(`[弹窗] 无法使用内置弹窗 API，降级为原生 confirm`, LogLevels.DEBUG);
-        if (confirm(`${reason}。是否重置缓存前缀？`)) {
-            resetCache();
-        }
-    }
-}
-
-function resetCache() {
-    CacheState.pinnedSequence = null;
-    CacheState.cachedFingerprint = null;
-    CacheState.lastSentSequence = null;
-    CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
-    updateStatsUI();
-    Logger.warn('已重置所有状态。下一次请求时将自动重新锁定提示词前缀。', LogLevels.BASIC);
-}
-
-// ==========================================
-// 核心拦截与重组
-// ==========================================
-function interceptAndRestructurePrompt(data) {
+async function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
 
     try {
@@ -177,10 +98,21 @@ function interceptAndRestructurePrompt(data) {
         if (!data?.chat?.length) return;
         const stream = data.chat; // 引用原始数组
 
-        // --- 第 1 步: 解析当前消息数组 ---
-        const currentMessages = [];
+        // --- 第 0 步: 检查待处理的重置请求 (弹窗交互) ---
+        if (CacheState.pendingResetReason) {
+            const shouldReset = await showResetConfirmationPopup(CacheState.pendingResetReason);
+            if (shouldReset) {
+                resetAllState();
+                Logger.warn('[用户确认重置] 状态已清空，将在下次请求重新初始化。', LogLevels.BASIC);
+                return; // 重置后，本次请求不修改，让后续请求重新初始化
+            } else {
+                Logger.warn('[用户取消重置] 将忽略重置请求，继续使用当前状态。', LogLevels.BASIC);
+                CacheState.pendingResetReason = null;
+            }
+        }
 
-        // 为了区分用户真实对话和可能混在末尾的AI预填充，我们检查数组尾部连续的'assistant'消息
+        // --- 第 1 步: 解析当前消息数组，并应用去重逻辑 ---
+        const currentMessagesRaw = [];
         let prefillStartIndex = stream.length;
         while (prefillStartIndex > 0 && stream[prefillStartIndex - 1].role === 'assistant') {
             prefillStartIndex--;
@@ -189,60 +121,67 @@ function interceptAndRestructurePrompt(data) {
         for (let i = 0; i < stream.length; i++) {
             const msg = stream[i];
             const isPrefill = (i >= prefillStartIndex && msg.role === 'assistant');
-            currentMessages.push({
+            currentMessagesRaw.push({
                 role: msg.role,
                 content: msg.content || '',
-                isPrefill: isPrefill
+                isPrefill: isPrefill,
+                isManualUserOrAI: false // 将在后续步骤中标记
             });
         }
 
-        // --- 第 2 步: 判断状态 (初始化、恢复或常规运行) ---
-        // 首次运行，或用户手动重置后
+        // 标记手动用户输入和 AI 主动回复 (不包含提示词注入)
+        const currentNonPrefill = currentMessagesRaw.filter(m => !m.isPrefill);
+        for (let i = 0; i < currentNonPrefill.length; i++) {
+            const msg = currentNonPrefill[i];
+            // 简单判断：如果非 system 角色，且内容不为空，则认为是手动输入或AI回复
+            if (msg.role !== 'system' && msg.content.trim() !== '') {
+                msg.isManualUserOrAI = true;
+            }
+        }
+
+        // 应用提示词去重 (仅针对非手动/非AI部分)
+        const currentMessages = applyDeduplication(currentMessagesRaw);
+
+        // --- 第 2 步: 自适应检测角色卡/预设变更 ---
+        checkForExternalChanges();
+
+        // --- 第 3 步: 正常流程 (同原版，但增强去重) ---
+        // 首次初始化
         if (!CacheState.pinnedSequence) {
-            // 初始化：将当前所有非预填充消息“钉住”
-            CacheState.pinnedSequence = currentMessages.filter(m => !m.isPrefill).map(m => ({ role: m.role, content: m.content }));
+            CacheState.pinnedSequence = currentMessages.filter(m => !m.isPrefill).map(m => ({ role: m.role, content: m.content, isManual: m.isManualUserOrAI }));
             CacheState.cachedFingerprint = generateFingerprint(CacheState.pinnedSequence);
-            Logger.log(`[初始化] 首次锁定提示词序列 (${CacheState.pinnedSequence.length} 条消息)`, LogLevels.BASIC);
-            // 直接使用当前消息作为第一次请求，无需修改
+            Logger.log(`[初始化] 首次锁定提示词序列 (${CacheState.pinnedSequence.length} 条消息，已应用去重)`, LogLevels.BASIC);
             buildAndSetFinalMessages(currentMessages, stream);
             CacheState.stats.hits++;
             CacheState.stats.prefixTokens = countTokenForSequence(CacheState.pinnedSequence);
             CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
+            CacheState.lastSentFingerprint = generateFingerprint(currentMessages);
             return;
         }
 
-        // 常规运行：提取当前非预填充消息，与之比对
         const currentNonPrefillMessages = currentMessages.filter(m => !m.isPrefill);
-        
-        // --- 第 3 步: 核心比对与状态处理 ---
-        // 3.1 检查是否发生大规模变化 (如角色卡、预设彻底更换)
-        if (isMajorChange(CacheState.pinnedSequence, currentNonPrefillMessages)) {
-            Logger.warn('[核心重置] 检测到大型内容变动 (如角色切换)，将弹出重置提示。', LogLevels.BASIC);
-            showResetDialog('角色卡/预设变更', '检测到提示词核心内容发生重大变化。');
-            // 不自动重置，等待用户选择
+
+        // 检测大规模删减
+        const removalRatio = calculateRemovalRatio(CacheState.pinnedSequence, currentNonPrefillMessages);
+        if (removalRatio > 0.3) { // 超过30%的内容被删除则触发重置询问
+            Logger.warn(`[大幅删减] 检测到约 ${(removalRatio * 100).toFixed(1)}% 的内容被移除，将请求用户确认。`, LogLevels.BASIC);
+            cacheState.pendingResetReason = `检测到约 ${(removalRatio * 100).toFixed(1)}% 的提示词内容被删除`;
             return;
         }
 
-        // 3.2 常规情况：找出新增条目并追加
-        const { toPin, newItems } = findAdditions(CacheState.pinnedSequence, currentNonPrefillMessages);
+        // 检测大规模变化 (如角色卡、预设彻底更换)
+        if (isMajorChange(CacheState.pinnedSequence, currentNonPrefillMessages)) {
+            Logger.warn('[核心重置] 检测到大型内容变动 (如角色切换)，将请求用户确认。', LogLevels.BASIC);
+            CacheState.pendingResetReason = '检测到角色卡或预设发生重大变化';
+            return;
+        }
 
-        // --- 第 4 步: 处理删除 (可选，但为了提高准确性) ---
+        // 常规增量追加与移除
+        const { newItems } = findAdditions(CacheState.pinnedSequence, currentNonPrefillMessages);
         const removedItems = findRemovals(CacheState.pinnedSequence, currentNonPrefillMessages);
-        if (removedItems.length > 0) {
-            // 检查是否出现大幅度删减 (超过总长度的30%)
-            const originalLength = countTokenForSequence(CacheState.pinnedSequence);
-            const removedLength = countTokenForSequence(removedItems);
-            if (removedLength > originalLength * 0.3) {
-                Logger.warn(`[大幅删减] 检测到提示词序列减少超过30%，将弹出重置提示。`, LogLevels.BASIC);
-                showResetDialog('大幅删减', '检测到提示词序列大幅减少。');
-                return;
-            }
 
-            Logger.warn(`[动态削除] 以下提示词被移除，将从锁定序列中删除：`, LogLevels.DETAILED);
-            removedItems.forEach(item => {
-                Logger.warn(`  - ${item.role}: ${item.content.substring(0, 50)}...`, LogLevels.DEBUG);
-            });
-            // 更新pinnedSequence以反映删除
+        if (removedItems.length > 0) {
+            Logger.warn(`[动态削除] ${removedItems.length} 条提示词被移除，从锁定序列中删除。`, LogLevels.DETAILED);
             CacheState.pinnedSequence = CacheState.pinnedSequence.filter(pinnedItem => {
                 return !removedItems.some(removedItem => 
                     removedItem.role === pinnedItem.role && removedItem.content === pinnedItem.content
@@ -251,55 +190,39 @@ function interceptAndRestructurePrompt(data) {
         }
 
         if (newItems.length > 0) {
-            Logger.warn(`[增量追加] 发现 ${newItems.length} 个新增提示词条目，将追加到提示词序列末尾。`, LogLevels.DETAILED);
-            newItems.forEach(item => {
-                Logger.warn(`  + ${item.role}: ${item.content.substring(0, 50)}...`, LogLevels.DEBUG);
-            });
-            // 将新增条目追加到pinnedSequence中
-            CacheState.pinnedSequence = CacheState.pinnedSequence.concat(newItems);
+            Logger.warn(`[增量追加] 发现 ${newItems.length} 个新增提示词条目。`, LogLevels.DETAILED);
+            CacheState.pinnedSequence = CacheState.pinnedSequence.concat(newItems.filter(item => item.role !== 'system' || !isDuplicateSystemMessage(CacheState.pinnedSequence, item)));
         }
 
-        // 更新指纹
         CacheState.cachedFingerprint = generateFingerprint(CacheState.pinnedSequence);
 
-        // --- 第 5 步: 重组最终消息序列 ---
-        // 提取当前消息中的预填充部分
         const currentPrefillMessages = currentMessages.filter(m => m.isPrefill);
-
-        // 构建最终发送序列：被钉住的序列 + 当前预填充
         const finalMessages = CacheState.pinnedSequence.map(m => ({ role: m.role, content: m.content, isPrefill: false }));
         finalMessages.push(...currentPrefillMessages);
 
-        // --- 第 6 步: 计算缓存命中统计 (基于本次发送与上次发送的对比) ---
         const sentNowFingerprint = generateFingerprint(finalMessages);
-        const cacheHit = CacheState.lastSentSequence && CacheState.lastSentSequence === sentNowFingerprint;
+        const cacheHit = CacheState.lastSentFingerprint && CacheState.lastSentFingerprint === sentNowFingerprint;
 
         if (cacheHit) {
             CacheState.stats.hits++;
             CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
             Logger.log('[缓存命中] 与上一轮请求完全一致，前缀部分全部命中缓存。', LogLevels.BASIC);
         } else {
-            // 如果前缀增加了新内容，部分命中旧前缀
             const prefixTokens = countTokenForSequence(CacheState.pinnedSequence);
-            if (CacheState.lastSentSequence) {
-                const newTokens = Logger.estimateTokens(finalMessages.map(m => m.content).join('')) - prefixTokens;
-                Logger.log(`[部分命中] 前缀新增内容，上一轮旧前缀完全命中，仅尾部新增约 ${newTokens} tokens 需要计算。`, LogLevels.BASIC);
+            if (CacheState.lastSentFingerprint) {
+                Logger.log(`[部分命中] 前缀新增内容，上一轮旧前缀完全命中。`, LogLevels.BASIC);
             } else {
                 Logger.log('[首次发送] 建立缓存基线。', LogLevels.BASIC);
             }
-            CacheState.stats.hits++; // 只要有旧前缀在，就算部分命中
+            CacheState.stats.hits++;
             CacheState.stats.savedTokens += prefixTokens;
         }
 
-        CacheState.lastSentSequence = sentNowFingerprint;
+        CacheState.lastSentFingerprint = sentNowFingerprint;
         CacheState.stats.prefixTokens = countTokenForSequence(CacheState.pinnedSequence);
 
-        // 应用重组结果
         buildAndSetFinalMessages(finalMessages, stream);
-
-        if (logLevel >= LogLevels.DEBUG) {
-            Logger.log(`[重组详情] 最终发送消息结构: ${finalMessages.map(m => `${m.role}(${m.content.length}字)`).join(' → ')}`, LogLevels.DEBUG);
-        }
+        updateStatsUI();
 
     } catch (err) {
         Logger.error('拦截器致命错误', err);
@@ -307,13 +230,125 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 辅助函数
+// 新增：去重与自适应检测辅助函数
+// ==========================================
+
+/**
+ * 应用提示词去重：确保每条非手动/非AI的系统提示词在序列中只出现一次。
+ * 手动用户输入和AI回复允许重复。
+ */
+function applyDeduplication(messages) {
+    const deduplicated = [];
+    const seenContent = new Map(); // key: "role:normalizedContent", value: index
+
+    for (const msg of messages) {
+        const key = `${msg.role}:${Logger.normalizeForFingerprint(msg.content)}`;
+        
+        if (msg.isManualUserOrAI) {
+            // 用户输入和AI回复允许重复，直接添加
+            deduplicated.push(msg);
+            seenContent.set(key, deduplicated.length - 1);
+        } else {
+            // 系统提示词等，如果内容已存在则跳过
+            if (!seenContent.has(key)) {
+                deduplicated.push(msg);
+                seenContent.set(key, deduplicated.length - 1);
+            } else {
+                Logger.log(`[去重] 忽略重复的系统提示词: ${msg.content.substring(0, 50)}...`, LogLevels.DEBUG);
+            }
+        }
+    }
+    return deduplicated;
+}
+
+/**
+ * 检查是否是新系统消息（用于增量追加时的额外检查）
+ */
+function isDuplicateSystemMessage(sequence, message) {
+    return sequence.some(m => m.role === message.role && m.content === message.content);
+}
+
+/**
+ * 计算 pinnedSequence 中有多大比例的内容在当前非预填充消息中缺失
+ */
+function calculateRemovalRatio(pinned, current) {
+    if (!pinned || pinned.length === 0) return 0;
+    
+    let missingCount = 0;
+    for (const pinnedItem of pinned) {
+        const found = current.some(curr => 
+            curr.role === pinnedItem.role && 
+            Logger.normalizeForFingerprint(curr.content) === Logger.normalizeForFingerprint(pinnedItem.content)
+        );
+        if (!found) missingCount++;
+    }
+    return missingCount / pinned.length;
+}
+
+/**
+ * 自适应检测角色卡或预设的外部变更（通过事件和内容探查）
+ */
+function checkForExternalChanges() {
+    const context = getContext();
+    if (!context) return;
+
+    const currentCharId = context.characterId;
+    const currentPreset = context.chatCompletionPreset || "default";
+
+    if (CacheState.currentCharacterId !== null && CacheState.currentCharacterId !== currentCharId) {
+        Logger.warn(`[角色变更] 检测到角色从 ${CacheState.currentCharacterId} 切换到 ${currentCharId}`, LogLevels.BASIC);
+        CacheState.pendingResetReason = '角色卡片已被更换';
+    }
+    
+    if (CacheState.currentPresetName !== null && CacheState.currentPresetName !== currentPreset) {
+        Logger.warn(`[预设变更] 检测到预设从 ${CacheState.currentPresetName} 切换到 ${currentPreset}`, LogLevels.BASIC);
+        CacheState.pendingResetReason = 'Chat Completion 预设已被更换';
+    }
+
+    CacheState.currentCharacterId = currentCharId;
+    CacheState.currentPresetName = currentPreset;
+}
+
+/**
+ * 显示重置确认弹窗 (永久存在，直到用户点击“重置”或“取消”)
+ */
+async function showResetConfirmationPopup(reason) {
+    return new Promise((resolve) => {
+        const html = `
+            <div class="flex-container flex-column" style="gap: 1rem; max-width: 450px;">
+                <h3>🧠 DeepSeek 缓存优化器</h3>
+                <p><strong>检测到提示词结构发生显著变化：</strong></p>
+                <p style="color: var(--warning-color);">${reason}</p>
+                <p>为了最大化缓存命中率，建议<strong>重置缓存前缀状态</strong>。重置后，将在下一次请求中自动重新构建缓存基线。</p>
+                <p><em>提示：此弹窗将一直显示，直到您做出选择。</em></p>
+            </div>
+        `;
+
+        // 使用内置的 callGenericPopup 创建模态确认框
+        callGenericPopup({
+            title: '缓存优化器：需要您的确认',
+            message: html,
+            okButton: '重置',
+            cancelButton: '取消',
+            isModal: true,
+            allowClose: false, // 禁止点击遮罩层关闭
+        }).then((result) => {
+            if (result) {
+                resolve(true);
+            } else {
+                resolve(false);
+            }
+        });
+    });
+}
+
+// ==========================================
+// 辅助函数 (保持不变，但稍作增强)
 // ==========================================
 
 // 判断是否为大型变化 (例如切换角色)
 function isMajorChange(oldSeq, newSeq) {
     if (!oldSeq || !newSeq) return true;
-    // 简单的相似度判断：对比总长度和第一条系统消息的内容
     if (oldSeq.length === 0 || newSeq.length === 0) return true;
     
     const oldSystemMsg = oldSeq.find(m => m.role === 'system');
@@ -333,19 +368,16 @@ function findAdditions(oldSeq, newSeq) {
     const newSeqCopy = [...newSeq];
     
     for (const oldItem of oldSeq) {
-        // 在新序列中查找匹配项
         const matchIndex = newSeqCopy.findIndex(newItem => 
             newItem.role === oldItem.role && newItem.content === oldItem.content
         );
         if (matchIndex !== -1) {
-            // 匹配则从新序列中移除，剩下的就是新增的
             newSeqCopy.splice(matchIndex, 1);
         }
     }
-    // 剩余的即为新增条目。同时排除那些在oldSeq中存在，但可能因空格等微小差异而未匹配的。
+    
     const trulyNew = [];
     for (const newItem of newSeqCopy) {
-        // 防止因空格差异导致的误判新增
         const isExistInOld = oldSeq.some(oldItem => 
             oldItem.role === newItem.role && 
             Logger.normalizeForFingerprint(oldItem.content) === Logger.normalizeForFingerprint(newItem.content)
@@ -359,7 +391,7 @@ function findAdditions(oldSeq, newSeq) {
     return { toPin: oldSeq, newItems: trulyNew };
 }
 
-// 找出oldSeq中存在，但newSeq中不存在的条目 (即被用户删除的)
+// 找出oldSeq中存在，但newSeq中不存在的条目
 function findRemovals(oldSeq, newSeq) {
     const removal = [];
     for (const oldItem of oldSeq) {
@@ -403,8 +435,19 @@ function buildAndSetFinalMessages(finalMessages, originalStream) {
     });
 }
 
+// 重置所有状态
+function resetAllState() {
+    CacheState.pinnedSequence = null;
+    CacheState.cachedFingerprint = null;
+    CacheState.lastSentFingerprint = null;
+    CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
+    CacheState.pendingResetReason = null;
+    updateStatsUI();
+    Logger.warn('[系统] 所有状态已重置，缓存前缀将在下次请求重新构建。', LogLevels.BASIC);
+}
+
 // ==========================================
-// UI
+// UI (v5.1 增强版)
 // ==========================================
 function updateStatsUI() {
     const el = document.getElementById('ds-cache-stats');
@@ -423,11 +466,11 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS V4 Cache Optimizer v5.0 (自动增量版)</b>
+                <b>🧠 DS V4 Cache Optimizer v5.1 (智能去重与自适应重置)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">自动锁定提示词前缀，增量追加新增内容，实现近乎完美的自动化缓存命中。</p>
+                <p style="font-size:0.9em;opacity:0.8;">自动锁定提示词前缀，增量追加新增内容，实现近乎完美的自动化缓存命中。新增智能去重与卡/预设变更感知。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;font-size:0.85em;"></div>
                 <label class="checkbox_label" style="display:flex;align-items:center;gap:8px;">
                     <input type="checkbox" id="ds-cache-enable" checked> 启用自动化缓存优化
@@ -441,7 +484,7 @@ async function setupUI() {
                         <option value="3">调试</option>
                     </select>
                 </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置缓存前缀 (下次请求自动重建)</button>
+                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:10px 0;">🔄 强制重置缓存前缀</button>
                 <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
@@ -456,12 +499,7 @@ async function setupUI() {
             Logger.log(`日志等级设为: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
         });
         $('#ds-cache-reset').on('click', () => {
-            CacheState.pinnedSequence = null;
-            CacheState.cachedFingerprint = null;
-            CacheState.lastSentSequence = null;
-            CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
-            updateStatsUI();
-            Logger.warn('已强制重置所有状态。下一次请求时将自动重新锁定提示词前缀。', LogLevels.BASIC);
+            resetAllState();
         });
         updateStatsUI();
     } catch (e) {
@@ -473,21 +511,22 @@ async function setupUI() {
 // 启动
 // ==========================================
 jQuery(async () => {
-    console.log('DS V4 Optimizer v5 loading...');
+    console.log('DS V4 Optimizer v5.1 loading...');
     await setupUI();
+
+    // 监听预设和角色变更事件
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        checkForExternalChanges();
+    });
+    eventSource.on(event_types.CHARACTER_SELECTED, () => {
+        checkForExternalChanges();
+    });
+
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         Logger.log('[系统] 已挂载 CHAT_COMPLETION_PROMPT_READY 事件钩子', LogLevels.BASIC);
     } else {
         Logger.error('无法挂载关键事件钩子，扩展无法运行。');
     }
-    if (eventSource && event_types?.CHAT_CHANGED) {
-        eventSource.on(event_types.CHAT_CHANGED, monitorPresetChange);
-        Logger.log('[系统] 已挂载 CHAT_CHANGED 事件钩子，用于监控角色卡切换', LogLevels.BASIC);
-    }
-    if (eventSource && event_types?.SETTINGS_UPDATED) {
-        eventSource.on(event_types.SETTINGS_UPDATED, monitorPresetChange);
-        Logger.log('[系统] 已挂载 SETTINGS_UPDATED 事件钩子，用于监控预设变更', LogLevels.BASIC);
-    }
-    Logger.log('══════ v5.0 就绪，策略：自动锁定前缀 + 增量追加 + 自适应弹窗 ══════', LogLevels.BASIC);
+    Logger.log('══════ v5.1 就绪，策略：智能去重 + 自适应重置 + 增量追加 ══════', LogLevels.BASIC);
 });
