@@ -12,11 +12,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v6.5] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v6.6] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v6.5] 🔴 ${msg}`);
+        console.error(`[DS Cache v6.6] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v6.5] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v6.6] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -54,20 +54,19 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机 v6.5 (增加阻塞标志)
+// 状态机 v6.6
 // ==========================================
 const CacheState = {
     enabled: true,
     backgroundBlock: null,
     dialogueHistory: null,
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
-    // 阻塞标志：当弹窗未解决时，阻止所有请求处理
-    blocked: false,
+    blocked: false,      // 阻塞标志
     pendingReset: false,
 };
 
 // ==========================================
-// 消息分类
+// 消息分类（严格区分真实用户/AI 与注入提示词）
 // ==========================================
 function classifyMessage(msg, originalChat) {
     const orig = originalChat.find(m => m.mes === msg.content);
@@ -79,6 +78,7 @@ function classifyMessage(msg, originalChat) {
         }
         return { isRealUser: false, isRealAI: false, isInstructional: true };
     }
+    // 未在原始聊天中找到的消息，一律视为系统注入的提示词
     return { isRealUser: false, isRealAI: false, isInstructional: true };
 }
 
@@ -95,16 +95,30 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理请求流
+// 处理请求流（修复预填充与用户输入识别）
 // ==========================================
 function processStream(stream, originalChat) {
+    // 先确定真实的预填充：尾部连续的 assistant，但需排除任何真实 AI 回复（即存在于 originalChat 中的 assistant 消息）
     let prefillStart = stream.length;
     while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
         prefillStart--;
     }
+    // 检查 candidate prefills 是否包含真实回复
+    let hasRealReply = false;
+    for (let i = prefillStart; i < stream.length; i++) {
+        const orig = originalChat.find(m => m.mes === stream[i].content);
+        if (orig && !orig.is_system) {
+            hasRealReply = true;
+            break;
+        }
+    }
+    if (hasRealReply) {
+        prefillStart = stream.length; // 全部视为非预填充
+    }
     const prefills = stream.slice(prefillStart);
     const nonPrefill = stream.slice(0, prefillStart);
 
+    // 找出当前用户输入：最后一个在 originalChat 中存在且 is_user === true 的 user 消息
     let currentUserMsg = null;
     const others = [];
     for (let i = nonPrefill.length - 1; i >= 0; i--) {
@@ -112,11 +126,16 @@ function processStream(stream, originalChat) {
         const cls = classifyMessage(msg, originalChat);
         const obj = createMessageObj(msg, cls);
         if (!currentUserMsg && cls.isRealUser && msg.role === 'user') {
-            currentUserMsg = obj;
-        } else {
-            others.unshift(obj);
+            // 二次确认：必须在 originalChat 中存在且 is_user 为 true
+            const orig = originalChat.find(m => m.mes === msg.content);
+            if (orig && orig.is_user) {
+                currentUserMsg = obj;
+                continue;
+            }
         }
+        others.unshift(obj);
     }
+
     return { currentUserMsg, others, prefills };
 }
 
@@ -126,9 +145,9 @@ function processStream(stream, originalChat) {
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
 
-    // 如果被阻塞，直接使用原始消息，不做任何处理
+    // 阻塞期间不做任何处理
     if (CacheState.blocked) {
-        Logger.warn('[阻塞中] 等待用户处理弹窗，当前请求保持原样', LogLevels.BASIC);
+        Logger.warn('[阻塞中] 等待用户处理弹窗，保持原始消息', LogLevels.BASIC);
         return;
     }
 
@@ -169,7 +188,7 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        // 检测背景块是否重大变化
+        // 背景相似度检测
         const bgSimilarity = computeSetSimilarity(
             new Set(CacheState.backgroundBlock.map(m => m.norm)),
             new Set(dedupBg.map(m => m.norm))
@@ -177,9 +196,8 @@ function interceptAndRestructurePrompt(data) {
         Logger.log(`[背景相似度] ${(bgSimilarity*100).toFixed(1)}%`, LogLevels.DEBUG);
 
         if (bgSimilarity < 0.9) {
-            // 触发阻塞，本次请求不做处理（保持原始消息），暂停后续请求
             triggerResetAlert('检测到系统提示词核心变动（更换角色卡/预设），建议重置缓存前缀以保证性能。');
-            return; // stream 未修改，保持原样
+            return;
         }
 
         // 对话增量
@@ -187,19 +205,16 @@ function interceptAndRestructurePrompt(data) {
         if (newDialogue.length > 0) {
             Logger.warn(`[对话增量] +${newDialogue.length} 条`, LogLevels.DETAILED);
         }
-        // 安全地合并（先更新，但若后续检测到删除，我们不会修改状态）
         const updatedDialogue = CacheState.dialogueHistory.concat(newDialogue);
 
-        // 检测对话历史大幅删除
+        // 对话大幅删除检测
         if (currentDialogue.length < CacheState.dialogueHistory.length * 0.7) {
             triggerResetAlert('对话历史被大幅删除，缓存命中率将下降，建议重置。');
-            return; // 不修改状态
+            return;
         }
 
-        // 一切正常，提交状态更新
         CacheState.dialogueHistory = updatedDialogue;
 
-        // 构建最终序列
         buildAndApply(stream, CacheState.backgroundBlock, CacheState.dialogueHistory, currentUserMsg, prefills);
         updateStats(false);
 
@@ -217,7 +232,7 @@ function buildAndApply(stream, bgBlock, dialogueHist, currentUser, prefills) {
 
     if (logLevel >= LogLevels.DEBUG) {
         Logger.log(`[最终序列] 背景:${bgBlock.length} 对话:${dialogueHist.length} 用户:${currentUser?1:0} 预填充:${prefills.length}`, LogLevels.DEBUG);
-        final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
+        final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 50)}...`, LogLevels.DEBUG));
     }
     stream.splice(0, stream.length, ...final);
 }
@@ -257,38 +272,32 @@ function updateStatsUI() {
 }
 
 // ==========================================
-// 弹窗与阻塞机制
+// 弹窗与阻塞
 // ==========================================
 function triggerResetAlert(reason) {
-    // 避免重复弹窗
     if (CacheState.blocked) return;
     CacheState.blocked = true;
     Logger.warn('[阻塞] 弹窗已弹出，等待用户选择', LogLevels.BASIC);
 
-    // 定义用户操作回调
     const onResolve = (reset) => {
         if (reset) {
-            // 用户选择重置
             CacheState.backgroundBlock = null;
             CacheState.dialogueHistory = null;
             CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
             updateStatsUI();
-            Logger.warn('[重置] 用户确认重置，前缀已清空，下次请求将重新锁定', LogLevels.BASIC);
+            Logger.warn('[重置] 用户确认重置，前缀已清空，下次请求重新锁定', LogLevels.BASIC);
         } else {
-            // 用户取消：保持现有状态（可能仍不匹配）
-            Logger.warn('[取消] 用户选择不重置，将继续使用现有前缀（可能缓存不命中）', LogLevels.BASIC);
+            Logger.warn('[取消] 用户选择不重置', LogLevels.BASIC);
         }
-        CacheState.blocked = false; // 无论选择如何，解除阻塞
+        CacheState.blocked = false;
     };
 
-    // 尝试 SillyTavern 内置弹窗
     if (typeof callPopup === 'function') {
         callPopup(`<h4>缓存优化器</h4><p>${reason}</p>`, [
             { text: '重置', className: 'btn-danger', callback: () => onResolve(true) },
             { text: '取消', callback: () => onResolve(false) }
         ]);
     } else {
-        // 自定义浮层回退
         showFallbackDialog(reason, onResolve);
     }
 }
@@ -301,8 +310,8 @@ function showFallbackDialog(reason, callback) {
     dialog.innerHTML = `
         <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;">
             <div style="background:#2b2b2b;color:#ddd;padding:24px;border-radius:8px;max-width:500px;box-shadow:0 0 20px black;">
-                <h3 style="margin:0 0 16px;">缓存优化器提醒</h3>
-                <p style="margin:0 0 20px;">${reason}</p>
+                <h3>缓存优化器提醒</h3>
+                <p>${reason}</p>
                 <div style="display:flex;justify-content:flex-end;gap:10px;">
                     <button id="ds-cancel-btn" class="btn btn-secondary">取消</button>
                     <button id="ds-reset-btn" class="btn btn-danger">重置缓存前缀</button>
@@ -311,91 +320,77 @@ function showFallbackDialog(reason, callback) {
         </div>`;
     document.body.appendChild(dialog);
     document.getElementById('ds-reset-btn').onclick = () => {
-        if (callback) callback(true);
+        callback(true);
         document.body.removeChild(dialog);
     };
     document.getElementById('ds-cancel-btn').onclick = () => {
-        if (callback) callback(false);
+        callback(false);
         document.body.removeChild(dialog);
     };
 }
 
-// 手动重置（也解除阻塞）
 function performReset() {
     CacheState.backgroundBlock = null;
     CacheState.dialogueHistory = null;
     CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
-    CacheState.blocked = false;  // 解除阻塞
+    CacheState.blocked = false;
     updateStatsUI();
-    Logger.warn('[强制重置] 前缀已清空，阻塞解除，下次请求重新锁定', LogLevels.BASIC);
-    // 关闭可能存在的回退弹窗
+    Logger.warn('[强制重置] 前缀已清空，阻塞解除', LogLevels.BASIC);
     const existing = document.getElementById('ds-reset-fallback-dialog');
     if (existing) existing.remove();
 }
 
 // ==========================================
-// UI 初始化 + ST菜单项
+// UI 初始化 + ST 菜单项
 // ==========================================
 async function setupUI() {
-    try {
-        const html = `
-        <div class="inline-drawer" id="ds-v4-opt-drawer">
-            <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS Cache Optimizer v6.5 (挂起机制)</b>
-                <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
+    const html = `
+    <div class="inline-drawer" id="ds-v4-opt-drawer">
+        <div class="inline-drawer-toggle inline-drawer-header">
+            <b>🧠 DS Cache Optimizer v6.6</b>
+            <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content" style="padding:10px;">
+            <p style="font-size:0.9em;opacity:0.8;">稳定前缀 + 准确识别用户输入/预填充，阻塞弹窗。</p>
+            <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
+            <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
+            <div style="margin:8px 0;">
+                <span style="font-size:0.9em;">日志等级:</span>
+                <select id="ds-cache-loglevel">
+                    <option value="0">关闭</option><option value="1">简要</option>
+                    <option value="2" selected>详细</option><option value="3">调试</option>
+                </select>
             </div>
-            <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">弹窗期间暂停请求处理，等待用户选择后再继续优化。</p>
-                <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
-                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
-                <div style="margin:8px 0;">
-                    <span style="font-size:0.9em;">日志等级:</span>
-                    <select id="ds-cache-loglevel">
-                        <option value="0">关闭</option><option value="1">简要</option>
-                        <option value="2" selected>详细</option><option value="3">调试</option>
-                    </select>
-                </div>
-                <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:5px 0;">🔄 强制重置缓存前缀</button>
-                <button id="ds-cache-clearlog" class="menu_button" style="width:100%;margin:5px 0;">🗑️ 清空日志</button>
-                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
-            </div>
-        </div>`;
-        $('#extensions_settings').append(html);
-        Logger._uiTextarea = document.getElementById('ds-cache-log');
+            <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:5px 0;">🔄 强制重置</button>
+            <button id="ds-cache-clearlog" class="menu_button" style="width:100%;margin:5px 0;">🗑️ 清空日志</button>
+            <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
+        </div>
+    </div>`;
+    $('#extensions_settings').append(html);
+    Logger._uiTextarea = document.getElementById('ds-cache-log');
 
-        $('#ds-cache-enable').on('change', function() {
-            CacheState.enabled = $(this).is(':checked');
-            Logger.log(`插件 ${CacheState.enabled?'启用':'停用'}`, LogLevels.BASIC);
-        });
-        $('#ds-cache-loglevel').on('change', function() {
-            logLevel = parseInt($(this).val());
-            Logger.log(`日志等级: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
-        });
-        $('#ds-cache-reset').on('click', () => performReset());
-        $('#ds-cache-clearlog').on('click', () => {
-            if (Logger._uiTextarea) Logger._uiTextarea.value = '';
-        });
+    $('#ds-cache-enable').on('change', function() {
+        CacheState.enabled = $(this).is(':checked');
+        Logger.log(`插件 ${CacheState.enabled?'启用':'停用'}`, LogLevels.BASIC);
+    });
+    $('#ds-cache-loglevel').on('change', function() {
+        logLevel = parseInt($(this).val());
+        Logger.log(`日志等级: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
+    });
+    $('#ds-cache-reset').on('click', () => performReset());
+    $('#ds-cache-clearlog').on('click', () => { if (Logger._uiTextarea) Logger._uiTextarea.value = ''; });
 
-        // ST 菜单项
-        if (typeof extension_settings !== 'undefined') {
-            extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
-            extension_settings['ds-cache'].extensionsMenu = [
-                {
-                    label: '重置DS缓存前缀',
-                    action: () => performReset(),
-                }
-            ];
-        }
-
-        updateStatsUI();
-    } catch (e) {
-        Logger.error('UI初始化失败', e);
+    // 扩展菜单
+    if (typeof extension_settings !== 'undefined') {
+        extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
+        extension_settings['ds-cache'].extensionsMenu = [{
+            label: '重置DS缓存前缀',
+            action: () => performReset(),
+        }];
     }
+    updateStatsUI();
 }
 
-// ==========================================
-// 启动
-// ==========================================
 jQuery(async () => {
     await setupUI();
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
@@ -404,5 +399,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载关键事件钩子');
     }
-    Logger.log('══════ v6.5 就绪，弹窗阻塞 + ST菜单 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.6 就绪，精准识别 + 阻塞机制 ══════', LogLevels.BASIC);
 });
