@@ -12,11 +12,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v6.4] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v6.5] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v6.4] 🔴 ${msg}`);
+        console.error(`[DS Cache v6.5] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v6.4] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v6.5] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -65,11 +65,9 @@ const CacheState = {
 };
 
 // ==========================================
-// 消息分类（强制基于 role，不再依赖 originalChat）
+// 消息分类（强制基于 role）
 // ==========================================
 function classifyMessage(msg) {
-    // 直接根据 role 判断，不再依赖 originalChat
-    // 注意：这里 msg 是流中的原始消息，有 role 和 content 属性
     if (msg.role === 'system') {
         return { isRealUser: false, isRealAI: false, isInstructional: true };
     } else if (msg.role === 'user') {
@@ -77,7 +75,6 @@ function classifyMessage(msg) {
     } else if (msg.role === 'assistant') {
         return { isRealUser: false, isRealAI: true, isInstructional: false };
     } else {
-        // 其他角色视为教学性
         return { isRealUser: false, isRealAI: false, isInstructional: true };
     }
 }
@@ -133,25 +130,20 @@ function processStream(stream) {
     }
 
     const currentUserMsg = dialogueParts[currentUserIndex];
-
-    // 当前用户消息之后的所有 assistant 消息
     const afterUser = dialogueParts.slice(currentUserIndex + 1);
-
-    // 之前的部分（历史对话） + 当前用户消息之前的部分（如果有其他用户消息，它们属于历史）
     const beforeUser = dialogueParts.slice(0, currentUserIndex);
 
-    // 分离预填充和 AI 回复
+    // 分离当前轮次的预填充和 AI 回复
     let currentPrefills = [];
     let currentAssistant = null;
 
     if (afterUser.length > 0) {
-        // 最后一个 assistant 是 AI 回复，之前的都是预填充
+        // 最后一个 assistant 是 AI 回复，之前的是预填充
         const lastAssistant = afterUser[afterUser.length - 1];
         if (lastAssistant.isRealAI && lastAssistant.role === 'assistant') {
             currentAssistant = lastAssistant;
             currentPrefills = afterUser.slice(0, -1).filter(m => m.isRealAI && m.role === 'assistant');
         } else {
-            // 如果最后一个不是 assistant（理论上不会），全部视为预填充
             currentPrefills = afterUser.filter(m => m.isRealAI && m.role === 'assistant');
         }
     }
@@ -168,7 +160,7 @@ function processStream(stream) {
 }
 
 // ==========================================
-// 构建对话轮次（从历史消息中提取轮次）
+// 构建对话轮次（保留预填充！）
 // ==========================================
 function buildHistoryTurns(dialogueParts) {
     const turns = [];
@@ -178,10 +170,12 @@ function buildHistoryTurns(dialogueParts) {
         if (obj.isRealUser && obj.role === 'user') {
             // 开始新轮次前，保存上一轮
             if (cur.user && cur.assistants.length > 0) {
+                const assistant = cur.assistants.pop();             // 最后一个作为 AI 回复
+                const prefills = cur.assistants;                    // 前面的都是预填充
                 turns.push({
                     user: cur.user,
-                    prefills: [],  // 历史轮次无预填充（预填充已与 AI 回复分离）
-                    assistant: combineAssistants(cur.assistants),
+                    prefills: prefills,
+                    assistant: assistant,
                 });
             }
             cur = { user: obj, assistants: [] };
@@ -190,12 +184,14 @@ function buildHistoryTurns(dialogueParts) {
         }
     }
 
-    // 处理最后一轮（通常不会发生，因为当前用户已被移除）
+    // 最后一轮
     if (cur.user && cur.assistants.length > 0) {
+        const assistant = cur.assistants.pop();
+        const prefills = cur.assistants;
         turns.push({
             user: cur.user,
-            prefills: [],
-            assistant: combineAssistants(cur.assistants),
+            prefills: prefills,
+            assistant: assistant,
         });
     }
 
@@ -206,16 +202,6 @@ function buildHistoryTurns(dialogueParts) {
     }
 
     return turns;
-}
-
-function combineAssistants(msgs) {
-    if (msgs.length === 0) return null;
-    const combinedContent = msgs.map(m => m.content).join('\n');
-    return createMessageObj(
-        { role: 'assistant', content: combinedContent },
-        { isRealUser: false, isRealAI: true, isInstructional: false },
-        msgs[0].uid
-    );
 }
 
 // ==========================================
@@ -249,14 +235,14 @@ function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 构建历史轮次（当前用户之前的所有对话）
+        // 构建历史轮次（当前用户之前的所有对话，包含预填充）
         const historyTurns = buildHistoryTurns(dialogueParts);
 
         // 初始化
         if (CacheState.frozenBackground.length === 0 && CacheState.frozenTurns.length === 0) {
             CacheState.frozenBackground = dedupBg;
             CacheState.frozenTurns = historyTurns;
-            Logger.log(`[初始化] 背景:${dedupBg.length} 对话轮次:${historyTurns.length}`, LogLevels.BASIC);
+            Logger.log(`[初始化] 背景:${dedupBg.length} 对话轮次:${historyTurns.length} （含预填充）`, LogLevels.BASIC);
             applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssistant);
             updateStats(true);
             return;
@@ -362,7 +348,7 @@ function applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssi
         final.push({ role: bg.role, content: bg.content });
     }
 
-    // 2. 冻结的对话轮次（使用者 → 预填充 → AI 回复）
+    // 2. 冻结的对话轮次（user → prefills → assistant）
     for (const turn of CacheState.frozenTurns) {
         final.push({ role: turn.user.role, content: turn.user.content });
         if (turn.prefills && turn.prefills.length > 0) {
@@ -375,7 +361,7 @@ function applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssi
         }
     }
 
-    // 3. 新增背景
+    // 3. 新增背景（新提示词/世界书等）
     for (const extra of CacheState.extraBackground) {
         final.push({ role: extra.role, content: extra.content });
     }
@@ -463,7 +449,7 @@ async function setupUI() {
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">背景/对话分离，绝对稳定前缀，弹窗+菜单重置。</p>
+                <p style="font-size:0.9em;opacity:0.8;">背景/对话分离，绝对稳定前缀（含预填充），弹窗+菜单重置。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
                 <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
                 <div style="margin:8px 0;">
@@ -532,5 +518,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，预填充永久冻结 + 自适应删除 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.5 就绪，预填充永久冻结 + 自适应删除 ══════', LogLevels.BASIC);
 });
