@@ -40,11 +40,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v10.0] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v10.1] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v10.0] 🔴 ${msg}`);
+        console.error(`[DS Cache v10.1] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v10.0] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v10.1] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -61,7 +61,7 @@ const Logger = {
 };
 
 // ==========================================
-// 狀態管理：精確識別存檔
+// 狀態管理
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -71,7 +71,6 @@ function getChatKey() {
     } else if (context.name2) {
         charName = context.name2;
     }
-    
     let chatId = context.chatId || "default_chat";
     let groupId = context.groupId;
     
@@ -166,7 +165,7 @@ function parseSTStream(stream) {
 }
 
 // ==========================================
-// 異步 UI 攔截器 (絕對掛起 ST 生成)
+// 異步 UI 攔截器
 // ==========================================
 function askUserForResetAsync(dropPercent) {
     return new Promise(resolve => {
@@ -174,13 +173,13 @@ function askUserForResetAsync(dropPercent) {
         const box = $('<div style="background:#1e1e1e;border:2px solid #f44336;padding:25px;border-radius:12px;max-width:550px;text-align:center;color:#fff;font-size:15px;box-shadow: 0 10px 25px rgba(0,0,0,0.8);font-family:sans-serif;"></div>');
         
         const title = $('<h2 style="color:#f44336;margin-top:0;">🚨 緩存嚴重斷裂預警 🚨</h2>');
-        const text = $(`<p style="text-align:left;line-height:1.6;font-size:14px;">檢測到前排的 <b>預設提示詞或世界書</b> 發生變更。<br><br>這將導致 KV 緩存鏈條斷裂，預計 <b>${dropPercent}%</b> 的歷史對話緩存將全部失效！這會讓 Deepseek 重新計算大量 Token。<br><br>請問您要如何處理？</p>`);
+        const text = $(`<p style="text-align:left;line-height:1.6;font-size:14px;">檢測到前排的 <b>提示詞或歷史對話</b> 發生了人為變更。<br><br>這將導致 KV 緩存鏈條斷裂，預計 <b>${dropPercent}%</b> 的歷史對話緩存將全部被冤枉失效 (需重新運算)！<br><br>請問您要如何處理？</p>`);
         
         const btnContainer = $('<div style="margin-top:25px;display:flex;justify-content:space-between;gap:10px;"></div>');
         
-        const btnReset = $('<button style="flex:1;background:#4CAF50;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">🔄 完美重置排列<br><span style="font-size:11px;font-weight:normal;">(保留歷史，恢復高命中)</span></button>');
-        const btnAbort = $('<button style="flex:1;background:#f44336;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">🛑 攔截發送<br><span style="font-size:11px;font-weight:normal;">(中止生成，去修改提示)</span></button>');
-        const btnIgnore = $('<button style="flex:1;background:#555;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">⚠️ 強行發送<br><span style="font-size:11px;font-weight:normal;">(容忍緩存命中暴跌)</span></button>');
+        const btnReset = $('<button style="flex:1;background:#4CAF50;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">🔄 完美重置排列<br><span style="font-size:11px;font-weight:normal;">(清除碎片，重新排列)</span></button>');
+        const btnAbort = $('<button style="flex:1;background:#f44336;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">🛑 攔截發送<br><span style="font-size:11px;font-weight:normal;">(中止生成，去復原提示詞)</span></button>');
+        const btnIgnore = $('<button style="flex:1;background:#555;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">⚠️ 強行發送<br><span style="font-size:11px;font-weight:normal;">(容忍緩存重新運算)</span></button>');
 
         [btnReset, btnAbort, btnIgnore].forEach(b => b.hover(function(){$(this).css('opacity','0.8')}, function(){$(this).css('opacity','1')}));
 
@@ -209,7 +208,7 @@ async function interceptAndRestructurePrompt(data) {
 
         const { sysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
 
-        // 構建平鋪對比序列 (不修改狀態，僅作預測)
+        // 構建平鋪對比序列
         let rawFrozenSequence = [];
         const sysMsgsPool = [...sysMsgs];
         
@@ -262,60 +261,107 @@ async function interceptAndRestructurePrompt(data) {
             dedupedSequence.push(item);
         }
 
-        // 預測將要發送的最終序列
         const proposedStream = [...dedupedSequence];
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
-        // 【極致前綴匹配 KV Cache 模擬】
+        // =========================================================
+        // 【v10.1 智能防誤報 KV 緩存斷裂計算器】
+        // =========================================================
         let requireResetConfirm = false;
-        let similarityRatio = 1.0;
+        let dropPercentStr = "0.0";
 
         if (state.lastSentSequence && state.lastSentSequence.length > 0) {
-            let oldTotalLen = 0;
-            let cacheHitLen = 0;
-            let matchFailed = false;
+            const L = state.lastSentSequence;
+            const P = proposedStream;
 
-            for (const oldM of state.lastSentSequence) oldTotalLen += (oldM.content?.length || 0);
+            // 尋找第一個斷點 (防誤報：使用 norm 比對，無視空格變動)
+            let breakIndex = -1;
+            for (let i = 0; i < Math.min(L.length, P.length); i++) {
+                if (L[i].role !== P[i].role || L[i].norm !== P[i].norm) {
+                    breakIndex = i;
+                    break;
+                }
+            }
+            if (breakIndex === -1) breakIndex = P.length;
 
-            for (let i = 0; i < Math.min(state.lastSentSequence.length, proposedStream.length); i++) {
-                if (!matchFailed && state.lastSentSequence[i].role === proposedStream[i].role && state.lastSentSequence[i].content === proposedStream[i].content) {
-                    cacheHitLen += state.lastSentSequence[i].content.length;
-                } else {
-                    matchFailed = true; // 只要有一個變動，後續緩存全部報銷！
+            let isPureContextShift = false;
+            
+            // 嗅探：這是否只是一個不可抗力的自然上下文推移？
+            if (breakIndex < L.length && breakIndex < P.length) {
+                // 確認斷點是否發生在「歷史區的最開端」(代表舊歷史被擠出)
+                let isAtHistoryStart = true;
+                for (let i = 0; i < breakIndex; i++) {
+                    if (L[i].tag !== 'SYS' && L[i].role !== 'system') {
+                        isAtHistoryStart = false;
+                        break;
+                    }
+                }
+
+                if (isAtHistoryStart) {
+                    // 確認被刪除的段落中，不包含任何 System / 世界書 提示詞
+                    for (let x = breakIndex + 1; x < L.length; x++) {
+                        if (L[x].role === P[breakIndex].role && L[x].norm === P[breakIndex].norm) {
+                            let deletedBlocks = L.slice(breakIndex, x);
+                            let deletedSys = deletedBlocks.filter(m => m.tag === 'SYS' || m.role === 'system');
+                            if (deletedSys.length === 0) {
+                                isPureContextShift = true; // 完全是正常的對話推移，無需彈窗！
+                            }
+                            break;
+                        }
+                    }
                 }
             }
 
-            similarityRatio = oldTotalLen === 0 ? 1 : (cacheHitLen / oldTotalLen);
-            if (similarityRatio < 0.90 && Settings.showResetPrompt) requireResetConfirm = true;
+            // 計算因為前綴斷裂，導致後續有多少本來存在的 Token 被「冤枉」重新計算
+            let wastedTokensLen = 0;
+            let proposedTotalLen = 0;
+            for (let i = 0; i < P.length; i++) {
+                proposedTotalLen += (P[i].content?.length || 0);
+                if (i >= breakIndex) {
+                    let foundInL = L.some(oldM => oldM.role === P[i].role && oldM.norm === P[i].norm);
+                    if (foundInL) {
+                        wastedTokensLen += (P[i].content?.length || 0);
+                    }
+                }
+            }
+
+            if (isPureContextShift) {
+                wastedTokensLen = 0; // 免除懲罰
+                Logger.log(`[緩存分析] 偵測到自然對話推移 (Context Shift)，智能抑制彈窗`, LogLevels.DEBUG);
+            }
+
+            let dropRatio = proposedTotalLen === 0 ? 0 : (wastedTokensLen / proposedTotalLen);
+            
+            if (dropRatio > 0.10 && Settings.showResetPrompt) {
+                requireResetConfirm = true;
+                dropPercentStr = (dropRatio * 100).toFixed(1);
+            }
         }
 
         // 觸發異步攔截彈窗
         let decision = 'ignore';
         if (requireResetConfirm) {
-            const dropPercent = ((1 - similarityRatio) * 100).toFixed(1);
-            Logger.warn(`檢測到緩存流失 ${dropPercent}%，掛起生成進程，等待用戶指示...`, LogLevels.BASIC);
-            decision = await askUserForResetAsync(dropPercent); // 絕對異步掛起！
+            Logger.warn(`檢測到緩存流失 ${dropPercentStr}%，掛起生成進程，等待用戶指示...`, LogLevels.BASIC);
+            decision = await askUserForResetAsync(dropPercentStr);
         }
 
         // 【決策處理】
         if (decision === 'abort') {
             Logger.warn('[發送已攔截] 清空流數據以強制中止生成', LogLevels.BASIC);
-            if (typeof toastr !== 'undefined') toastr.error("已強制攔截本次請求！", "緩存防護");
-            stream.splice(0, stream.length); // 抽空數據，ST 會自動拋出 Prompt Empty 錯誤並終止。
+            if (typeof toastr !== 'undefined') toastr.error("已強制攔截本次請求！您可以去還原提示詞了。", "緩存防護");
+            stream.splice(0, stream.length); 
             return;
         }
 
         if (decision === 'reset') {
             Logger.warn('[完美重置] 重新將系統提示詞推至頂部，拼接完整歷史...', LogLevels.BASIC);
             let resetSequence = [];
-            // 嚴格按照 ST 默認順序：系統 -> 歷史
             for (let sys of sysMsgs) resetSequence.push(sys);
             for (let turn of historyTurns) {
                 resetSequence.push(turn.user);
                 if (turn.assistant) resetSequence.push(turn.assistant);
             }
-            
             dedupedSequence = [];
             seenSysNorms.clear();
             for (let item of resetSequence) {
@@ -349,20 +395,17 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 即時修改提醒機制
+// 提醒機制與 UI
 // ==========================================
 let warningTimeout = null;
 function triggerWarning(msg, toggle) {
     if (!Settings.enabled || !toggle) return;
     if (warningTimeout) clearTimeout(warningTimeout);
     warningTimeout = setTimeout(() => {
-        if (typeof toastr !== 'undefined') toastr.warning(msg, '⚠️ 緩存狀態變更', { timeOut: 3000 });
+        if (typeof toastr !== 'undefined') toastr.warning(msg, '⚠️ 提示詞狀態變更', { timeOut: 3000 });
     }, 300); 
 }
 
-// ==========================================
-// 輔助 UI 與 初始化
-// ==========================================
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
     if (container.length === 0) return;
@@ -381,7 +424,7 @@ function renderChatsUI() {
                 <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:75%;" title="${chat.label}">
                     ${chat.label}
                 </span>
-                <button class="menu_button interactable ds-reset-btn" data-key="${key}" style="font-size:0.8em; padding:2px 5px;">重置此檔</button>
+                <button class="menu_button interactable ds-reset-btn" data-key="${key}" style="font-size:0.8em; padding:2px 5px;">重置</button>
             </div>
         `;
         container.append(html);
@@ -392,7 +435,7 @@ function renderChatsUI() {
         delete Settings.chats[key];
         safeSave();
         renderChatsUI();
-        if (typeof toastr !== 'undefined') toastr.success("已重置該存檔的緩存狀態");
+        if (typeof toastr !== 'undefined') toastr.success("已重置該存檔");
     });
 }
 
@@ -401,16 +444,16 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 缓存优化 (v10.0 異步防護版)</b>
+                <b>Deepseek 缓存优化 (v10.1 智能防誤報版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用插件總開關</label>
+                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用插件</label>
                 
                 <div style="margin:5px 0 10px 15px; border-left: 2px solid #555; padding-left: 10px;">
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> Presets/提示詞修改彈窗</label>
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 世界書修改彈窗</label>
-                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 歷史修改彈窗</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 歷史對話修改彈窗</label>
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 10% 異步攔截阻斷器</label>
                 </div>
                 
@@ -450,35 +493,28 @@ async function setupUI() {
     } catch (e) { console.error('[DS Cache] UI初始化失敗', e); }
 }
 
-// ==========================================
-// 啟動與全局事件綁定
-// ==========================================
 jQuery(async () => {
     try {
         initSettings(); 
         await setupUI();
 
         if (eventSource) {
-            // 綁定 ST 的生成準備鉤子，ST 原生支援 await 此事件！
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
                 eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             }
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('刪除歷史對話將引發緩存重組！', Settings.toastHistory));
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('手動刪除歷史對話將引發緩存重組！', Settings.toastHistory));
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('修改歷史對話將引發緩存重組！', Settings.toastHistory));
         }
 
-        // ===============================================
-        // 地毯式監聽：徹底覆蓋 Presets 與 世界書
-        // ===============================================
         $(document).on('change select2:select input focusout', '#chat_completion_preset, .preset_select, select[id*="preset"], #main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt', function() {
-            triggerWarning('Chat Completion Presets 或提示詞已變更！將影響緩存。', Settings.toastSys);
+            triggerWarning('提示詞已變更！將影響緩存。', Settings.toastSys);
         });
 
         $(document).on('input change focusout', '.world_info_entry textarea, .world_info_entry input, #world_info_entries_list textarea, .lorebook_entry textarea, .drawer-content textarea', function() {
-            triggerWarning('修改世界書將更新對應的凍結位置！', Settings.toastLore);
+            triggerWarning('修改世界書將影響後續緩存！', Settings.toastLore);
         });
 
-        Logger.log('══════ v10.0 異步防護版 就緒 ══════', LogLevels.BASIC);
+        Logger.log('══════ v10.1 智能防誤報版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
