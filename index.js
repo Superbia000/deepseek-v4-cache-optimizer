@@ -54,12 +54,12 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机 (预填充独立冻结)
+// 状态机（预填充永久冻结）
 // ==========================================
 const CacheState = {
     enabled: true,
     frozenBackground: [],
-    frozenTurns: [],          // { user, prefills[], assistant }
+    frozenTurns: [],          // { user, prefills, assistant }
     extraBackground: [],
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
@@ -107,7 +107,7 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理请求流 (保留完整消息)
+// 处理请求流（不切割预填充）
 // ==========================================
 function processStream(stream, originalChat) {
     const allMessages = stream.map(msg => {
@@ -130,7 +130,7 @@ function processStream(stream, originalChat) {
         }
     }
 
-    // 找到当前用户消息的索引（最后一个真实 user）
+    // 找到当前用户消息索引（最后一个真实 user）
     let currentUserIndex = -1;
     for (let i = dialogueParts.length - 1; i >= 0; i--) {
         if (dialogueParts[i].isRealUser && dialogueParts[i].role === 'user') {
@@ -143,7 +143,7 @@ function processStream(stream, originalChat) {
 }
 
 // ==========================================
-// 构建对话轮次 (预填充独立)
+// 构建对话轮次（预填充独立，不合并）
 // ==========================================
 function buildTurns(dialogueParts, currentUserIndex) {
     const turns = [];
@@ -153,36 +153,38 @@ function buildTurns(dialogueParts, currentUserIndex) {
         const obj = dialogueParts[i];
 
         if (obj.isRealUser && obj.role === 'user') {
-            // 结束前一轮
+            // 结束前一轮（不含当前轮次）
             if (cur.user && cur.assistants.length > 0) {
-                // 将 assistants 按序处理：最后一个为 AI 回复，之前的为预填充
-                const assistantMsg = cur.assistants[cur.assistants.length - 1];
-                const prefillMsgs = cur.assistants.slice(0, -1);
+                // 历史轮次：最后一个 assistant 是 AI 回复，之前的都是预填充？
+                // 但历史轮次不应该有预填充，它们应该只有一条 AI 回复（长文）
+                // 实际上历史轮次中可能有多条 assistant，这可能是合并失败导致的，我们全部合并为一条 AI 回复
                 turns.push({
                     user: cur.user,
-                    prefills: prefillMsgs,
-                    assistant: assistantMsg,
+                    prefills: [],  // 历史轮次无预填充
+                    assistant: combineAssistants(cur.assistants),
                 });
+            } else if (cur.user && cur.assistants.length === 0) {
+                // 有用户消息但没有助手消息，忽略（通常不会发生）
             }
             cur = { user: obj, assistants: [] };
         } else if (obj.isRealAI && obj.role === 'assistant') {
             cur.assistants.push(obj);
         }
-
-        // 如果到达当前用户消息，且其后还有 assistant，这些 assistant 将全部被视为预填充
-        // 它们会被 cur.assistants 收集，并在下一个用户消息出现或循环结束时处理
     }
 
-    // 处理最后一轮 (包含当前用户消息)
+    // 处理最后一轮（当前轮次）
     if (cur.user) {
         if (cur.assistants.length > 0) {
-            // 所有 assistants 都是预填充（因为后面没有其他用户消息了）
+            // 当前轮次：最后一个 assistant 为 AI 回复，之前的为预填充
+            const lastAssistant = cur.assistants[cur.assistants.length - 1];
+            const prefills = cur.assistants.slice(0, -1);
             turns.push({
                 user: cur.user,
-                prefills: cur.assistants,   // 全部作为预填充
-                assistant: null,
+                prefills: prefills,
+                assistant: lastAssistant,
             });
         } else {
+            // 只有用户消息，没有助手（可能没有预填充）
             turns.push({
                 user: cur.user,
                 prefills: [],
@@ -198,6 +200,16 @@ function buildTurns(dialogueParts, currentUserIndex) {
     }
 
     return turns;
+}
+
+function combineAssistants(msgs) {
+    if (msgs.length === 0) return null;
+    const combinedContent = msgs.map(m => m.content).join('\n');
+    return createMessageObj(
+        { role: 'assistant', content: combinedContent },
+        { isRealUser: false, isRealAI: true, isInstructional: false },
+        msgs[0].uid
+    );
 }
 
 // ==========================================
@@ -231,24 +243,21 @@ function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 构建所有轮次
         const allTurns = buildTurns(dialogueParts, currentUserIndex);
-        // 分离：历史轮次 (0..len-2) 和当前轮次 (最后一个)
-        const currentTurn = allTurns[allTurns.length - 1] || null;
+        const currentTurn = allTurns[allTurns.length - 1];
         const historyTurns = allTurns.slice(0, -1);
 
-        // 提取当前用户消息和当前预填充
-        const currentUserMsg = currentTurn ? currentTurn.user : null;
-        const currentPrefills = currentTurn ? (currentTurn.prefills || []) : [];
+        const currentUserMsg = currentTurn.user;
+        let currentPrefills = currentTurn.prefills || [];
+        const currentAssistant = currentTurn.assistant || null;
 
         // 初始化
         if (CacheState.frozenBackground.length === 0 && CacheState.frozenTurns.length === 0) {
             CacheState.frozenBackground = dedupBg;
-            // 将当前轮次也加入冻结（作为未完成轮次）
-            if (currentTurn) {
-                CacheState.frozenTurns = [currentTurn];
-            }
-            Logger.log(`[初始化] 背景:${dedupBg.length} 对话轮次:${CacheState.frozenTurns.length}`, LogLevels.BASIC);
-            applyFinalSequence(stream, currentUserMsg, currentPrefills, null);
+            CacheState.frozenTurns = historyTurns;
+            Logger.log(`[初始化] 背景:${dedupBg.length} 对话轮次:${historyTurns.length}`, LogLevels.BASIC);
+            applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssistant);
             updateStats(true);
             return;
         }
@@ -271,84 +280,10 @@ function interceptAndRestructurePrompt(data) {
             Logger.warn('[用户选择重置] 因背景变动，重置所有缓存', LogLevels.BASIC);
             performReset();
             CacheState.frozenBackground = dedupBg;
-            if (currentTurn) {
-                CacheState.frozenTurns = [currentTurn];
-            }
-            applyFinalSequence(stream, currentUserMsg, currentPrefills, null);
+            CacheState.frozenTurns = historyTurns;
+            applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssistant);
             updateStats(true);
             return;
-        }
-
-        // --- 更新冻结轮次：用当前的历史轮次补全之前未完成的轮次 assistant ---
-        for (const hTurn of historyTurns) {
-            // 查找冻结中对应轮次（通过 user.uid 匹配）
-            const existing = CacheState.frozenTurns.find(t => t.user.uid === hTurn.user.uid);
-            if (existing) {
-                // 如果现有轮次没有 assistant，但历史轮次有，则补全
-                if (!existing.assistant && hTurn.assistant) {
-                    existing.assistant = hTurn.assistant;
-                    Logger.warn(`[补全轮次] 用户:${hTurn.user.content.substring(0,20)} 已补充 assistant`, LogLevels.DETAILED);
-                }
-                // 如果历史轮次还有预填充而我们没有，也可以补充（但通常预填充只在当前请求）
-                // 通常历史轮次中的 prefills 为空，因为预填充只在最后一轮出现
-            } else {
-                // 冻结中不存在，直接加入
-                CacheState.frozenTurns.push(hTurn);
-            }
-        }
-
-        // 移除冻结中但当前历史轮次中不存在的轮次（自適應删除）
-        const currentTurnUids = new Set(historyTurns.map(t => t.user.uid));
-        const removedTurns = CacheState.frozenTurns.filter(t => !currentTurnUids.has(t.user.uid) && t.assistant); // 只考虑已完成轮次？
-        // 实际上我们应该考虑所有轮次，但当前轮次（未完成）可能不在 historyTurns 中，它应该保留
-        // 我们先将当前轮次加入到 currentTurnUids 中，避免被删除
-        if (currentUserMsg) {
-            currentTurnUids.add(currentUserMsg.uid);
-        }
-
-        const toRemove = CacheState.frozenTurns.filter(t => !currentTurnUids.has(t.user.uid));
-        if (toRemove.length > 0) {
-            Logger.warn(`[检测到删除轮次] -${toRemove.length} 轮`, LogLevels.DETAILED);
-            const remaining = CacheState.frozenTurns.length - toRemove.length;
-            if (remaining < CacheState.frozenTurns.length * 0.7) {
-                const ok = confirm(
-                    `对话历史被大幅删除（剩余 ${remaining}/${CacheState.frozenTurns.length} 轮），缓存命中率将严重下降。\n\n` +
-                    '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
-                );
-                if (!ok) {
-                    if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
-                    throw new Error('User cancelled send due to heavy dialogue deletion');
-                }
-                Logger.warn('[用户选择重置] 因重度删除，重置所有缓存', LogLevels.BASIC);
-                performReset();
-                CacheState.frozenBackground = dedupBg;
-                if (currentTurn) {
-                    CacheState.frozenTurns = [currentTurn];
-                }
-                applyFinalSequence(stream, currentUserMsg, currentPrefills, null);
-                updateStats(true);
-                return;
-            } else {
-                CacheState.frozenTurns = CacheState.frozenTurns.filter(t => currentTurnUids.has(t.user.uid));
-                if (typeof toastr !== 'undefined') toastr.info(`已自动适配：移除 ${toRemove.length} 个被删除的对话轮次，缓存命中率可能轻微下降。`);
-            }
-        }
-
-        // 处理当前轮次：如果当前轮次在冻结中已存在，则合并（通常不存在，因为是新轮次）
-        const existingCurrent = CacheState.frozenTurns.find(t => t.user.uid === currentUserMsg.uid);
-        if (existingCurrent) {
-            // 更新其预填充（如果有新的）
-            if (currentPrefills.length > 0) {
-                existingCurrent.prefills = currentPrefills;
-            }
-            if (!existingCurrent.assistant && currentTurn.assistant) {
-                existingCurrent.assistant = currentTurn.assistant;
-            }
-        } else {
-            // 否则添加
-            if (currentTurn) {
-                CacheState.frozenTurns.push(currentTurn);
-            }
         }
 
         // --- 新增背景 ---
@@ -360,7 +295,54 @@ function interceptAndRestructurePrompt(data) {
         }
         if (newBg.length > 0) Logger.warn(`[新增背景] +${newBg.length} 条`, LogLevels.DETAILED);
 
-        applyFinalSequence(stream, currentUserMsg, currentPrefills, null);
+        // --- 对话轮次自適應更新 ---
+        const frozenTurnKeys = new Set(
+            CacheState.frozenTurns.map(t => `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`)
+        );
+        const newHistoryTurns = historyTurns.filter(t => {
+            const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
+            return !frozenTurnKeys.has(key);
+        });
+
+        const removedTurns = CacheState.frozenTurns.filter(t => {
+            const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
+            return !historyTurns.some(ht => `${ht.user.uid}|${ht.assistant ? ht.assistant.uid : ''}` === key);
+        });
+
+        if (removedTurns.length > 0) {
+            Logger.warn(`[检测到删除轮次] -${removedTurns.length} 轮`, LogLevels.DETAILED);
+            if (historyTurns.length < CacheState.frozenTurns.length * 0.7) {
+                const ok = confirm(
+                    `对话历史被大幅删除（剩余 ${historyTurns.length}/${CacheState.frozenTurns.length} 轮），缓存命中率将严重下降。\n\n` +
+                    '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
+                );
+                if (!ok) {
+                    if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
+                    throw new Error('User cancelled send due to heavy dialogue deletion');
+                }
+                Logger.warn('[用户选择重置] 因重度删除，重置所有缓存', LogLevels.BASIC);
+                performReset();
+                CacheState.frozenBackground = dedupBg;
+                CacheState.frozenTurns = historyTurns;
+                applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssistant);
+                updateStats(true);
+                return;
+            } else {
+                CacheState.frozenTurns = CacheState.frozenTurns.filter(t => {
+                    const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
+                    return historyTurns.some(ht => `${ht.user.uid}|${ht.assistant ? ht.assistant.uid : ''}` === key);
+                });
+                if (typeof toastr !== 'undefined') toastr.info(`已自动适配：移除 ${removedTurns.length} 个被删除的对话轮次，缓存命中率可能轻微下降。`);
+            }
+        }
+
+        // 加入新的历史轮次
+        if (newHistoryTurns.length > 0) {
+            Logger.warn(`[对话增量] +${newHistoryTurns.length} 轮`, LogLevels.DETAILED);
+            CacheState.frozenTurns.push(...newHistoryTurns);
+        }
+
+        applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssistant);
         updateStats(false);
 
     } catch (err) {
@@ -370,9 +352,9 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 最终序列应用 (预填充独立输出)
+// 最终序列应用
 // ==========================================
-function applyFinalSequence(stream, currentUserMsg, currentPrefills, _unused) {
+function applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssistant) {
     const final = [];
 
     // 1. 冻结背景
@@ -380,10 +362,9 @@ function applyFinalSequence(stream, currentUserMsg, currentPrefills, _unused) {
         final.push({ role: bg.role, content: bg.content });
     }
 
-    // 2. 冻结对话轮次
+    // 2. 冻结的对话轮次（使用者 → 预填充 → AI 回覆）
     for (const turn of CacheState.frozenTurns) {
         final.push({ role: turn.user.role, content: turn.user.content });
-        // 输出该轮的预填充（独立消息）
         if (turn.prefills && turn.prefills.length > 0) {
             for (const p of turn.prefills) {
                 final.push({ role: p.role, content: p.content });
@@ -404,56 +385,15 @@ function applyFinalSequence(stream, currentUserMsg, currentPrefills, _unused) {
         final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
     }
 
-    // 5. 当前预填充 (这些已经在 frozenTurns 处理过了? 不，当前轮次可能已经在 frozenTurns 中，但当前请求的预填充是这一次要发送的，应该输出)
-    // 但是当前轮次如果已经在 frozenTurns 中，我们已经输出了它的 prefills，会重复吗？
-    // 关键：对于当前轮次，我们不应该预先将其预填充放入 frozenTurns 然后再输出一次，因为当前请求的输出应该只包含当前预填充一次。
-    // 解决方案：在构建最终序列时，我们只输出 frozenTurns 中**已完成**的轮次（有 assistant 的），而当前轮次（未完成）单独处理。
-    // 但我们上面的 frozenTurns 已经包含了未完成轮次，这会导致重复。
-    // 重新思考：我们应该在输出时，排除掉与当前用户消息 uid 相同的轮次，因为那部分将由后面的 currentUserMsg + currentPrefills 提供。
-    // 修改：在遍历 frozenTurns 时，跳过 turn.user.uid === currentUserMsg?.uid 的轮次。
-}
-
-// 修正 applyFinalSequence，避免当前轮次重复输出
-function applyFinalSequence(stream, currentUserMsg, currentPrefills, _unused) {
-    const final = [];
-
-    // 冻结背景
-    for (const bg of CacheState.frozenBackground) {
-        final.push({ role: bg.role, content: bg.content });
-    }
-
-    // 冻结对话轮次 (跳过当前轮次，因为当前轮次由后面的 currentUserMsg 和 currentPrefills 负责)
-    for (const turn of CacheState.frozenTurns) {
-        if (currentUserMsg && turn.user.uid === currentUserMsg.uid) {
-            continue; // 当前轮次留在最后输出
-        }
-        final.push({ role: turn.user.role, content: turn.user.content });
-        if (turn.prefills && turn.prefills.length > 0) {
-            for (const p of turn.prefills) {
-                final.push({ role: p.role, content: p.content });
-            }
-        }
-        if (turn.assistant) {
-            final.push({ role: turn.assistant.role, content: turn.assistant.content });
-        }
-    }
-
-    // 新增背景
-    for (const extra of CacheState.extraBackground) {
-        final.push({ role: extra.role, content: extra.content });
-    }
-
-    // 当前用户输入
-    if (currentUserMsg) {
-        final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
-    }
-
-    // 当前预填充
+    // 5. 当前预填充
     for (const p of currentPrefills) {
         final.push({ role: p.role, content: p.content });
     }
 
-    // 注意：如果当前轮次已经有 assistant（不可能，因为 assistant 是在响应中），忽略
+    // 6. 当前 AI 回复（如果有）
+    if (currentAssistant) {
+        final.push({ role: currentAssistant.role, content: currentAssistant.content });
+    }
 
     if (logLevel >= LogLevels.DEBUG) {
         Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结轮次:${CacheState.frozenTurns.length} 新增背景:${CacheState.extraBackground.length} 用户:1 预填充:${currentPrefills.length}`, LogLevels.DEBUG);
@@ -592,5 +532,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，预填充独立冻结 + 自適應删除 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，预填充独立冻结 + 自适应删除 ══════', LogLevels.BASIC);
 });
