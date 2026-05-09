@@ -54,21 +54,25 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机
+// 状态机（新增 prefills 冻結）
 // ==========================================
 const CacheState = {
     enabled: true,
-    frozenBackground: [],   // 初次對話的提示詞陣列（去重、逐條）
-    frozenTurns: [],        // [{ user, assistant }]  assistant 由多條助手訊息合併
-    extraBackground: [],    // 後續新增的背景條目（去重）
+    frozenBackground: [],
+    frozenTurns: [],          // { user, assistant, prefills[] }
+    extraBackground: [],
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
 
 // ==========================================
-// 消息分类
+// 消息分类（改进匹配）
 // ==========================================
 function classifyMessage(msg, originalChat) {
-    const orig = originalChat.find(m => m.mes === msg.content);
+    const normContent = Logger.normalize(msg.content);
+    const orig = originalChat.find(m => {
+        if (m.mes === msg.content) return true;
+        return Logger.normalize(m.mes) === normContent;
+    });
     let cls;
     if (orig) {
         if (orig.is_user) cls = { isRealUser: true, isRealAI: false, isInstructional: false };
@@ -79,7 +83,14 @@ function classifyMessage(msg, originalChat) {
             cls = { isRealUser: false, isRealAI: false, isInstructional: true };
         }
     } else {
-        cls = { isRealUser: false, isRealAI: false, isInstructional: true };
+        // 无法匹配时，根据 role 智能推断
+        if (msg.role === 'user') {
+            cls = { isRealUser: true, isRealAI: false, isInstructional: false };
+        } else if (msg.role === 'assistant') {
+            cls = { isRealUser: false, isRealAI: true, isInstructional: false };
+        } else {
+            cls = { isRealUser: false, isRealAI: false, isInstructional: true };
+        }
     }
     if (logLevel >= LogLevels.DEBUG) {
         const label = cls.isRealUser ? '👤真实用户' : (cls.isRealAI ? '🤖真实AI' : '📋教学/系统');
@@ -101,10 +112,9 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理请求流
+// 处理请求流（保留预填充，正确分类）
 // ==========================================
 function processStream(stream, originalChat) {
-    // 找出预填充（尾部连续的 assistant）
     let prefillStart = stream.length;
     while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
         prefillStart--;
@@ -120,7 +130,7 @@ function processStream(stream, originalChat) {
     }
 
     const backgroundCandidates = [];
-    const dialogueParts = [];  // 只含真實用戶和AI消息（非背景）
+    const dialogueParts = [];
 
     for (const msg of nonPrefill) {
         const cls = classifyMessage(msg, originalChat);
@@ -132,7 +142,7 @@ function processStream(stream, originalChat) {
         }
     }
 
-    // 提取当前用户消息（dialogueParts 尾部第一个真实用户且 role===user）
+    // 提取当前用户消息
     let currentUserMsg = null;
     for (let i = dialogueParts.length - 1; i >= 0; i--) {
         const obj = dialogueParts[i];
@@ -147,29 +157,33 @@ function processStream(stream, originalChat) {
 }
 
 // ==========================================
-// 构建对话轮次 (用户输入 → AI 长文)
+// 构建对话轮次（包含预填充）
 // ==========================================
-function buildTurns(dialogueParts) {
+function buildTurns(dialogueParts, currentPrefills) {
     const turns = [];
-    let current = { user: null, assistants: [] };
+    let cur = { user: null, assistants: [], prefills: [] };
 
     for (const obj of dialogueParts) {
         if (obj.isRealUser && obj.role === 'user') {
-            if (current.user && current.assistants.length > 0) {
+            if (cur.user && cur.assistants.length > 0) {
                 turns.push({
-                    user: current.user,
-                    assistant: combineAssistants(current.assistants),
+                    user: cur.user,
+                    assistant: combineAssistants(cur.assistants),
+                    prefills: cur.prefills,
                 });
             }
-            current = { user: obj, assistants: [] };
+            cur = { user: obj, assistants: [], prefills: [] };
         } else if (obj.isRealAI && obj.role === 'assistant') {
-            current.assistants.push(obj);
+            cur.assistants.push(obj);
         }
     }
-    if (current.user && current.assistants.length > 0) {
+    // 处理最后一个轮次（可能只有 user，没有 assistant）
+    if (cur.user) {
+        // 如果是当前轮次（没有 assistant），则使用传入的 currentPrefills
         turns.push({
-            user: current.user,
-            assistant: combineAssistants(current.assistants),
+            user: cur.user,
+            assistant: cur.assistants.length > 0 ? combineAssistants(cur.assistants) : null,
+            prefills: cur.assistants.length === 0 ? currentPrefills : [],
         });
     }
     return turns;
@@ -204,7 +218,7 @@ function interceptAndRestructurePrompt(data) {
         const { currentUserMsg, backgroundCandidates, dialogueParts, prefills } =
             processStream(stream, originalChat);
 
-        // 去重背景候选（只保留第一次出现的）
+        // 背景去重
         const seenBg = new Set();
         const dedupBg = [];
         for (const m of backgroundCandidates) {
@@ -216,9 +230,9 @@ function interceptAndRestructurePrompt(data) {
             }
         }
 
-        const currentTurns = buildTurns(dialogueParts);
+        const currentTurns = buildTurns(dialogueParts, prefills);
 
-        // ---------- 初次初始化 ----------
+        // 初始化
         if (CacheState.frozenBackground.length === 0 && CacheState.frozenTurns.length === 0) {
             CacheState.frozenBackground = dedupBg;
             CacheState.frozenTurns = currentTurns;
@@ -228,7 +242,7 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        // ---------- 背景相似度 ----------
+        // --- 背景相似度 ---
         const frozenBgNorms = new Set(CacheState.frozenBackground.map(m => m.norm));
         const currentBgNorms = new Set(dedupBg.map(m => m.norm));
         const bgSimilarity = computeSetSimilarity(frozenBgNorms, currentBgNorms);
@@ -252,19 +266,16 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        // ---------- 新增背景（世界书/新预设） ----------
+        // --- 新增背景 ---
         const newBg = dedupBg.filter(m => !frozenBgNorms.has(m.norm));
         for (const m of newBg) {
-            // 也检查 extraBackground 中是否已存在
             if (!CacheState.extraBackground.some(ex => ex.norm === m.norm)) {
                 CacheState.extraBackground.push(m);
             }
         }
-        if (newBg.length > 0) {
-            Logger.warn(`[新增背景] +${newBg.length} 条`, LogLevels.DETAILED);
-        }
+        if (newBg.length > 0) Logger.warn(`[新增背景] +${newBg.length} 条`, LogLevels.DETAILED);
 
-        // ---------- 对话增量 ----------
+        // --- 对话轮次自適應更新 ---
         const frozenTurnKeys = new Set(
             CacheState.frozenTurns.map(t => `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`)
         );
@@ -272,12 +283,29 @@ function interceptAndRestructurePrompt(data) {
             const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
             return !frozenTurnKeys.has(key);
         });
+
+        // 检测移除的轮次（即 frozen 中有但 current 中没有）
+        const removedTurns = CacheState.frozenTurns.filter(t => {
+            const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
+            return !currentTurns.some(ct => `${ct.user.uid}|${ct.assistant ? ct.assistant.uid : ''}` === key);
+        });
+
+        if (removedTurns.length > 0) {
+            Logger.warn(`[检测到删除轮次] -${removedTurns.length} 轮`, LogLevels.DETAILED);
+            // 自適應：从冻结中移除这些轮次，避免前缀被破坏
+            CacheState.frozenTurns = CacheState.frozenTurns.filter(t => {
+                const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
+                return currentTurns.some(ct => `${ct.user.uid}|${ct.assistant ? ct.assistant.uid : ''}` === key);
+            });
+        }
+
+        // 添加新轮次
         if (newTurns.length > 0) {
             Logger.warn(`[对话增量] +${newTurns.length} 轮`, LogLevels.DETAILED);
             CacheState.frozenTurns.push(...newTurns);
         }
 
-        // ---------- 大幅删除检测 ----------
+        // 若删除后剩余轮次太少（<70%），则弹窗重置
         if (currentTurns.length < CacheState.frozenTurns.length * 0.7) {
             const ok = confirm(
                 '对话历史被大幅删除，缓存命中率将下降，建议重置。\n\n' +
@@ -296,7 +324,6 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        // ---------- 正常构建 ----------
         applyFinalSequence(stream, currentUserMsg, prefills);
         updateStats(false);
 
@@ -307,35 +334,41 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 最终序列应用
+// 最终序列应用（包含轮次预填充）
 // ==========================================
 function applyFinalSequence(stream, currentUserMsg, prefills) {
     const final = [];
 
-    // 1. 冻结背景
+    // 冻结背景
     for (const bg of CacheState.frozenBackground) {
         final.push({ role: bg.role, content: bg.content });
     }
 
-    // 2. 冻结的对话轮次（不含预填充）
+    // 冻结对话轮次
     for (const turn of CacheState.frozenTurns) {
         final.push({ role: turn.user.role, content: turn.user.content });
+        // 输出该轮次的预填充（如果有）
+        if (turn.prefills && turn.prefills.length > 0) {
+            for (const p of turn.prefills) {
+                final.push({ role: p.role, content: p.content });
+            }
+        }
         if (turn.assistant) {
             final.push({ role: turn.assistant.role, content: turn.assistant.content });
         }
     }
 
-    // 3. 新增背景（世界书等）
+    // 新增背景
     for (const extra of CacheState.extraBackground) {
         final.push({ role: extra.role, content: extra.content });
     }
 
-    // 4. 当前用户输入
+    // 当前用户输入
     if (currentUserMsg) {
         final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
     }
 
-    // 5. 预填充
+    // 当前请求的预填充
     for (const p of prefills) {
         final.push({ role: p.role, content: p.content });
     }
@@ -345,12 +378,11 @@ function applyFinalSequence(stream, currentUserMsg, prefills) {
         final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
     }
 
-    // 替换原始 stream
     stream.splice(0, stream.length, ...final);
 }
 
 // ==========================================
-// 相似度计算
+// 工具函数（相似度、统计、重置）
 // ==========================================
 function computeSetSimilarity(setA, setB) {
     if (setA.size === 0 && setB.size === 0) return 1;
@@ -360,9 +392,6 @@ function computeSetSimilarity(setA, setB) {
     return union.size === 0 ? 1 : intersection / union.size;
 }
 
-// ==========================================
-// 统计与重置
-// ==========================================
 function updateStats(isInit = false) {
     let bgTokens = 0;
     for (const m of CacheState.frozenBackground) bgTokens += Logger.estimateTokens(m.content);
@@ -371,6 +400,7 @@ function updateStats(isInit = false) {
     for (const t of CacheState.frozenTurns) {
         turnTokens += Logger.estimateTokens(t.user.content);
         if (t.assistant) turnTokens += Logger.estimateTokens(t.assistant.content);
+        for (const p of (t.prefills || [])) turnTokens += Logger.estimateTokens(p.content);
     }
     CacheState.stats.prefixTokens = bgTokens + turnTokens;
     CacheState.stats.hits++;
@@ -480,5 +510,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，强制阻塞确认，绝对稳定前缀 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，强制阻塞确认，自適應凍結預填充 ══════', LogLevels.BASIC);
 });
