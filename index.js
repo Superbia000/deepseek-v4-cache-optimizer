@@ -54,13 +54,13 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机（預填充永久凍結於輪次內）
+// 状态机（预填充永久冻结于轮次内）
 // ==========================================
 const CacheState = {
     enabled: true,
-    frozenBackground: [],
-    frozenTurns: [],           // { user, prefills, assistant }
-    extraBackground: [],
+    frozenBackground: [],   // 冻结背景提示词（去重、逐条）
+    frozenTurns: [],        // [{ user, prefill, assistant }] 预填充独立保存
+    extraBackground: [],    // 后续新增的背景条目
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
 
@@ -107,29 +107,23 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理请求流
+// 处理请求流（预填充不再被剥离，全部保留在对话流中）
 // ==========================================
 function processStream(stream, originalChat) {
-    let prefillStart = stream.length;
-    while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
-        prefillStart--;
-    }
-    const prefills = stream.slice(prefillStart).map(msg => {
+    // 不再分离预填充，所有消息都参与轮次构建
+    const allMessages = stream.map(msg => {
         const cls = classifyMessage(msg, originalChat);
         return createMessageObj(msg, cls);
     });
-    const nonPrefill = stream.slice(0, prefillStart);
 
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[流分割] 非预填充: ${nonPrefill.length} 条, 预填充: ${prefills.length} 条`, LogLevels.DEBUG);
+        Logger.log(`[流分割] 总消息: ${allMessages.length} 条`, LogLevels.DEBUG);
     }
 
     const backgroundCandidates = [];
     const dialogueParts = [];
 
-    for (const msg of nonPrefill) {
-        const cls = classifyMessage(msg, originalChat);
-        const obj = createMessageObj(msg, cls);
+    for (const obj of allMessages) {
         if (obj.isInstructional) {
             backgroundCandidates.push(obj);
         } else {
@@ -137,6 +131,7 @@ function processStream(stream, originalChat) {
         }
     }
 
+    // 提取当前用户消息（dialogueParts 中最后一个 user）
     let currentUserMsg = null;
     for (let i = dialogueParts.length - 1; i >= 0; i--) {
         const obj = dialogueParts[i];
@@ -147,55 +142,55 @@ function processStream(stream, originalChat) {
         }
     }
 
-    return { currentUserMsg, backgroundCandidates, dialogueParts, prefills };
+    return { currentUserMsg, backgroundCandidates, dialogueParts };
 }
 
 // ==========================================
-// 构建对话轮次（預填充綁定在當輪 users 之後）
+// 构建对话轮次（first assistant = prefill，rest = assistant）
 // ==========================================
-function buildTurns(dialogueParts, currentPrefills) {
+function buildTurns(dialogueParts) {
     const turns = [];
-    let cur = { user: null, prefills: [...currentPrefills], assistants: [] };
-    // 注意：cur.prefills 一開始就持有當前預填充（用於最後一輪無 AI 助手時）
+    let cur = { user: null, prefill: null, assistants: [] };
 
     for (const obj of dialogueParts) {
         if (obj.isRealUser && obj.role === 'user') {
-            // 結束前一輪（如果有 user 且有 assistant）
+            // 结束上一轮
             if (cur.user && cur.assistants.length > 0) {
                 turns.push({
                     user: cur.user,
-                    prefills: [],           // 歷史輪次不含預填充（預填充已經在上一輪輸出完畢）
+                    prefill: cur.prefill,
                     assistant: combineAssistants(cur.assistants),
                 });
+            } else if (cur.user) {
+                // 有用户但没有助手，可能是最后一轮未完成，保留 prefill
+                // 这种情况不应该发生，因为最后一条用户消息已被提取
             }
-            // 開始新一輪
-            cur = { user: obj, prefills: [], assistants: [] };
+            // 开始新轮次
+            cur = { user: obj, prefill: null, assistants: [] };
         } else if (obj.isRealAI && obj.role === 'assistant') {
-            cur.assistants.push(obj);
+            if (!cur.prefill) {
+                // 第一个 assistant 作为预填充
+                cur.prefill = obj;
+            } else {
+                cur.assistants.push(obj);
+            }
         }
     }
 
-    // 處理最後一輪
+    // 处理最后可能残留的轮次（如果还有用户）
     if (cur.user) {
-        // 如果沒有助手，則預填充屬於本輪（仍保留 cur.prefills）
-        if (cur.assistants.length === 0) {
-            turns.push({
-                user: cur.user,
-                prefills: cur.prefills,
-                assistant: null,
-            });
-        } else {
-            turns.push({
-                user: cur.user,
-                prefills: [],               // 有助手時，預填充已在該輪之前輸出過
-                assistant: combineAssistants(cur.assistants),
-            });
-        }
+        turns.push({
+            user: cur.user,
+            prefill: cur.prefill,
+            assistant: cur.assistants.length > 0 ? combineAssistants(cur.assistants) : null,
+        });
     }
 
     if (logLevel >= LogLevels.DEBUG) {
         turns.forEach((t, idx) => {
-            Logger.log(`[构建轮次 ${idx}] 用户:${t.user.content.substring(0,20)}... 预填充:${t.prefills.length} 助手:${t.assistant ? t.assistant.content.substring(0,20) : '无'}`, LogLevels.DEBUG);
+            const prefillText = t.prefill ? t.prefill.content.substring(0, 25) : '无';
+            const assistantText = t.assistant ? t.assistant.content.substring(0, 25) : '无';
+            Logger.log(`[构建轮次 ${idx}] 用户:${t.user.content.substring(0,20)}... 预填充:${prefillText} 助手:${assistantText}`, LogLevels.DEBUG);
         });
     }
 
@@ -228,7 +223,7 @@ function interceptAndRestructurePrompt(data) {
         const context = getContext();
         const originalChat = context?.chat ?? [];
 
-        const { currentUserMsg, backgroundCandidates, dialogueParts, prefills } =
+        const { currentUserMsg, backgroundCandidates, dialogueParts } =
             processStream(stream, originalChat);
 
         // 去重背景
@@ -243,14 +238,14 @@ function interceptAndRestructurePrompt(data) {
             }
         }
 
-        const currentTurns = buildTurns(dialogueParts, prefills);
+        const currentTurns = buildTurns(dialogueParts);
 
         // 初始化
         if (CacheState.frozenBackground.length === 0 && CacheState.frozenTurns.length === 0) {
             CacheState.frozenBackground = dedupBg;
             CacheState.frozenTurns = currentTurns;
             Logger.log(`[初始化] 背景:${dedupBg.length} 对话轮次:${currentTurns.length}`, LogLevels.BASIC);
-            applyFinalSequence(stream, currentUserMsg, prefills);
+            applyFinalSequence(stream, currentUserMsg);
             updateStats(true);
             return;
         }
@@ -274,7 +269,7 @@ function interceptAndRestructurePrompt(data) {
             performReset();
             CacheState.frozenBackground = dedupBg;
             CacheState.frozenTurns = currentTurns;
-            applyFinalSequence(stream, currentUserMsg, prefills);
+            applyFinalSequence(stream, currentUserMsg);
             updateStats(true);
             return;
         }
@@ -317,7 +312,7 @@ function interceptAndRestructurePrompt(data) {
                 performReset();
                 CacheState.frozenBackground = dedupBg;
                 CacheState.frozenTurns = currentTurns;
-                applyFinalSequence(stream, currentUserMsg, prefills);
+                applyFinalSequence(stream, currentUserMsg);
                 updateStats(true);
                 return;
             } else {
@@ -335,7 +330,7 @@ function interceptAndRestructurePrompt(data) {
             CacheState.frozenTurns.push(...newTurns);
         }
 
-        applyFinalSequence(stream, currentUserMsg, prefills);
+        applyFinalSequence(stream, currentUserMsg);
         updateStats(false);
 
     } catch (err) {
@@ -345,9 +340,9 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 最终序列应用（依新排序輸出）
+// 最终序列应用（用户 → 预填充 → AI）
 // ==========================================
-function applyFinalSequence(stream, currentUserMsg, prefills) {
+function applyFinalSequence(stream, currentUserMsg) {
     const final = [];
 
     // 1. 冻结背景
@@ -355,14 +350,11 @@ function applyFinalSequence(stream, currentUserMsg, prefills) {
         final.push({ role: bg.role, content: bg.content });
     }
 
-    // 2. 冻结对话轮次（使用者 → 預填充 → AI）
+    // 2. 冻结对话轮次
     for (const turn of CacheState.frozenTurns) {
         final.push({ role: turn.user.role, content: turn.user.content });
-        // 輸出本輪的預填充
-        if (turn.prefills && turn.prefills.length > 0) {
-            for (const p of turn.prefills) {
-                final.push({ role: p.role, content: p.content });
-            }
+        if (turn.prefill) {
+            final.push({ role: turn.prefill.role, content: turn.prefill.content });
         }
         if (turn.assistant) {
             final.push({ role: turn.assistant.role, content: turn.assistant.content });
@@ -379,13 +371,8 @@ function applyFinalSequence(stream, currentUserMsg, prefills) {
         final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
     }
 
-    // 5. 当前请求的预填充
-    for (const p of prefills) {
-        final.push({ role: p.role, content: p.content });
-    }
-
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结轮次:${CacheState.frozenTurns.length} 新增背景:${CacheState.extraBackground.length} 用户:${currentUserMsg?1:0} 预填充:${prefills.length}`, LogLevels.DEBUG);
+        Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结轮次:${CacheState.frozenTurns.length} 新增背景:${CacheState.extraBackground.length} 用户:${currentUserMsg?1:0}`, LogLevels.DEBUG);
         final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
     }
 
@@ -410,7 +397,7 @@ function updateStats(isInit = false) {
     let turnTokens = 0;
     for (const t of CacheState.frozenTurns) {
         turnTokens += Logger.estimateTokens(t.user.content);
-        for (const p of (t.prefills || [])) turnTokens += Logger.estimateTokens(p.content);
+        if (t.prefill) turnTokens += Logger.estimateTokens(t.prefill.content);
         if (t.assistant) turnTokens += Logger.estimateTokens(t.assistant.content);
     }
     CacheState.stats.prefixTokens = bgTokens + turnTokens;
@@ -521,5 +508,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，預填充徹底凍結 + 自適應刪除 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，預填充永久凍結於輪次內 ══════', LogLevels.BASIC);
 });
