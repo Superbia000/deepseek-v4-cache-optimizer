@@ -2,15 +2,15 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (CSS Injection) - 現代化 UI
+// 1. 樣式注入 (現代化 UI 與語義化色彩)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
     const style = document.createElement('style');
     style.id = 'ds-cache-styles';
     style.innerHTML = `
-        /* 終端機日誌樣式 */
-        .ds-log-terminal { background: #0d0d0d; color: #a9b7c6; font-family: Consolas, monospace; font-size: 11px; height: 180px; overflow-y: auto; border-radius: 6px; padding: 8px; border: 1px solid #333; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); }
+        /* 終端機日誌 */
+        .ds-log-terminal { background: #0d0d0d; color: #a9b7c6; font-family: Consolas, monospace; font-size: 11px; height: 180px; overflow-y: auto; border-radius: 6px; padding: 8px; border: 1px solid #333; box-shadow: inset 0 0 10px rgba(0,0,0,0.5); scroll-behavior: smooth; }
         .ds-log-line { margin-bottom: 3px; line-height: 1.3; word-wrap: break-word; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 2px; }
         .ds-log-time { color: #5c6370; margin-right: 5px; }
         .ds-log-info { color: #98c379; }
@@ -18,21 +18,33 @@ const injectCSS = () => {
         .ds-log-error { color: #e06c75; font-weight: bold; }
         .ds-log-map { color: #56b6c2; }
         
-        /* 攔截器彈窗樣式 */
-        .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.7); backdrop-filter: blur(8px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; }
-        .ds-modal { background: #1e1e24; border: 1px solid #e06c75; padding: 30px; border-radius: 16px; max-width: 600px; width: 90%; color: #fff; font-family: sans-serif; box-shadow: 0 20px 40px rgba(0,0,0,0.6); position: relative; overflow: hidden; animation: dsSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        /* 標籤色彩 (Semantic Tags) */
+        .ds-tag-SYS { color: #61afef; font-weight: bold; }
+        .ds-tag-USER { color: #98c379; font-weight: bold; }
+        .ds-tag-AI { color: #e5c07b; font-weight: bold; }
+        .ds-tag-PREFILL { color: #c678dd; font-weight: bold; }
+        .ds-tag-arrow { color: #555; margin: 0 4px; font-size: 0.9em; }
+
+        /* 快取列表高亮 */
+        .ds-chat-item { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.1); transition: 0.2s; }
+        .ds-chat-item.active-chat { background:rgba(0, 229, 255, 0.1); border:1px solid #00e5ff; box-shadow: 0 0 8px rgba(0,229,255,0.2); }
+        
+        /* 攔截器彈窗 */
+        .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; }
+        .ds-modal { background: #1e1e24; border: 1px solid #e06c75; padding: 30px; border-radius: 16px; max-width: 600px; width: 90%; color: #fff; font-family: sans-serif; box-shadow: 0 20px 40px rgba(0,0,0,0.8); position: relative; overflow: hidden; animation: dsSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .ds-modal-title { color: #e06c75; margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px; font-size: 20px; }
         .ds-modal-text { font-size: 14px; line-height: 1.6; color: #abb2bf; }
         .ds-progress-container { background: #282c34; border-radius: 8px; height: 12px; margin: 15px 0; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
-        .ds-progress-bar { background: linear-gradient(90deg, #e5c07b, #e06c75); height: 100%; width: 0%; transition: width 0.8s ease-out; }
-        .ds-map-box { background: #000; padding: 12px; border-radius: 8px; font-family: Consolas, monospace; font-size: 12px; color: #56b6c2; margin: 15px 0; max-height: 150px; overflow-y: auto; border: 1px solid #333; }
+        .ds-progress-bar { height: 100%; width: 0%; transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s; }
+        .ds-map-box { background: #000; padding: 12px; border-radius: 8px; font-family: Consolas, monospace; font-size: 12px; color: #abb2bf; margin: 15px 0; max-height: 160px; overflow-y: auto; border: 1px solid #333; line-height: 1.6; word-wrap: break-word; }
         .ds-btn-group { display: flex; gap: 12px; margin-top: 25px; }
-        .ds-btn { flex: 1; padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; transition: all 0.2s; }
-        .ds-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        .ds-btn { flex: 1; padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; transition: all 0.2s; position: relative; overflow: hidden; }
+        .ds-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); filter: brightness(1.1); }
         .ds-btn:active { transform: translateY(0); }
         .ds-btn-accept { background: #98c379; color: #1e1e24; }
         .ds-btn-abort { background: #e06c75; color: #fff; }
         .ds-btn-sub { font-size: 10px; font-weight: normal; opacity: 0.8; }
+        .ds-key-hint { position: absolute; right: 8px; top: 8px; font-size: 10px; opacity: 0.6; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px; }
         
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
@@ -41,43 +53,44 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態與設定 (新增容錯率控制)
+// 2. 狀態設定與智慧防抖
 // ==========================================
 let Settings = {};
 
 function initSettings() {
-    if (!extension_settings.ds_cache_v13) {
-        extension_settings.ds_cache_v13 = {
-            enabled: true,
-            toastSys: true,
-            toastLore: true,
-            toastHistory: true,
-            showResetPrompt: true,
-            logLevel: 3,
-            tolerance: 1, // 0:嚴格, 1:標準, 2:寬鬆
-            chats: {} 
+    if (!extension_settings.ds_cache_v14) {
+        extension_settings.ds_cache_v14 = {
+            enabled: true, toastSys: true, toastLore: true, toastHistory: true,
+            showResetPrompt: true, logLevel: 3, tolerance: 1, chats: {} 
         };
     }
-    Settings = extension_settings.ds_cache_v13;
+    Settings = extension_settings.ds_cache_v14;
     if (Settings.tolerance === undefined) Settings.tolerance = 1;
     if (!Settings.chats) Settings.chats = {}; 
 }
 
 function safeSave() {
-    try {
-        if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced();
-    } catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
+    try { if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); } 
+    catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
 }
 
 function getTolerance() {
-    // 根據設定返回 (SYS寬容度, HIS寬容度)
-    if (Settings.tolerance === 0) return { sys: 0.5, his: 0.6 }; // 嚴格 (相似度需很高)
-    if (Settings.tolerance === 1) return { sys: 0.2, his: 0.3 }; // 標準 (v12 默認)
-    return { sys: 0.05, his: 0.1 }; // 寬鬆 (幾乎只要角色對上就當作原位修改)
+    if (Settings.tolerance === 0) return { sys: 0.5, his: 0.6 }; 
+    if (Settings.tolerance === 1) return { sys: 0.2, his: 0.3 }; 
+    return { sys: 0.05, his: 0.1 }; 
+}
+
+// 防抖函數 (優化輸入效能)
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(this, args), wait);
+    };
 }
 
 // ==========================================
-// 3. 軍用級可視化日誌系統 (防止記憶體洩漏)
+// 3. 軍用級可視化日誌系統與匯出引擎
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
@@ -86,21 +99,17 @@ function logAt(level, type, msg) {
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     
-    // 輸出到開發者工具
-    if (type === 'warn') console.warn(`%c[DS Cache v13] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    else if (type === 'error') console.error(`[DS Cache v13] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[DS Cache v13] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
-    else console.log(`%c[DS Cache v13] ✅ ${msg}`, 'color: #00ff00;');
+    if (type === 'warn') console.warn(`%c[DS Cache v14] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    else if (type === 'error') console.error(`[DS Cache v14] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[DS Cache v14] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
+    else console.log(`%c[DS Cache v14] ✅ ${msg}`, 'color: #00ff00;');
     
-    // 輸出到 UI 終端機
     const container = document.getElementById('ds-cache-log-container');
     if (container) {
         const line = document.createElement('div');
         line.className = 'ds-log-line';
         line.innerHTML = `<span class="ds-log-time">[${time}]</span> <span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
         container.appendChild(line);
-        
-        // 記憶體保護：限制最多 200 條記錄
         while (container.childNodes.length > 200) container.removeChild(container.firstChild);
         container.scrollTop = container.scrollHeight;
     }
@@ -111,20 +120,40 @@ const Logger = {
     warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
     map: (msg, level = LogLevels.BASIC) => logAt(level, 'map', msg),
     error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
-    normalize: (text) => text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
-    getSeqString: (seq) => seq.map(m => `[${m.tag}]`).join(' ➔ ')
+    normalize: (text) => (text || '').replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
+    
+    // 支援語義化 HTML 輸出的拓撲字串產生器
+    getSeqString: (seq, html = false) => seq.map(m => {
+        if (!html) return `[${m.tag}]`;
+        return `<span class="ds-tag-${m.tag}">[${m.tag}]</span>`;
+    }).join(html ? '<span class="ds-tag-arrow">➔</span>' : ' ➔ ')
 };
 
-function exportLogs() {
+// 全狀態深度快照匯出
+function exportDeepSnapshot() {
+    const chatKeyInfo = getChatKey();
     const container = document.getElementById('ds-cache-log-container');
-    if (!container) return;
-    const text = Array.from(container.childNodes).map(n => n.innerText).join('\n');
-    const blob = new Blob([text], { type: 'text/plain' });
+    const logs = container ? Array.from(container.childNodes).map(n => n.innerText).join('\n') : 'No logs';
+    
+    const snapshot = {
+        timestamp: new Date().toISOString(),
+        currentChat: chatKeyInfo,
+        settings: {
+            enabled: Settings.enabled,
+            tolerance: Settings.tolerance,
+            logLevel: Settings.logLevel
+        },
+        activeCacheState: Settings.chats[chatKeyInfo.key] || "No cache for this chat",
+        terminalLogs: logs
+    };
+
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `DS_Cache_Log_${new Date().getTime()}.txt`;
+    a.download = `DS_Apex_Snapshot_${new Date().getTime()}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
+    if (typeof toastr !== 'undefined') toastr.success("已匯出全狀態深度除錯快照！", "DS Cache");
 }
 
 // ==========================================
@@ -167,7 +196,7 @@ function addTopMenuButton() {
 }
 
 // ==========================================
-// 5. 核心工具與數據流解析 (不改動邏輯)
+// 5. 核心工具與數據流解析 (邏輯鎖死)
 // ==========================================
 function createMsg(msg, tag) {
     const content = msg.content || '';
@@ -241,30 +270,36 @@ function parseSTStream(stream) {
 }
 
 // ==========================================
-// 6. 現代化異步攔截 UI 引擎
+// 6. 現代化異步攔截 UI 引擎 (具備鍵盤監聽與動態色彩)
 // ==========================================
 function askUserForResetAsync(dropPercent, mapInfo) {
     return new Promise(resolve => {
+        let progColor = '#98c379'; // 綠色
+        if (dropPercent >= 50) progColor = '#e06c75'; // 紅色
+        else if (dropPercent >= 20) progColor = '#e5c07b'; // 黃色
+
         const html = `
             <div class="ds-overlay" id="ds-modal-wrapper">
                 <div class="ds-modal">
                     <h2 class="ds-modal-title"><span class="fa-solid fa-triangle-exclamation"></span> 緩存斷裂預警 (原位同步中)</h2>
-                    <p class="ds-modal-text">檢測到陣列前排發生了變更。這將導致 KV 緩存鏈條斷裂，預計 <b>${dropPercent}%</b> 的歷史對話緩存將失效並重新運算。<br><br><b>插件已自動完成時序陣列的原位更新與補位。</b>請問要接受本次修改嗎？</p>
+                    <p class="ds-modal-text">檢測到陣列發生變更。這將導致預計 <b style="color:${progColor}">${dropPercent}%</b> 的歷史對話緩存失效並重新運算。<br><br><b>插件已自動完成時序陣列的原位更新與補位。</b>請問要接受本次修改嗎？</p>
                     
                     <div class="ds-progress-container">
-                        <div class="ds-progress-bar" id="ds-prog-bar"></div>
+                        <div class="ds-progress-bar" id="ds-prog-bar" style="background: ${progColor};"></div>
                     </div>
                     
-                    <div class="ds-map-box">斷裂詳情：<br>${mapInfo.replace(/\n/g, '<br>')}</div>
+                    <div class="ds-map-box">${mapInfo.replace(/\n/g, '<br>')}</div>
                     
                     <div class="ds-btn-group">
                         <button class="ds-btn ds-btn-accept" id="ds-btn-accept">
                             <span class="fa-solid fa-check-double"></span> 確認同步
-                            <span class="ds-btn-sub">接受原位修改並發送</span>
+                            <span class="ds-btn-sub">接受修改並發送</span>
+                            <span class="ds-key-hint">Enter ↵</span>
                         </button>
                         <button class="ds-btn ds-btn-abort" id="ds-btn-abort">
                             <span class="fa-solid fa-ban"></span> 攔截發送
                             <span class="ds-btn-sub">中止生成並復原</span>
+                            <span class="ds-key-hint">Esc</span>
                         </button>
                     </div>
                 </div>
@@ -272,16 +307,30 @@ function askUserForResetAsync(dropPercent, mapInfo) {
         `;
         $('body').append(html);
         
-        // 進度條動畫
         setTimeout(() => { $('#ds-prog-bar').css('width', `${Math.min(dropPercent, 100)}%`); }, 50);
 
-        $('#ds-btn-accept').click(() => { $('#ds-modal-wrapper').remove(); resolve('reset'); });
-        $('#ds-btn-abort').click(() => { $('#ds-modal-wrapper').remove(); resolve('abort'); });
+        const cleanup = () => {
+            $('#ds-modal-wrapper').remove();
+            document.removeEventListener('keydown', keyHandler);
+        };
+
+        const accept = () => { cleanup(); resolve('reset'); };
+        const abort = () => { cleanup(); resolve('abort'); };
+
+        $('#ds-btn-accept').click(accept);
+        $('#ds-btn-abort').click(abort);
+
+        // 全域鍵盤監聽
+        const keyHandler = (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); accept(); }
+            if (e.key === 'Escape') { e.preventDefault(); abort(); }
+        };
+        document.addEventListener('keydown', keyHandler);
     });
 }
 
 // ==========================================
-// 7. 核心處理器 (v13 統一對象池映射引擎 - 邏輯鎖死)
+// 7. 核心處理器 (Apex 版 - 邏輯鎖死)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -427,7 +476,10 @@ async function interceptAndRestructurePrompt(data) {
             if (dropRatio > 0.10 && Settings.showResetPrompt) {
                 requireResetConfirm = true;
                 dropPercentStr = (dropRatio * 100).toFixed(1);
-                mapInfoText = `> 斷裂點索引: [${breakIndex}] (${P[breakIndex]?.tag})\n> 原文: ${L[breakIndex]?.content?.substring(0,35)}...\n> 現狀: ${P[breakIndex]?.content?.substring(0,35)}...`;
+                
+                // 語義化高亮顯示斷裂點
+                const tagHtml = `<span class="ds-tag-${P[breakIndex]?.tag}">[${P[breakIndex]?.tag}]</span>`;
+                mapInfoText = `> 斷裂點索引: [${breakIndex}] ${tagHtml}\n> 原文: <span style="color:#e06c75">${L[breakIndex]?.content?.substring(0,35) || '無'}...</span>\n> 現狀: <span style="color:#98c379">${P[breakIndex]?.content?.substring(0,35) || '無'}...</span>`;
             }
         }
 
@@ -442,7 +494,7 @@ async function interceptAndRestructurePrompt(data) {
 
         if (decision === 'abort') {
             Logger.error('[攔截] 已強制中止生成', null, LogLevels.BASIC);
-            if (typeof toastr !== 'undefined') toastr.error("已強制攔截本次請求！請復原提示詞。", "DS Cache");
+            if (typeof toastr !== 'undefined') toastr.error("已強制攔截！請復原提示詞。", "DS Cache");
             stream.splice(0, stream.length); 
             return;
         }
@@ -471,14 +523,13 @@ async function interceptAndRestructurePrompt(data) {
 // ==========================================
 // 8. 控制面板 UI 與交互綁定
 // ==========================================
-let warningTimeout = null;
-function triggerWarning(msg, toggle) {
+function triggerWarningDirect(msg, toggle) {
     if (!Settings.enabled || !toggle) return;
-    if (warningTimeout) clearTimeout(warningTimeout);
-    warningTimeout = setTimeout(() => {
-        if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DS 狀態變更', { timeOut: 3000 });
-    }, 300); 
+    if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DS 狀態變更', { timeOut: 2000 });
 }
+
+// 防抖包裝的 Toast，防止打字時瘋狂彈窗
+const triggerWarningDebounced = debounce(triggerWarningDirect, 1200);
 
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
@@ -491,13 +542,17 @@ function renderChatsUI() {
         return;
     }
 
+    const currentKey = getChatKey().key; // 獲取當前所在聊天
+
     keys.forEach(key => {
         const chat = Settings.chats[key];
         const count = chat.frozenSequence?.length || 0;
+        const isActive = (key === currentKey); // 判斷是否為當前活躍聊天
+        
         const html = `
-            <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.1);">
+            <div class="ds-chat-item ${isActive ? 'active-chat' : ''}" title="${isActive ? '這是您目前的對話存檔' : ''}">
                 <div style="display:flex; flex-direction:column; overflow:hidden;">
-                    <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%;" title="${chat.label}">${chat.label}</span>
+                    <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; color:${isActive?'#00e5ff':'#fff'};">${isActive ? '🟢 ' : ''}${chat.label}</span>
                     <span style="font-size:0.7em; color:#98c379;">凍結節點: ${count}</span>
                 </div>
                 <button class="menu_button interactable ds-reset-btn" data-key="${key}" style="font-size:0.8em; padding:4px 8px; border-radius:4px;"><span class="fa-solid fa-trash"></span></button>
@@ -521,32 +576,44 @@ function showTopology() {
         if (typeof toastr !== 'undefined') toastr.info("當前對話尚無快取數據");
         return;
     }
-    const mapStr = Logger.getSeqString(state.frozenSequence).replace(/ ➔ /g, '<br> ➔ ');
+    // 使用 HTML 語義化色彩渲染
+    const mapStr = Logger.getSeqString(state.frozenSequence, true).replace(/<span class="ds-tag-arrow">➔<\/span>/g, '<br><span class="ds-tag-arrow" style="margin-left:10px;">➔</span> ');
     const html = `
         <div class="ds-overlay" id="ds-topo-wrapper">
-            <div class="ds-modal" style="max-width: 400px;">
-                <h2 class="ds-modal-title" style="color:#56b6c2;"><span class="fa-solid fa-network-wired"></span> 凍結拓撲結構</h2>
-                <div class="ds-map-box" style="max-height:300px; font-size:13px; line-height:1.5;">${mapStr}</div>
-                <button class="ds-btn ds-btn-accept" style="width:100%; margin-top:15px;" onclick="$('#ds-topo-wrapper').remove()">關閉預覽</button>
+            <div class="ds-modal" style="max-width: 400px; padding: 25px;">
+                <h2 class="ds-modal-title" style="color:#56b6c2; font-size:18px;"><span class="fa-solid fa-network-wired"></span> 凍結拓撲結構預覽</h2>
+                <div class="ds-map-box" style="max-height:350px; font-size:13px; line-height:1.6; background:#121212; padding:15px; border-radius:8px;">${mapStr}</div>
+                <button class="ds-btn ds-btn-accept" style="width:100%; margin-top:15px;" id="ds-btn-close-topo">關閉預覽 (Esc/Enter)</button>
             </div>
         </div>
     `;
     $('body').append(html);
+    
+    const closeTopo = () => {
+        $('#ds-topo-wrapper').remove();
+        document.removeEventListener('keydown', topoKeyHandler);
+    };
+    $('#ds-btn-close-topo').click(closeTopo);
+    
+    const topoKeyHandler = (e) => {
+        if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); closeTopo(); }
+    };
+    document.addEventListener('keydown', topoKeyHandler);
 }
 
 async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v13-opt-drawer">
+        <div class="inline-drawer" id="ds-v14-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b><span class="fa-solid fa-microchip"></span> Deepseek Cache 引擎 (v13 典藏版)</b>
+                <b><span class="fa-solid fa-microchip"></span> Deepseek Cache (v14 巔峰版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:15px; background: rgba(0,0,0,0.2);">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <label class="checkbox_label" style="font-weight:bold; color:#00e5ff;"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用時序引擎</label>
-                    <button id="ds-btn-topo" class="menu_button interactable" style="font-size:0.8em; padding:3px 8px;"><span class="fa-solid fa-eye"></span> 檢視拓撲</button>
+                    <button id="ds-btn-topo" class="menu_button interactable" style="font-size:0.8em; padding:3px 8px; background:rgba(86,182,194,0.1); color:#56b6c2; border:1px solid #56b6c2;"><span class="fa-solid fa-eye"></span> 檢視拓撲</button>
                 </div>
                 
                 <div style="margin:5px 0 15px 15px; border-left: 3px solid #00e5ff; padding-left: 12px;">
@@ -582,8 +649,8 @@ async function setupUI() {
                 
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
                     <b style="font-size:0.85em; color:#98c379;"><span class="fa-solid fa-terminal"></span> 執行緒終端機：</b>
-                    <div style="display:flex; gap:5px;">
-                        <span id="ds-btn-export" title="匯出日誌" style="cursor:pointer; color:#61afef;"><span class="fa-solid fa-download"></span></span>
+                    <div style="display:flex; gap:10px;">
+                        <span id="ds-btn-export" title="匯出深度除錯快照" style="cursor:pointer; color:#61afef;"><span class="fa-solid fa-file-export"></span> 匯出</span>
                         <span id="ds-btn-clearlog" title="清空日誌" style="cursor:pointer; color:#e06c75;"><span class="fa-solid fa-trash"></span></span>
                     </div>
                 </div>
@@ -606,7 +673,7 @@ async function setupUI() {
         });
         
         $('#ds-btn-clearlog').on('click', () => { $('#ds-cache-log-container').empty(); });
-        $('#ds-btn-export').on('click', exportLogs);
+        $('#ds-btn-export').on('click', exportDeepSnapshot);
         $('#ds-btn-topo').on('click', showTopology);
         
         renderChatsUI();
@@ -619,25 +686,32 @@ jQuery(async () => {
         await setupUI();
         
         setTimeout(addTopMenuButton, 2000);
-        if (eventSource) eventSource.on(event_types.CHAT_CHANGED, addTopMenuButton);
+        // 當聊天室切換時，自動重新渲染列表以更新「當前活躍高亮」
+        if (eventSource) {
+            eventSource.on(event_types.CHAT_CHANGED, () => {
+                addTopMenuButton();
+                renderChatsUI();
+            });
+        }
 
         if (eventSource) {
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
                 eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             }
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('歷史被刪除！準備原位補位', Settings.toastHistory));
-            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('歷史被修改！準備原位更新', Settings.toastHistory));
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningDebounced('歷史被刪除！準備原位補位', Settings.toastHistory));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningDebounced('歷史被修改！準備原位更新', Settings.toastHistory));
         }
 
+        // 使用防抖處理打字輸入事件，避免瘋狂彈窗
         $(document).on('change select2:select input focusout', '#chat_completion_preset, .preset_select, select[id*="preset"], #main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt', function() {
-            triggerWarning('提示詞變更！準備原位更新/附加', Settings.toastSys);
+            triggerWarningDebounced('提示詞變更！準備原位更新/附加', Settings.toastSys);
         });
 
         $(document).on('input change focusout', '.world_info_entry textarea, .world_info_entry input, #world_info_entries_list textarea, .lorebook_entry textarea, .drawer-content textarea', function() {
-            triggerWarning('世界書變更！準備原位更新/附加', Settings.toastLore);
+            triggerWarningDebounced('世界書變更！準備原位更新/附加', Settings.toastLore);
         });
 
-        Logger.log('══════ v13.0 典藏版 就緒 (Engine Online) ══════', LogLevels.BASIC);
+        Logger.log('══════ v14.0 巔峰極致版 (Apex) 啟動完畢 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動失敗:', e);
     }
