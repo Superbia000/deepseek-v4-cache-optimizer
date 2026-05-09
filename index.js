@@ -4,41 +4,31 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 // ==========================================
 // 核心常數與全域狀態
 // ==========================================
-const PLUGIN_VERSION = 'v16.0 Ultimate Enterprise';
+const PLUGIN_VERSION = 'v16.1 Minimalist Strict';
 const MAX_CACHED_CHATS = 50;
 let Settings = {};
 
 const RuntimeCache = {
     tokenMap: new Map(),
-    hashMap: new Map(),
-    sessionSavedTokens: 0,
-    sessionWastedTokens: 0
+    hashMap: new Map()
 };
 
 // ==========================================
-// 初始化與資料庫遷移
+// 初始化與 LRU 回收
 // ==========================================
 function initSettings() {
-    if (!extension_settings.ds_cache_v16) {
-        extension_settings.ds_cache_v16 = {
+    if (!extension_settings.ds_cache_v16_1) {
+        extension_settings.ds_cache_v16_1 = {
             enabled: true,
-            sinkingMode: true,        // 動態下沉模式 (RAG 保全)
+            sinkingMode: true,        // 動態下沉模式 (確保新世界書不破壞前排緩存)
             silentThreshold: 5,       // 靜默修復閾值 (%)
             warnThreshold: 15,        // 彈窗警告閾值 (%)
-            costPerMillion: 0.014,    // 每百萬 Token 節省的美金 (DeepSeek V3 均價)
-            stats: {
-                totalSavedTokens: 0,
-                totalWastedTokens: 0,
-                totalRequests: 0,
-                totalBreaksPrevented: 0
-            },
             logLevel: 2,
             chats: {} 
         };
     }
-    Settings = extension_settings.ds_cache_v16;
-    if (!Settings.stats) Settings.stats = { totalSavedTokens: 0, totalWastedTokens: 0, totalRequests: 0, totalBreaksPrevented: 0 };
-    if (Settings.costPerMillion === undefined) Settings.costPerMillion = 0.014;
+    Settings = extension_settings.ds_cache_v16_1;
+    if (!Settings.chats) Settings.chats = {};
     runGarbageCollection();
 }
 
@@ -59,7 +49,7 @@ function runGarbageCollection() {
 function yieldToMain() { return new Promise(resolve => setTimeout(resolve, 0)); }
 
 // ==========================================
-// 高精度哈希與經濟引擎
+// 高精度哈希與 Token 引擎
 // ==========================================
 function cyrb53(str, seed = 0) {
     let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
@@ -95,19 +85,8 @@ function estimateTokens(text) {
     return count;
 }
 
-// 經濟結算
-function commitEconomics(saved, wasted) {
-    RuntimeCache.sessionSavedTokens += saved;
-    RuntimeCache.sessionWastedTokens += wasted;
-    Settings.stats.totalSavedTokens += saved;
-    Settings.stats.totalWastedTokens += wasted;
-    Settings.stats.totalRequests += 1;
-    safeSave();
-    updateDashboardUI();
-}
-
 // ==========================================
-// 系統日誌與差異分析引擎
+// 系統日誌引擎
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 const Logger = {
@@ -232,41 +211,40 @@ function parseSTStream(stream) {
 }
 
 // ==========================================
-// UI 經濟彈窗與分析視圖
+// 警告彈窗 (無經濟數據版本)
 // ==========================================
-function askUserForResetAsync(stats, lNode, pNode) {
+function askUserForResetAsync(dropPercent, missTokens, lNode, pNode) {
     return new Promise(resolve => {
         const overlay = $(`<div class="ds-modal-bg"></div>`);
-        const moneyLost = ((stats.wastedTokens / 1000000) * Settings.costPerMillion).toFixed(5);
         
         let diffHtml = `
             <div style="display:flex; flex-direction:column; gap:8px;">
                 <div style="background:rgba(229,115,115,0.1); border-left:3px solid #e57373; padding:8px; border-radius:4px;">
-                    <span style="color:#e57373; font-weight:bold; font-size:11px;">[原緩存節點]</span><br>
-                    <span style="color:#aaa;">${lNode ? lNode.content.substring(0,80).replace(/</g,'&lt;') + '...' : 'EOF'}</span>
+                    <span style="color:#e57373; font-weight:bold; font-size:11px;">[期待的舊緩存節點]</span><br>
+                    <span style="color:#aaa;">${lNode ? lNode.content.substring(0,80).replace(/</g,'&lt;') + '...' : '(此處原為空)'}</span>
                 </div>
                 <div style="background:rgba(129,199,132,0.1); border-left:3px solid #81c784; padding:8px; border-radius:4px;">
-                    <span style="color:#81c784; font-weight:bold; font-size:11px;">[闖入的修改]</span><br>
-                    <span style="color:#eee;">${pNode ? pNode.content.substring(0,80).replace(/</g,'&lt;') + '...' : 'EOF'}</span>
+                    <span style="color:#81c784; font-weight:bold; font-size:11px;">[闖入的新替換節點]</span><br>
+                    <span style="color:#eee;">${pNode ? pNode.content.substring(0,80).replace(/</g,'&lt;') + '...' : '(節點遺失或刪除)'}</span>
                 </div>
             </div>`;
 
         const box = $(`
         <div class="ds-modal-box">
             <h2 style="color:#ef5350; margin-top:0; font-size: 1.4em; display:flex; align-items:center; gap:8px;">
-                <span class="fa-solid fa-money-bill-wave"></span> 緩存擊穿警告
+                <span class="fa-solid fa-triangle-exclamation"></span> 緩存拓撲斷裂警告
             </h2>
             <p style="text-align:left; line-height:1.6; font-size:14px; color:#cfd8dc;">
-                發生了嚴重拓撲斷裂 <b>(流失率: ${stats.dropPercentStr}%)</b>。<br>
-                將有 <b style="color:#ef5350;">${stats.wastedTokens.toLocaleString()}</b> Tokens 被迫重算，估計浪費 <b>$${moneyLost} USD</b>。
+                偵測到前端或中間的節點發生了異動/刪除 <b>(流失率: ${dropPercent}%)</b>。<br>
+                將有 <b style="color:#ef5350;">${missTokens.toLocaleString()}</b> 個 Tokens 因無法命中前綴緩存，被迫重新運算。
             </p>
             <div class="ds-modal-map">${diffHtml}</div>
             <div style="margin-top:20px; display:flex; gap:15px;">
                 <button id="ds-m-accept" style="flex:1; background:#43a047; color:white; padding:12px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; transition:0.2s;">
-                    🔄 認賠發送 (重建緩存)
+                    🔄 接受斷裂並發送
                 </button>
                 <button id="ds-m-abort" style="flex:1; background:#e53935; color:white; padding:12px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; transition:0.2s;">
-                    🛑 攔截請求 (我去修復)
+                    🛑 攔截請求
                 </button>
             </div>
         </div>`);
@@ -278,7 +256,7 @@ function askUserForResetAsync(stats, lNode, pNode) {
 }
 
 // ==========================================
-// 核心引擎：v16 經濟管家與動態下沉
+// 核心引擎：嚴格前綴比對 (Strict Divergence)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -334,13 +312,12 @@ async function interceptAndRestructurePrompt(data) {
         for (let h of remainingHistory) rawFrozenSequence.push(h);
         
         if (Settings.sinkingMode) {
-            // 🧲 動態下沉：所有新闖入的系統提示詞 (通常是 RAG 或世界書) 強制掛載在最後方，保全前排數萬字 Cache
+            // 🧲 動態下沉：世界書/臨時設定強制推到最後方，保全前排緩存
             for (let sys of sysMsgsPool) {
                 rawFrozenSequence.push(sys);
-                Logger.log(`[動態下沉] 已將新插入的設定推至陣列尾端，完美保全緩存。`, LogLevels.BASIC);
+                Logger.log(`[動態下沉] 發現新設定，已安全掛載於陣列尾端。`, LogLevels.BASIC);
             }
         } else {
-            // 靜態錨定：插入前端 (極易破壞緩存)
             for (let sys of sysMsgsPool) rawFrozenSequence.splice(1, 0, sys);
         }
 
@@ -357,64 +334,54 @@ async function interceptAndRestructurePrompt(data) {
 
         Logger.map(`拓撲預覽: ${Logger.getSeqString(proposedStream)}`, LogLevels.BASIC);
 
-        // --- 階段 3：經濟結算與滑動對齊 ---
+        // --- 階段 3：嚴格分歧點偵測 (Strict Divergence Detection) ---
         let L = state.lastSentSequence || [];
         let P = proposedStream;
         
-        let slideOffset = 0;
-        for(let i = 0; i < Math.min(L.length, 15); i++) {
-            if(P.length > 0 && P[0].hash === L[i].hash) { slideOffset = i; break; }
-        }
-        if (slideOffset > 0) {
-            Logger.debug(`[滑動對齊] 補償 ${slideOffset} 個歷史擠出`);
-            L = L.slice(slideOffset);
+        // 尋找第一個不匹配的索引 (代表緩存從這裡開始完全斷裂)
+        let breakIdx = 0;
+        while (breakIdx < L.length && breakIdx < P.length && L[breakIdx].hash === P[breakIdx].hash) {
+            breakIdx++;
         }
 
-        let breakIdx = -1;
-        for (let i = 0; i < Math.min(L.length, P.length); i++) {
-            if (L[i].role !== P[i].role || L[i].hash !== P[i].hash) { breakIdx = i; break; }
-        }
-        if (breakIdx === -1) breakIdx = P.length;
+        let prefixTokens = 0;
+        for (let i = 0; i < breakIdx; i++) prefixTokens += estimateTokens(P[i].content);
 
-        let prefixTokens = 0, newTokens = 0;
-        for (let i = 0; i < P.length; i++) {
-            const tCount = estimateTokens(P[i].content);
-            if (i < breakIdx) prefixTokens += tCount;
-            else {
-                // Swipe 豁免
+        let missTokens = 0;
+        
+        // 核心邏輯：
+        // 只有當 breakIdx 既小於 L 的長度，又小於 P 的長度時，才代表陣列發生了真正的「斷裂修改 / 刪除」
+        // 若 P 是 L 的單純延伸 (正常對話)，或 L 是 P 的延伸 (撤回末端對話)，不會產生破壞性斷裂。
+        if (breakIdx < L.length && breakIdx < P.length) {
+            for (let i = breakIdx; i < P.length; i++) {
+                // 豁免：如果斷裂點正好是 P 的最後一個元素，且是 AI (代表使用者重骰/Swipe)，不計入懲罰
                 if (i === P.length - 1 && P[i].tag === 'AI') continue;
-                newTokens += tCount;
+                missTokens += estimateTokens(P[i].content);
             }
         }
 
-        const totalTokens = prefixTokens + newTokens;
-        const dropRatio = totalTokens === 0 ? 0 : (newTokens / totalTokens);
+        const totalTokens = prefixTokens + missTokens;
+        const dropRatio = totalTokens === 0 ? 0 : (missTokens / totalTokens);
         const dropPercent = (dropRatio * 100).toFixed(1);
         
-        Logger.log(`💰 經濟探測: 總量 ${totalTokens.toLocaleString()} T | 保全 ${prefixTokens.toLocaleString()} T | 流失 ${newTokens.toLocaleString()} T (${dropPercent}%)`, LogLevels.BASIC);
+        Logger.log(`📊 拓撲分析: 保全 ${prefixTokens.toLocaleString()} T | 重算 ${missTokens.toLocaleString()} T | 流失率: ${dropPercent}%`, LogLevels.BASIC);
 
         // --- 階段 4：雙軌閘門決策 ---
         let decision = 'ignore';
         
         if (dropRatio * 100 > Settings.warnThreshold) {
-            const stats = { wastedTokens: newTokens, dropPercentStr: dropPercent };
-            decision = await askUserForResetAsync(stats, L[breakIdx], P[breakIdx]);
+            decision = await askUserForResetAsync(dropPercent, missTokens, L[breakIdx], P[breakIdx]);
         } else if (dropRatio * 100 > Settings.silentThreshold) {
-            Logger.warn(`觸發靜默修復閾值 (${dropPercent}%)，自動放行並重建拓撲。`);
+            Logger.warn(`觸發靜默修復閾值 (${dropPercent}%)，自動覆寫新拓撲。`);
             decision = 'reset';
         }
 
         if (decision === 'abort') {
-            Settings.stats.totalBreaksPrevented += 1;
-            safeSave(); updateDashboardUI();
-            Logger.error('[攔截生效] 守護了你的錢包', null, LogLevels.BASIC);
-            if (typeof toastr !== 'undefined') toastr.error(`已攔截！避免了 ${newTokens} Tokens 的浪費。`, "守財奴系統");
+            Logger.error('[攔截生效] 已中止 API 請求', null, LogLevels.BASIC);
+            if (typeof toastr !== 'undefined') toastr.error(`已攔截！避免了 ${missTokens} Tokens 的重算。`, "DS Cache");
             stream.splice(0, stream.length); 
             return;
         }
-
-        // 發送授權
-        commitEconomics(prefixTokens, newTokens);
 
         state.frozenSequence = dedupedSequence;
         state.lastPrefills = currentTurn.prefills;
@@ -427,27 +394,21 @@ async function interceptAndRestructurePrompt(data) {
         safeSave(); renderChatsUI();
 
         stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-        Logger.log(`✅ 通關放行 (命中率: ${(totalTokens===0?0:(prefixTokens/totalTokens)*100).toFixed(1)}%)`, LogLevels.BASIC);
+        Logger.log(`✅ 通關放行 (預計命中率: ${(totalTokens===0?0:(prefixTokens/totalTokens)*100).toFixed(1)}%)`, LogLevels.BASIC);
 
     } catch (err) {
-        Logger.error('經濟引擎崩潰', err);
+        Logger.error('防護引擎崩潰', err);
         throw err;
     }
 }
 
 // ==========================================
-// 企業級 UI 注入與 CSS
+// 極簡 UI 注入與 CSS
 // ==========================================
 function injectCSS() {
-    if ($('#ds-v16-styles').length === 0) {
+    if ($('#ds-v16-strict-styles').length === 0) {
         const css = `
-        <style id="ds-v16-styles">
-            .ds-dash { background: linear-gradient(145deg, #1e3c72 0%, #2a5298 100%); border-radius: 8px; padding: 15px; margin-bottom: 12px; color: white; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-            .ds-dash-title { font-size: 1.1em; font-weight: 800; margin-bottom: 10px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); display:flex; justify-content:space-between;}
-            .ds-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-            .ds-stat-box { background: rgba(0,0,0,0.25); padding: 10px; border-radius: 6px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
-            .ds-stat-val { font-size: 1.4em; font-weight: bold; color: #4dd0e1; margin-top: 4px; font-family: monospace;}
-            .ds-stat-val.money { color: #81c784; }
+        <style id="ds-v16-strict-styles">
             .ds-panel { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
             .ds-title { font-size: 0.9em; font-weight: bold; color: #b0bec5; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 5px; display:flex; justify-content:space-between; align-items:center;}
             .ds-console { background: #08080a; border: 1px inset #222; border-radius: 6px; height: 160px; overflow-y: auto; padding: 8px; font-family: 'Consolas', monospace; font-size: 11px; line-height: 1.5; }
@@ -455,28 +416,12 @@ function injectCSS() {
             .ds-c-time { color: #555; } .ds-c-info { color: #81c784; } .ds-c-warn { color: #ffb74d; } .ds-c-error{ color: #e57373; font-weight: bold; } .ds-c-map { color: #4dd0e1; } .ds-c-debug{ color: #78909c; }
             .ds-btn { background: #263238; color: #fff; border: 1px solid #37474f; padding: 6px 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 0.85em; }
             .ds-btn:hover { background: #37474f; }
-            .ds-btn-danger { background: rgba(229, 115, 115, 0.15); border-color: rgba(229, 115, 115, 0.4); color: #e57373; }
-            .ds-btn-danger:hover { background: rgba(229, 115, 115, 0.3); }
             .ds-modal-bg { position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); z-index:999999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(5px); }
             .ds-modal-box { background:#121212; border:1px solid #ef5350; padding:25px; border-radius:12px; max-width:650px; width:90%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); }
             .ds-modal-map { background:#0a0a0a; border: 1px inset #222; padding:12px; border-radius:6px; font-family:monospace; font-size:12px; margin:15px 0; max-height: 200px; overflow-y:auto;}
         </style>`;
         $('head').append(css);
     }
-}
-
-function formatNumber(num) {
-    if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
-    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return num.toString();
-}
-
-function updateDashboardUI() {
-    $('#ds-val-tokens').text(formatNumber(Settings.stats.totalSavedTokens));
-    const usd = ((Settings.stats.totalSavedTokens / 1000000) * Settings.costPerMillion).toFixed(3);
-    $('#ds-val-usd').text('$' + usd);
-    $('#ds-val-reqs').text(Settings.stats.totalRequests);
-    $('#ds-val-blocks').text(Settings.stats.totalBreaksPrevented);
 }
 
 function renderChatsUI() {
@@ -486,7 +431,7 @@ function renderChatsUI() {
     const keys = Object.keys(Settings.chats).sort((a,b) => (Settings.chats[b].lastUpdate || 0) - (Settings.chats[a].lastUpdate || 0));
     $('#ds-cache-mem-usage').text(`${keys.length}/${MAX_CACHED_CHATS}`);
 
-    if (keys.length === 0) { container.append('<div style="opacity:0.4; font-size:12px; padding:15px; text-align:center;">無資料</div>'); return; }
+    if (keys.length === 0) { container.append('<div style="opacity:0.4; font-size:12px; padding:15px; text-align:center;">無拓撲記錄</div>'); return; }
     keys.forEach(key => {
         container.append(`
             <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:6px 8px; margin-bottom:4px; border-radius:4px;">
@@ -498,72 +443,50 @@ function renderChatsUI() {
     container.find('.ds-reset-btn').on('click', function() { delete Settings.chats[$(this).data('key')]; safeSave(); renderChatsUI(); });
 }
 
-function exportTelemetry() {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(Settings, null, 2));
-    const dlAnchorElem = document.createElement('a');
-    dlAnchorElem.setAttribute("href", dataStr);
-    dlAnchorElem.setAttribute("download", `ds_cache_telemetry_${Date.now()}.json`);
-    dlAnchorElem.click();
-}
-
 async function setupUI() {
     try {
         injectCSS();
         const html = `
         <div class="inline-drawer" id="ds-v16-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 經濟管家 (${PLUGIN_VERSION})</b>
+                <b>Deepseek 緩存優化器 (${PLUGIN_VERSION})</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
                 
-                <!-- 經濟看板 -->
-                <div class="ds-dash">
-                    <div class="ds-dash-title"><span>💰 企業經濟看板 (ROI)</span><span style="font-size:0.8em; font-weight:normal; opacity:0.8;">費率: $${Settings.costPerMillion}/1M</span></div>
-                    <div class="ds-stat-grid">
-                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">白嫖 Token 總量</div><div class="ds-stat-val" id="ds-val-tokens">0</div></div>
-                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">為您節省 (USD)</div><div class="ds-stat-val money" id="ds-val-usd">$0.00</div></div>
-                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">總發送次數</div><div class="ds-stat-val" style="color:#fff;" id="ds-val-reqs">0</div></div>
-                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">攔截斷裂次數</div><div class="ds-stat-val" style="color:#ef5350;" id="ds-val-blocks">0</div></div>
-                    </div>
-                </div>
-
                 <div class="ds-panel">
                     <div class="ds-title">⚙️ 智能陣列防護核心</div>
                     <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用時序凍結接管</label>
                     <label class="checkbox_label" title="將 RAG/世界書 等臨時設定強制推至最末端，保全 99% 的頂部緩存"><input type="checkbox" id="ds-cache-sinking" ${Settings.sinkingMode ? 'checked' : ''}> 🧲 開啟「動態上下文下沉」(強烈建議)</label>
                     
                     <div style="margin-top:10px; background:rgba(0,0,0,0.3); padding:8px; border-radius:4px;">
-                        <div style="font-size:11px; color:#aaa; margin-bottom:5px;">雙軌容忍閘門設定：</div>
+                        <div style="font-size:11px; color:#aaa; margin-bottom:5px;">嚴格分歧點閘門設定：</div>
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-                            <span style="font-size:12px;">靜默放行閾值 (%)</span>
+                            <span style="font-size:12px;">靜默修復閾值 (%)</span>
                             <input type="number" id="ds-cfg-silent" value="${Settings.silentThreshold}" style="width:50px; background:#222; color:#fff; border:1px solid #444; text-align:center;">
                         </div>
                         <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:12px;">嚴重彈窗閾值 (%)</span>
+                            <span style="font-size:12px;">嚴重警告閾值 (%)</span>
                             <input type="number" id="ds-cfg-warn" value="${Settings.warnThreshold}" style="width:50px; background:#222; color:#fff; border:1px solid #444; text-align:center;">
                         </div>
                     </div>
                 </div>
                 
                 <div class="ds-panel">
-                    <div class="ds-title"><span>📂 LRU 記憶體池</span><span style="font-size:0.9em; font-weight:normal;" id="ds-cache-mem-usage"></span></div>
+                    <div class="ds-title"><span>📂 LRU 拓撲記憶體池</span><span style="font-size:0.9em; font-weight:normal;" id="ds-cache-mem-usage"></span></div>
                     <div id="ds-chat-list-container" style="max-height:100px; overflow-y:auto; background:rgba(0,0,0,0.3); border-radius:4px; padding:4px;"></div>
                 </div>
 
                 <div class="ds-panel">
                     <div class="ds-title" style="margin-bottom:5px;">
-                        <span>💻 遙測與除錯終端</span>
+                        <span>💻 遙測終端</span>
                         <select id="ds-cache-loglevel" class="text_pole" style="width:auto; padding:2px; font-size:11px;">
                             <option value="0" ${Settings.logLevel===0?'selected':''}>0 - 關閉</option><option value="1" ${Settings.logLevel===1?'selected':''}>1 - 簡要</option>
                             <option value="2" ${Settings.logLevel===2?'selected':''}>2 - 詳細</option><option value="3" ${Settings.logLevel===3?'selected':''}>3 - 除錯</option>
                         </select>
                     </div>
                     <div id="ds-cache-log-content" class="ds-console"></div>
-                    <div style="display:flex; gap:5px; margin-top:8px;">
-                        <button id="ds-cache-clearlog" class="ds-btn" style="flex:1;">🗑️ 清空</button>
-                        <button id="ds-cache-export" class="ds-btn" style="flex:1; background:#1976d2;">📥 匯出遙測</button>
-                    </div>
+                    <button id="ds-cache-clearlog" class="ds-btn" style="width:100%; margin-top:8px;">🗑️ 清空終端</button>
                 </div>
                 
             </div>
@@ -578,9 +501,7 @@ async function setupUI() {
         $('#ds-cache-loglevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
         
         $('#ds-cache-clearlog').on('click', () => $('#ds-cache-log-content').empty());
-        $('#ds-cache-export').on('click', exportTelemetry);
-        
-        updateDashboardUI(); renderChatsUI();
+        renderChatsUI();
     } catch (e) { console.error('[DS Cache] UI初始化崩潰', e); }
 }
 
@@ -590,6 +511,6 @@ jQuery(async () => {
         if (eventSource && event_types.CHAT_COMPLETION_PROMPT_READY) {
             eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         }
-        Logger.log(`[系統啟動] ${PLUGIN_VERSION} 經濟管家就緒。動態下沉引擎已啟動。`, LogLevels.BASIC);
+        Logger.log(`[系統啟動] ${PLUGIN_VERSION} 極簡精確版就緒。嚴格分歧點偵測已上線。`, LogLevels.BASIC);
     } catch (e) { console.error('[DS Cache] 啟動失敗:', e); }
 });
