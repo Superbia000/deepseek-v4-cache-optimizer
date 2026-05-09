@@ -12,11 +12,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v6.7] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v6.8] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v6.7] 🔴 ${msg}`);
+        console.error(`[DS Cache v6.8] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v6.7] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v6.8] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -41,10 +41,12 @@ const Logger = {
 };
 
 // ==========================================
-// 狀態機
+// 狀態機與設置
 // ==========================================
 const CacheState = {
     enabled: true,
+    showToastWarning: true,  // 普通彈窗提醒
+    showResetPrompt: true,   // 手動選擇重置的彈窗
     frozenBackground: [],     
     frozenTurns: [],          
     pendingCurrentTurn: null, 
@@ -77,7 +79,6 @@ function combineAssistants(msgs) {
     return createMessageObj({ role: 'assistant', content: content });
 }
 
-// 智慧切除：防止預填充重複
 function stripPrefillFromAssistant(assistantObj, prefills) {
     if (!assistantObj || !prefills || prefills.length === 0) return assistantObj;
     let content = assistantObj.content || '';
@@ -97,7 +98,6 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
             }
         }
     }
-    
     if (modified) {
         content = content.replace(/^[\s\n]+/, ''); 
         return createMessageObj({ role: 'assistant', content: content });
@@ -106,19 +106,24 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
 }
 
 // ==========================================
-// 核心：解析 ST 數據流
+// 核心：解析 ST 數據流 (分離頂部與尾部系統提示)
 // ==========================================
 function parseSTStream(stream) {
-    const systemMsgs = [];
+    const topSystemMsgs = [];
+    const trailingSystemMsgs = [];
     const dialogueMsgs = [];
+    let foundFirstDialogue = false;
 
     for (const msg of stream) {
         classifyMsgLog(msg);
         const obj = createMessageObj(msg);
         const isInstructional = (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant'));
+        
         if (isInstructional) {
-            systemMsgs.push(obj);
+            if (!foundFirstDialogue) topSystemMsgs.push(obj);
+            else trailingSystemMsgs.push(obj);
         } else {
+            foundFirstDialogue = true;
             dialogueMsgs.push(obj);
         }
     }
@@ -159,26 +164,18 @@ function parseSTStream(stream) {
         }
     }
 
-    return { systemMsgs, stHistoryTurns, stCurrentTurn };
+    return { topSystemMsgs, trailingSystemMsgs, stHistoryTurns, stCurrentTurn };
 }
 
 // ==========================================
-// 狀態機同步與自適應癒合
+// 狀態機同步與徹底替換 (Auto-Sync)
 // ==========================================
-function syncState(systemMsgs, stHistoryTurns, stCurrentTurn) {
+function syncState(topSystemMsgs, trailingSystemMsgs, stHistoryTurns, stCurrentTurn, systemChanged) {
     const newFrozenTurns = [];
     const oldFrozenTurns = [...CacheState.frozenTurns];
     let pendingMatched = false;
 
-    const uniqueSystemMsgs = [];
-    const seenSys = new Set();
-    for (const m of systemMsgs) {
-        if (!seenSys.has(m.norm)) {
-            seenSys.add(m.norm);
-            uniqueSystemMsgs.push(m);
-        }
-    }
-
+    // 1. 同步歷史對話
     for (let i = 0; i < stHistoryTurns.length; i++) {
         const stTurn = stHistoryTurns[i];
         let matched = false;
@@ -225,27 +222,30 @@ function syncState(systemMsgs, stHistoryTurns, stCurrentTurn) {
     }
 
     CacheState.frozenTurns = newFrozenTurns;
-    if (pendingMatched) CacheState.pendingCurrentTurn = null; 
+    
+    // 初始化當前待定輪次
+    CacheState.pendingCurrentTurn = {
+        user: stCurrentTurn.user,
+        prefills: stCurrentTurn.prefills,
+        extraBackground: []
+    };
 
-    const usedSysNorms = new Set();
-    CacheState.frozenBackground.forEach(m => usedSysNorms.add(m.norm));
-    CacheState.frozenTurns.forEach(t => t.extraBackground.forEach(m => usedSysNorms.add(m.norm)));
-
-    const newSysMsgs = uniqueSystemMsgs.filter(m => !usedSysNorms.has(m.norm));
-
-    if (CacheState.frozenBackground.length === 0 && newFrozenTurns.length === 0) {
-        CacheState.frozenBackground = newSysMsgs; 
-        CacheState.pendingCurrentTurn = {
-            user: stCurrentTurn.user,
-            prefills: stCurrentTurn.prefills,
-            extraBackground: []
-        };
+    // 2. 徹底同步世界書與預設提示詞
+    if (systemChanged || CacheState.frozenBackground.length === 0) {
+        Logger.log('[狀態同步] 偵測到世界書/預設修改，徹底同步覆蓋凍結陣列...', LogLevels.BASIC);
+        // 頂部提示詞覆蓋
+        CacheState.frozenBackground = topSystemMsgs;
+        // 清理所有歷史的殘留世界書，將最新的尾部世界書統一置於當前輪次
+        CacheState.frozenTurns.forEach(t => t.extraBackground = []);
+        CacheState.pendingCurrentTurn.extraBackground = trailingSystemMsgs;
     } else {
-        CacheState.pendingCurrentTurn = {
-            user: stCurrentTurn.user,
-            prefills: stCurrentTurn.prefills,
-            extraBackground: newSysMsgs 
-        };
+        // 沒有修改時，只將新的增量世界書放入
+        const usedSysNorms = new Set();
+        CacheState.frozenBackground.forEach(m => usedSysNorms.add(m.norm));
+        CacheState.frozenTurns.forEach(t => t.extraBackground.forEach(m => usedSysNorms.add(m.norm)));
+        
+        const newTrailing = trailingSystemMsgs.filter(m => !usedSysNorms.has(m.norm));
+        CacheState.pendingCurrentTurn.extraBackground = newTrailing;
     }
 }
 
@@ -288,13 +288,14 @@ function interceptAndRestructurePrompt(data) {
         if (!data?.chat?.length) return;
         const stream = data.chat;
 
-        const { systemMsgs, stHistoryTurns, stCurrentTurn } = parseSTStream(stream);
+        const { topSystemMsgs, trailingSystemMsgs, stHistoryTurns, stCurrentTurn } = parseSTStream(stream);
 
         let requireResetConfirm = false;
         let resetReason = "";
+        let systemChanged = false;
 
-        // 1. 檢測提示詞變動
-        const currentSysNorms = new Set(systemMsgs.map(m => m.norm));
+        // 1. 檢測提示詞/世界書變動 (用於徹底同步)
+        const currentSysNorms = new Set([...topSystemMsgs, ...trailingSystemMsgs].map(m => m.norm));
         const usedSysNorms = new Set();
         CacheState.frozenBackground.forEach(m => usedSysNorms.add(m.norm));
         CacheState.frozenTurns.forEach(t => t.extraBackground.forEach(m => usedSysNorms.add(m.norm)));
@@ -306,13 +307,17 @@ function interceptAndRestructurePrompt(data) {
             for (const item of usedSysNorms) if (currentSysNorms.has(item)) intersection++;
             const similarity = union.size === 0 ? 1 : intersection / union.size;
 
-            if (similarity < 0.9) {
-                requireResetConfirm = true;
-                resetReason = "檢測到系統預設、角色卡或核心提示詞發生了大幅度改變。";
+            if (similarity < 0.999) { 
+                systemChanged = true; // 只要有任何修改或刪除，觸發徹底同步
+                // 只有修改幅度極大時，才考慮觸發阻斷彈窗
+                if (similarity < 0.9 && CacheState.showResetPrompt) {
+                    requireResetConfirm = true;
+                    resetReason = "檢測到系統預設或核心提示詞發生了大幅度改變。";
+                }
             }
         }
 
-        // 2. 檢測破壞性刪除
+        // 2. 檢測破壞性對話歷史刪除
         if (!requireResetConfirm && CacheState.frozenTurns.length > 0) {
             const stNorms = stHistoryTurns.map(t => t.user.norm);
             let middleDeletionDetected = false;
@@ -342,11 +347,11 @@ function interceptAndRestructurePrompt(data) {
 
             const frozenCount = CacheState.frozenTurns.length;
 
-            if (middleDeletionDetected) {
+            if (middleDeletionDetected && CacheState.showResetPrompt) {
                 requireResetConfirm = true;
-                resetReason = "檢測到您刪除了對話歷史中間的訊息。\n根據緩存機制，這將導致斷點後方的所有已凍結緩存徹底失效並碎片化！";
+                resetReason = "檢測到您刪除了對話歷史中間的訊息。\n這將導致斷點後方的所有已凍結緩存徹底失效並碎片化！";
             } else if (tailDeletionCount > 0) {
-                if (tailDeletionCount >= frozenCount * 0.3) {
+                if (tailDeletionCount >= frozenCount * 0.3 && CacheState.showResetPrompt) {
                     requireResetConfirm = true;
                     resetReason = `檢測到對話歷史被大幅度刪減（刪除了 ${tailDeletionCount} 輪歷史）。`;
                 } else {
@@ -356,8 +361,8 @@ function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 3. 執行彈窗 (用戶點擊取消 -> 不重置前綴，繼續發送)
-        if (requireResetConfirm) {
+        // 3. 執行彈窗
+        if (requireResetConfirm && CacheState.showResetPrompt) {
             const msg = `🚨 [Deepseek 緩存優化] 🚨\n\n${resetReason}\n\n▶ 點擊【確定】：徹底重置緩存前綴 (推薦，保持最高命中率)。\n▶ 點擊【取消】：不重置緩存，強行發送 (容忍本次緩存斷裂)。`;
             const ok = confirm(msg);
             if (ok) {
@@ -366,12 +371,11 @@ function interceptAndRestructurePrompt(data) {
                 return interceptAndRestructurePrompt(data);
             } else {
                 Logger.warn('[用戶選擇取消] 拒絕重置，程序將以當前殘缺狀態強行發送', LogLevels.BASIC);
-                // 繼續執行 syncState，系統會自動捨棄丟失的對話，並發送提示詞
             }
         }
 
         // 核心同步與構建
-        syncState(systemMsgs, stHistoryTurns, stCurrentTurn);
+        syncState(topSystemMsgs, trailingSystemMsgs, stHistoryTurns, stCurrentTurn, systemChanged);
         applyFinalSequence(stream);
 
     } catch (err) {
@@ -381,13 +385,18 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 即時修改提醒機制
+// 即時修改提醒機制 (Debounce)
 // ==========================================
-function triggerInstantWarning() {
-    if (!CacheState.enabled) return;
-    if (typeof toastr !== 'undefined') {
-        toastr.warning('修改或刪除歷史對話將影響 Deepseek 緩存命中率！', '⚠️ 緩存狀態變更', { timeOut: 3500 });
-    }
+let warningTimeout = null;
+function triggerInstantWarning(msg) {
+    if (!CacheState.enabled || !CacheState.showToastWarning) return;
+    if (warningTimeout) clearTimeout(warningTimeout);
+    
+    warningTimeout = setTimeout(() => {
+        if (typeof toastr !== 'undefined') {
+            toastr.warning(msg || '修改設定或歷史對話將改變 Deepseek 緩存命中率！', '⚠️ 緩存狀態變更', { timeOut: 3500 });
+        }
+    }, 1000); // 1秒防抖，防止連續打字重複彈窗
 }
 
 // ==========================================
@@ -402,16 +411,18 @@ function performReset() {
 
 async function setupUI() {
     try {
-        // 完全使用 ST 原生 HTML 結構，不添加額外的 flex/span 樣式
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 缓存优化 (v6.7)</b>
+                <b>Deepseek 缓存优化 (v6.8)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">背景/對話獨立分離，預填充絕對凍結，即時自適應刪除偵測。</p>
-                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 啟用插件</label>
+                <p style="font-size:0.9em;opacity:0.8;">預填充絕對凍結，世界書/預設修改智能同步替換。</p>
+                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 啟用插件總開關</label>
+                <label class="checkbox_label"><input type="checkbox" id="ds-cache-toast-warning" checked> 啟用普通彈窗提醒 (修改時即時提醒)</label>
+                <label class="checkbox_label"><input type="checkbox" id="ds-cache-reset-prompt" checked> 啟用手動選擇是否重置的彈窗 (破壞性修改時)</label>
+                
                 <div style="margin:8px 0; display:flex; align-items:center;">
                     <span style="font-size:0.9em; margin-right:5px;">日誌等級:</span>
                     <select id="ds-cache-loglevel" class="text_pole" style="width:auto;">
@@ -428,7 +439,10 @@ async function setupUI() {
         Logger._uiTextarea = document.getElementById('ds-cache-log');
 
         $('#ds-cache-enable').on('change', function () { CacheState.enabled = $(this).is(':checked'); });
+        $('#ds-cache-toast-warning').on('change', function () { CacheState.showToastWarning = $(this).is(':checked'); });
+        $('#ds-cache-reset-prompt').on('change', function () { CacheState.showResetPrompt = $(this).is(':checked'); });
         $('#ds-cache-loglevel').on('change', function () { logLevel = parseInt($(this).val()); });
+        
         $('#ds-cache-reset').on('click', () => {
             performReset();
             if (typeof toastr !== 'undefined') toastr.success("已重置 Deepseek 緩存前綴");
@@ -453,29 +467,30 @@ function registerMenuItems() {
 }
 
 // ==========================================
-// 啟動
+// 啟動與全局監聽
 // ==========================================
 jQuery(async () => {
     await setupUI();
-    
-    // 掛載 Wand Menu
     setTimeout(registerMenuItems, 2000); 
 
     if (eventSource) {
-        // 掛載核心攔截器
+        // 發送攔截
         if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
             eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         }
         
-        // 掛載「當時當刻」的即時提醒鉤子
-        if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, triggerInstantWarning);
-        if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, triggerInstantWarning);
-        if (event_types?.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, triggerInstantWarning);
+        // 監聽對話修改事件
+        if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerInstantWarning('刪除歷史對話將影響緩存命中！'));
+        if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerInstantWarning('修改歷史對話將影響緩存命中！'));
+        if (event_types?.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, () => triggerInstantWarning('切換歷史對話將影響緩存命中！'));
 
-        Logger.log('[系統] 鉤子與即時監聽已掛載', LogLevels.BASIC);
-    } else {
-        Logger.error('無法掛載事件鉤子');
+        Logger.log('[系統] 鉤子與事件監聽已掛載', LogLevels.BASIC);
     }
+
+    // 全局 DOM 監聽：捕獲預設、世界書、角色卡的打字與修改
+    $(document).on('input change', '#main_prompt_textarea, #nsfw_prompt_textarea, .world_info_entry textarea, .world_info_entry input, #character_popup textarea, #rm_ch_sys_prompt', function() {
+        triggerInstantWarning('修改設定或世界書將重組緩存陣列！');
+    });
     
-    Logger.log('══════ v6.7 就緒，彈窗邏輯與 UI 已修復 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.8 就緒，智能同步修改機制已啟用 ══════', LogLevels.BASIC);
 });
