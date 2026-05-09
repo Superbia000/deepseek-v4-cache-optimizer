@@ -2,13 +2,13 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 狀態與設定 (延遲初始化，防止 ST 尚未載入)
+// 狀態與設定 (延遲初始化)
 // ==========================================
 let Settings = {};
 
 function initSettings() {
-    if (!extension_settings.ds_cache_v8) {
-        extension_settings.ds_cache_v8 = {
+    if (!extension_settings.ds_cache_v9) {
+        extension_settings.ds_cache_v9 = {
             enabled: true,
             toastSys: true,
             toastLore: true,
@@ -18,8 +18,8 @@ function initSettings() {
             chats: {} 
         };
     }
-    Settings = extension_settings.ds_cache_v8;
-    if (!Settings.chats) Settings.chats = {}; // 兼容性修復
+    Settings = extension_settings.ds_cache_v9;
+    if (!Settings.chats) Settings.chats = {}; 
 }
 
 function safeSave() {
@@ -40,11 +40,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v8.1] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v9.0] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v8.1] 🔴 ${msg}`);
+        console.error(`[DS Cache v9.0] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v8.1] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v9.0] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -66,7 +66,6 @@ const Logger = {
 function getChatKey() {
     const context = getContext();
     let charName = "Unknown";
-    // 防禦性讀取角色名稱
     if (context.characterId !== undefined && context.characters && context.characters[context.characterId]) {
         charName = context.characters[context.characterId].name || context.characterId;
     } else if (context.name2) {
@@ -106,7 +105,7 @@ function createMsg(msg, tag) {
         content: content,
         norm: Logger.normalize(content),
         len: content.length,
-        tag: tag // 'SYS', 'USER', 'AI', 'PREFILL'
+        tag: tag 
     };
 }
 
@@ -147,7 +146,7 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
 }
 
 // ==========================================
-// 解析 ST 數據流 (嚴格分類打標)
+// 解析 ST 數據流
 // ==========================================
 function parseSTStream(stream) {
     const sysMsgs = [];
@@ -218,9 +217,9 @@ function buildSequence(state, sysMsgs, historyTurns, currentTurn) {
                 const matchedItem = sysMsgsPool[bestIdx];
                 newFrozen.push(matchedItem);
                 sysMsgsPool.splice(bestIdx, 1);
-                Logger.log(`[SYS-修改] 原位更新 (相似度 ${(bestScore*100).toFixed(1)}%): ${matchedItem.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
+                Logger.log(`[SYS-修改] 原位更新: ${matchedItem.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
             } else {
-                Logger.log(`[SYS-刪除] 檢測到提示詞被刪除，抽出上移: ${item.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
+                Logger.log(`[SYS-刪除] 檢測到提示詞被刪除，抽出上移...`, LogLevels.DETAILED);
             }
         } else {
             newFrozen.push(item);
@@ -276,14 +275,14 @@ function buildSequence(state, sysMsgs, historyTurns, currentTurn) {
     // 3. 尾部追加新 SYS
     for (let sys of sysMsgsPool) {
         newFrozen.push(sys);
-        Logger.log(`[SYS-追加] 全新提示詞已附加: ${sys.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
+        Logger.log(`[SYS-追加] 提示詞已附加尾部: ${sys.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
     }
 
     return newFrozen;
 }
 
 // ==========================================
-// 攔截器主程式
+// 攔截器主程式 (KV Cache 前綴阻斷器)
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -305,7 +304,6 @@ function interceptAndRestructurePrompt(data) {
         // SYS 嚴格去重
         let dedupedSequence = [];
         const seenSysNorms = new Set();
-        
         for (const item of rawFrozenSequence) {
             if (item.tag === 'SYS') {
                 if (seenSysNorms.has(item.norm)) {
@@ -317,39 +315,55 @@ function interceptAndRestructurePrompt(data) {
             dedupedSequence.push(item);
         }
 
-        // 10% 緩存丟失檢測
+        // =======================================
+        // 【核心】DeepSeek 嚴格前綴 KV Cache 命中計算
+        // =======================================
         let requireResetConfirm = false;
         let similarityRatio = 1.0;
 
         if (state.lastSentSequence && state.lastSentSequence.length > 0) {
             let oldTotalLen = 0;
-            let matchedLen = 0;
-            const newNorms = new Set(dedupedSequence.map(m => m.norm));
+            let cacheHitLen = 0;
             
-            for (const oldM of state.lastSentSequence) {
-                oldTotalLen += oldM.len;
-                if (newNorms.has(oldM.norm)) matchedLen += oldM.len;
+            for (const oldM of state.lastSentSequence) oldTotalLen += oldM.len;
+
+            // 從第 0 項開始逐一比對，遇到任何斷層直接終止計算 (模擬 KV Cache 失效)
+            for (let i = 0; i < Math.min(state.lastSentSequence.length, dedupedSequence.length); i++) {
+                if (state.lastSentSequence[i].norm === dedupedSequence[i].norm) {
+                    cacheHitLen += state.lastSentSequence[i].len;
+                } else {
+                    Logger.warn(`[斷點] 在第 ${i} 條提示詞偵測到變動，後續緩存全部失效！`, LogLevels.BASIC);
+                    break;
+                }
             }
-            similarityRatio = oldTotalLen === 0 ? 1 : (matchedLen / oldTotalLen);
+
+            similarityRatio = oldTotalLen === 0 ? 1 : (cacheHitLen / oldTotalLen);
 
             if (similarityRatio < 0.90 && Settings.showResetPrompt) {
                 requireResetConfirm = true;
             }
         }
 
+        // 發送阻斷彈窗
         if (requireResetConfirm) {
             const dropPercent = ((1 - similarityRatio) * 100).toFixed(1);
-            const msg = `🚨 [Deepseek 緩存阻斷] 🚨\n\n檢測到預設或世界書大幅度修改，緩存命中率將暴跌 ${dropPercent}%。\n\n▶ 點擊【確定】：保留所有對話並重置系統提示詞排列 (強烈推薦)。\n▶ 點擊【取消】：容忍本次緩存碎片化，強行發送。`;
-            const ok = confirm(msg);
+            const msg = `🚨 [Deepseek KV 緩存阻斷] 🚨\n\n檢測到前排的系統提示詞、預設或世界書被修改/刪除！\n這將導致後續關聯的緩存全部作廢，命中率暴跌 ${dropPercent}%。\n\n▶ 點擊【確定】：攔截發送！重新排列提示詞 (完美保留所有對話歷史)。\n▶ 點擊【取消】：強行發送 (容忍本次緩存碎片化)。`;
             
-            if (ok) {
-                Logger.warn(`[重置] 緩存降級 ${dropPercent}%，保留歷史並重構排列...`, LogLevels.BASIC);
-                state.frozenSequence = [];
-                rawFrozenSequence = buildSequence(state, sysMsgs, historyTurns, currentTurn);
+            // confirm() 是同步的，會完美阻斷並掛起當前線程
+            if (confirm(msg)) {
+                Logger.warn(`[重置] 緩存降級 ${dropPercent}%，用戶選擇重置！重新初始化序列...`, LogLevels.BASIC);
+                
+                // 完美保留歷史的重置法：SYS 放最前，HISTORY 緊接其後
+                let resetSequence = [];
+                for (let sys of sysMsgs) resetSequence.push(sys);
+                for (let turn of historyTurns) {
+                    resetSequence.push(turn.user);
+                    if (turn.assistant) resetSequence.push(turn.assistant);
+                }
                 
                 dedupedSequence = [];
                 seenSysNorms.clear();
-                for (const item of rawFrozenSequence) {
+                for (const item of resetSequence) {
                     if (item.tag === 'SYS') {
                         if (seenSysNorms.has(item.norm)) continue;
                         seenSysNorms.add(item.norm);
@@ -357,7 +371,7 @@ function interceptAndRestructurePrompt(data) {
                     dedupedSequence.push(item);
                 }
             } else {
-                Logger.warn('[取消] 拒絕重置，殘缺狀態強行發送', LogLevels.BASIC);
+                Logger.warn('[取消] 用戶拒絕重置，殘缺狀態強行發送', LogLevels.BASIC);
             }
         }
 
@@ -392,7 +406,7 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 即時修改提醒機制
+// 即時修改提醒機制 (覆蓋 Select2 與 Modal)
 // ==========================================
 let warningTimeout = null;
 function triggerWarning(msg, toggle) {
@@ -400,7 +414,7 @@ function triggerWarning(msg, toggle) {
     if (warningTimeout) clearTimeout(warningTimeout);
     warningTimeout = setTimeout(() => {
         if (typeof toastr !== 'undefined') toastr.warning(msg, '⚠️ 緩存狀態變更', { timeOut: 3000 });
-    }, 1000);
+    }, 500); // 縮短延遲，讓彈窗更即時
 }
 
 // ==========================================
@@ -445,11 +459,11 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 缓存优化 (v8.1 多檔並發版)</b>
+                <b>Deepseek 缓存优化 (v9.0 KV前綴阻斷版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.85em;opacity:0.8;">嚴格 SYS 去重，10% 防丟失阻斷，多角色存檔互不干涉。</p>
+                <p style="font-size:0.85em;opacity:0.8;">嚴格 SYS 去重，KV Cache 前綴丟失阻斷器，多檔沙盒。</p>
                 
                 <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用插件總開關</label>
                 
@@ -457,7 +471,7 @@ async function setupUI() {
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> Presets/提示詞修改彈窗</label>
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 世界書修改彈窗</label>
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 歷史修改彈窗</label>
-                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 10% 命中丟失阻斷確認窗</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 10% KV 丟失阻斷確認窗</label>
                 </div>
                 
                 <div style="margin:8px 0; display:flex; align-items:center;">
@@ -511,7 +525,7 @@ async function setupUI() {
 // ==========================================
 jQuery(async () => {
     try {
-        initSettings(); // 確保 ST 載入完畢後才初始化設定
+        initSettings(); 
         await setupUI();
 
         if (eventSource) {
@@ -523,18 +537,28 @@ jQuery(async () => {
             if (event_types?.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, () => triggerWarning('切換歷史對話將引發緩存重組！', Settings.toastHistory));
         }
 
-        // 掛載 Chat Completion Presets 與其他提示詞
-        const sysSelectors = '#chat_completion_preset, select[id*="preset"], #main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt, #author_note_textarea, #story_string_textarea';
-        $(document).on('input change', sysSelectors, function() {
-            triggerWarning('修改 Presets 或提示詞將更新對應的凍結位置！', Settings.toastSys);
+        // ===============================================
+        // 深度掛載：確保 Chat Completion Presets 與世界書必彈窗
+        // ===============================================
+        
+        // 1. Presets 下拉選單 (專門針對 Select2)
+        $(document).on('change.select2 select2:select', '#chat_completion_preset, select[id*="preset"]', function() {
+            triggerWarning('Chat Completion Presets 已變更！將影響緩存。', Settings.toastSys);
         });
 
-        const loreSelectors = '.world_info_entry textarea, .world_info_entry input, #world_info_entries_list textarea, #world_info_entries_list input';
-        $(document).on('input change', loreSelectors, function() {
+        // 2. 文本框與一般 input
+        const sysSelectors = '#main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt, #author_note_textarea, #story_string_textarea';
+        $(document).on('input change', sysSelectors, function() {
+            triggerWarning('修改核心提示詞將更新對應的凍結位置！', Settings.toastSys);
+        });
+
+        // 3. 世界書深度掛載 (涵蓋彈窗、側邊欄、列表)
+        const loreSelectors = '.world_info_entry textarea, .world_info_entry input, #world_info_entries_list textarea, #world_info_entries_list input, .lorebook_entry textarea, .lorebook_entry input, .drawer-content textarea';
+        $(document).on('input change focusout', loreSelectors, function() {
             triggerWarning('修改世界書將更新對應的凍結位置！', Settings.toastLore);
         });
 
-        Logger.log('══════ v8.1 完美修復版 就緒 ══════', LogLevels.BASIC);
+        Logger.log('══════ v9.0 KV前綴阻斷版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動嚴重崩潰:', e);
     }
