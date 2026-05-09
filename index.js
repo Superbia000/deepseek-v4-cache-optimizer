@@ -61,8 +61,6 @@ const CacheState = {
     backgroundBlock: null,
     dialogueHistory: null,
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
-    pendingReset: false,
-    awaitingDialog: false,
 };
 
 // ==========================================
@@ -170,11 +168,22 @@ function interceptAndRestructurePrompt(data) {
         Logger.log(`[背景相似度] ${(bgSimilarity*100).toFixed(1)}%`, LogLevels.DEBUG);
 
         if (bgSimilarity < 0.9) {
-            triggerResetAlert('检测到系统提示词核心变动（更换角色卡/预设），建议重置缓存前缀以保证性能。');
-            return;
+            // ★ 阻塞式确认，用戶選擇前完全阻止請求發送
+            const shouldReset = confirm(
+                '檢測到系統提示詞核心變動（更換角色卡/預設），建議重置快取前綴以保證效能。\n\n' +
+                '按「確定」重置前綴並發送訊息；按「取消」放棄本次發送。'
+            );
+            if (!shouldReset) {
+                // 用戶取消，中斷生成流程 → 相當於未發送任何對話
+                if (typeof toastr !== 'undefined') toastr.warning('發送已取消');
+                throw new Error('User cancelled send due to cache prefix change');
+            }
+            // 用戶確認重置
+            performReset();
+            // 不 return，讓函數繼續進入初始化分支，使用當前 stream 重建前綴
         }
 
-        // 对话增量
+        // 對話增量
         const newDialogue = findNewEntries(CacheState.dialogueHistory, currentDialogue);
         if (newDialogue.length > 0) {
             Logger.warn(`[对话增量] +${newDialogue.length} 条`, LogLevels.DETAILED);
@@ -183,7 +192,21 @@ function interceptAndRestructurePrompt(data) {
 
         // 大幅删除检测
         if (currentDialogue.length < CacheState.dialogueHistory.length * 0.7) {
-            triggerResetAlert('对话历史被大幅删除，缓存命中率将下降，建议重置。');
+            const shouldReset = confirm(
+                '對話歷史被大幅刪除，快取命中率將下降，建議重置前綴。\n\n' +
+                '按「確定」重置前綴並發送；按「取消」放棄本次發送。'
+            );
+            if (!shouldReset) {
+                if (typeof toastr !== 'undefined') toastr.warning('發送已取消');
+                throw new Error('User cancelled send due to dialogue deletion');
+            }
+            performReset();
+            // 重置後會走初始化分支，但仍然需要重新構建當前請求
+            // 直接重新呼叫本函數會遞歸，因此這裡重新執行解析和構建部分
+            CacheState.backgroundBlock = null; // 強制初始化
+            CacheState.dialogueHistory = null;
+            // 重新執行本函數的初始化流程（遞歸）
+            interceptAndRestructurePrompt(data);
             return;
         }
 
@@ -193,6 +216,8 @@ function interceptAndRestructurePrompt(data) {
 
     } catch (err) {
         Logger.error('拦截器致命错误', err);
+        // 重新拋出，讓 ST 中斷生成
+        throw err;
     }
 }
 
@@ -245,66 +270,14 @@ function updateStatsUI() {
 }
 
 // ==========================================
-// 弹窗 (优先使用 callPopup，否则自定义模态)
+// 重置函数
 // ==========================================
-function triggerResetAlert(reason) {
-    if (CacheState.pendingReset || CacheState.awaitingDialog) return;
-    CacheState.awaitingDialog = true;
-
-    // 优先使用 SillyTavern 的 callPopup（无阻塞，用户确认后回调）
-    if (typeof callPopup === 'function') {
-        callPopup(`<h4>缓存优化器</h4><p>${reason}</p>`, [
-            { text: '重置', className: 'btn-danger', callback: () => { performReset(); CacheState.awaitingDialog = false; } },
-            { text: '取消', callback: () => { CacheState.awaitingDialog = false; } }
-        ]);
-    } else {
-        // 回退：自定义模态（确保显示在最顶层）
-        showFallbackDialog(reason);
-    }
-}
-
-function showFallbackDialog(reason) {
-    const id = 'ds-reset-fallback-dialog';
-    if (document.getElementById(id)) return; // 已存在
-    const dialog = document.createElement('div');
-    dialog.id = id;
-    dialog.innerHTML = `
-        <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:99999;display:flex;align-items:center;justify-content:center;">
-            <div style="background:#2b2b2b;color:#ddd;padding:24px;border-radius:8px;max-width:500px;box-shadow:0 0 20px black;">
-                <h3 style="margin:0 0 16px;">缓存优化器提醒</h3>
-                <p style="margin:0 0 20px;">${reason}</p>
-                <div style="display:flex;justify-content:flex-end;gap:10px;">
-                    <button id="ds-reset-cancel-btn" class="btn btn-secondary">取消</button>
-                    <button id="ds-reset-confirm-btn" class="btn btn-danger">重置缓存前缀</button>
-                </div>
-            </div>
-        </div>`;
-    document.body.appendChild(dialog);
-    document.getElementById('ds-reset-confirm-btn').onclick = () => {
-        performReset();
-        hideFallbackDialog(id);
-    };
-    document.getElementById('ds-reset-cancel-btn').onclick = () => {
-        hideFallbackDialog(id);
-    };
-    CacheState.pendingReset = true;
-}
-
-function hideFallbackDialog(id) {
-    const el = document.getElementById(id);
-    if (el) el.remove();
-    CacheState.pendingReset = false;
-    CacheState.awaitingDialog = false;
-}
-
 function performReset() {
     CacheState.backgroundBlock = null;
     CacheState.dialogueHistory = null;
     CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
     updateStatsUI();
     Logger.warn('[重置] 前缀已清空，下次请求重建', LogLevels.BASIC);
-    // 关闭任何弹窗
-    hideFallbackDialog('ds-reset-fallback-dialog');
 }
 
 // ==========================================
@@ -315,7 +288,7 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>🧠 DS Cache Optimizer v6.4</b>
+                <b>Deepseek 緩存命中優化</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
@@ -370,7 +343,6 @@ async function setupUI() {
 // 确保菜单在扩展加载时注册
 function registerMenuItems() {
     if (typeof extension_settings !== 'undefined') {
-        // 可能会被覆盖，再次确认
         extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
         extension_settings['ds-cache'].extensionsMenu = extension_settings['ds-cache'].extensionsMenu || [];
         if (!extension_settings['ds-cache'].extensionsMenu.find(m => m.label === '重置DS缓存前缀')) {
@@ -395,5 +367,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，弹窗优先 callPopup，+ST菜单项 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，强制阻塞确认，保证发送前干预 ══════', LogLevels.BASIC);
 });
