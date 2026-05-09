@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 日志系统 (增強版)
+// 日志系统 (增强版)
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 let logLevel = 2;
@@ -54,94 +54,13 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机 v6.4
+// 状态机 v6.4 - 改用线性前缀
 // ==========================================
 const CacheState = {
     enabled: true,
-    backgroundBlock: null,
-    dialogueHistory: null,
+    prefix: null,              // 完整的提示词前缀序列 [{role, content}, ...]
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
-
-// ==========================================
-// 消息分类 (增强日志)
-// ==========================================
-function classifyMessage(msg, originalChat) {
-    const orig = originalChat.find(m => m.mes === msg.content);
-    let cls;
-    if (orig) {
-        if (orig.is_user) cls = { isRealUser: true, isRealAI: false, isInstructional: false };
-        else if (!orig.is_system) {
-            if (msg.role === 'assistant') cls = { isRealUser: false, isRealAI: true, isInstructional: false };
-            else cls = { isRealUser: false, isRealAI: false, isInstructional: true };
-        } else {
-            cls = { isRealUser: false, isRealAI: false, isInstructional: true };
-        }
-    } else {
-        cls = { isRealUser: false, isRealAI: false, isInstructional: true };
-    }
-    if (logLevel >= LogLevels.DEBUG) {
-        const label = cls.isRealUser ? '👤真实用户' : (cls.isRealAI ? '🤖真实AI' : '📋教学/系统');
-        Logger.log(`[分类] ${label} | ${msg.role}: ${msg.content.substring(0, 30)}...`, LogLevels.DEBUG);
-    }
-    return cls;
-}
-
-function createMessageObj(msg, cls, uid) {
-    return {
-        role: msg.role,
-        content: msg.content,
-        isRealUser: cls.isRealUser,
-        isRealAI: cls.isRealAI,
-        isInstructional: cls.isInstructional,
-        uid: uid || `${msg.role}:${Logger.simpleHash(msg.content)}`,
-        norm: Logger.normalize(msg.content),
-    };
-}
-
-// ==========================================
-// 处理请求流 (消除重复，纳入预填充)
-// ==========================================
-function processStream(stream, originalChat) {
-    let prefillStart = stream.length;
-    while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
-        prefillStart--;
-    }
-    const prefills = stream.slice(prefillStart);
-    const nonPrefill = stream.slice(0, prefillStart);
-
-    // 将预填充消息转化为对象，纳入对话历史
-    const prefillMessages = prefills.map(msg => {
-        const cls = classifyMessage(msg, originalChat);
-        return createMessageObj(msg, cls);
-    });
-
-    if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[流分割] 非预填充: ${nonPrefill.length} 条, 预填充: ${prefills.length} 条`, LogLevels.DEBUG);
-    }
-
-    let currentUserMsg = null;
-    const others = [];
-    for (let i = nonPrefill.length - 1; i >= 0; i--) {
-        const msg = nonPrefill[i];
-        const cls = classifyMessage(msg, originalChat);
-        const obj = createMessageObj(msg, cls);
-        if (!currentUserMsg && cls.isRealUser && msg.role === 'user') {
-            currentUserMsg = obj;
-            if (logLevel >= LogLevels.DEBUG) {
-                Logger.log(`[当前用户消息] 索引 ${i}: ${obj.content.substring(0, 30)}...`, LogLevels.DEBUG);
-            }
-        } else {
-            // 跳过与当前用户消息完全相同的重复条目
-            if (currentUserMsg && cls.isRealUser && msg.role === 'user' && obj.uid === currentUserMsg.uid) {
-                Logger.log(`[跳过重复用户消息] ${obj.content.substring(0, 30)}...`, LogLevels.DEBUG);
-                continue;
-            }
-            others.unshift(obj);
-        }
-    }
-    return { currentUserMsg, others, prefillMessages };
-}
 
 // ==========================================
 // 核心拦截器
@@ -155,133 +74,74 @@ function interceptAndRestructurePrompt(data) {
         Logger.log(`[请求 #${CacheState.stats.total}] 开始处理...`);
 
         if (!data?.chat?.length) return;
-        const stream = data.chat;
-        const context = getContext();
-        const originalChat = context?.chat ?? [];
+        const stream = data.chat;  // 当前完整的消息数组
 
-        const { currentUserMsg, others, prefillMessages } = processStream(stream, originalChat);
-
-        const currentBg = others.filter(m => m.isInstructional);
-        const currentDialogue = others.filter(m => !m.isInstructional);
-        // 完整的对话历史 = 非预填充对话 + 预填充（通常为最新的AI回复）
-        const completeDialogue = currentDialogue.concat(prefillMessages);
-
-        // 去重背景
-        const seenBgNorm = new Set();
-        const dedupBg = [];
-        for (const m of currentBg) {
-            if (!seenBgNorm.has(m.norm)) {
-                seenBgNorm.add(m.norm);
-                dedupBg.push(m);
-            } else {
-                Logger.log(`[背景去重] 跳过: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG);
-            }
-        }
-
-        // 初始化
-        if (!CacheState.backgroundBlock || !CacheState.dialogueHistory) {
-            CacheState.backgroundBlock = dedupBg;
-            CacheState.dialogueHistory = completeDialogue;
-            Logger.log(`[初始化] 背景:${dedupBg.length} 对话:${completeDialogue.length}`, LogLevels.BASIC);
-            buildAndApply(stream, dedupBg, completeDialogue, currentUserMsg);
+        // 初始化：直接用当前流作为前缀
+        if (!CacheState.prefix) {
+            CacheState.prefix = stream.map(m => ({ role: m.role, content: m.content }));
+            Logger.log(`[初始化] 前缀长度: ${CacheState.prefix.length}`, LogLevels.BASIC);
             updateStats(true);
             return;
         }
 
-        // 背景相似度检测
-        const bgSimilarity = computeSetSimilarity(
-            new Set(CacheState.backgroundBlock.map(m => m.norm)),
-            new Set(dedupBg.map(m => m.norm))
-        );
-        Logger.log(`[背景相似度] ${(bgSimilarity*100).toFixed(1)}%`, LogLevels.DEBUG);
+        // 计算共同前缀长度
+        const maxMatch = Math.min(CacheState.prefix.length, stream.length);
+        let matchLen = 0;
+        while (matchLen < maxMatch &&
+               CacheState.prefix[matchLen].role === stream[matchLen].role &&
+               CacheState.prefix[matchLen].content === stream[matchLen].content) {
+            matchLen++;
+        }
+        Logger.log(`[匹配长度] ${matchLen} / ${CacheState.prefix.length} 条`, LogLevels.DEBUG);
 
-        if (bgSimilarity < 0.9) {
+        // 检测前缀是否被破坏
+        if (matchLen < CacheState.prefix.length) {
             const shouldReset = confirm(
-                '检测到系统提示词核心变动（更换角色卡/预设），建议重置缓存前缀以保证性能。\n\n' +
+                '检测到提示词前缀变动（更换角色卡/预设、世界书变更等），缓存前缀已被破坏。\n\n' +
                 '按「确定」重置前缀并发送消息；按「取消」放弃本次发送。'
             );
             if (!shouldReset) {
                 if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
-                throw new Error('User cancelled send due to cache prefix change');
+                throw new Error('User cancelled send due to prefix mismatch');
             }
-            Logger.warn('[用户选择重置] 因背景变动，重置前缀并重新构建', LogLevels.BASIC);
-            rebuildCacheAndApply(stream, dedupBg, completeDialogue, currentUserMsg);
+            Logger.warn('[用户选择重置] 因前缀破坏，重置并重建', LogLevels.BASIC);
+            performReset();
+            // 重建前缀：用当前完整的 stream
+            CacheState.prefix = stream.map(m => ({ role: m.role, content: m.content }));
+            Logger.log(`[重置后重建] 前缀长度: ${CacheState.prefix.length}`, LogLevels.BASIC);
+            updateStats(true);
             return;
         }
 
-        // 对话增量
-        const newDialogue = findNewEntries(CacheState.dialogueHistory, completeDialogue);
-        if (newDialogue.length > 0) {
-            Logger.warn(`[对话增量] +${newDialogue.length} 条`, LogLevels.DETAILED);
-        }
-        CacheState.dialogueHistory = CacheState.dialogueHistory.concat(newDialogue);
-
-        // 大幅删除检测
-        if (completeDialogue.length < CacheState.dialogueHistory.length * 0.7) {
-            const shouldReset = confirm(
-                '对话历史被大幅删除，缓存命中率将下降，建议重置。\n\n' +
-                '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
-            );
-            if (!shouldReset) {
-                if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
-                throw new Error('User cancelled send due to dialogue deletion');
-            }
-            Logger.warn('[用户选择重置] 因对话删除，重置前缀并重新构建', LogLevels.BASIC);
-            rebuildCacheAndApply(stream, dedupBg, completeDialogue, currentUserMsg);
-            return;
+        // 前缀完全匹配，取出新消息（共同前缀之后的部分）
+        const newMessages = stream.slice(matchLen);
+        if (newMessages.length > 0) {
+            Logger.warn(`[新增消息] +${newMessages.length} 条`, LogLevels.DETAILED);
+            CacheState.prefix.push(...newMessages.map(m => ({ role: m.role, content: m.content })));
         }
 
-        // 构建最终序列
-        buildAndApply(stream, CacheState.backgroundBlock, CacheState.dialogueHistory, currentUserMsg);
+        // 用更新后的前缀覆盖 stream（保持原始顺序）
+        stream.splice(0, stream.length, ...CacheState.prefix);
+
+        if (logLevel >= LogLevels.DEBUG) {
+            Logger.log(`[最终序列] 前缀长度: ${CacheState.prefix.length}`, LogLevels.DEBUG);
+            CacheState.prefix.forEach((m, i) => {
+                Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG);
+            });
+        }
+
         updateStats(false);
-
     } catch (err) {
         Logger.error('拦截器致命错误', err);
-        throw err;
+        throw err; // 中断生成
     }
-}
-
-function rebuildCacheAndApply(stream, bgBlock, dialogueHist, currentUser) {
-    performReset();
-    CacheState.backgroundBlock = bgBlock;
-    CacheState.dialogueHistory = dialogueHist;
-    Logger.log(`[重置后重建] 背景:${bgBlock.length} 对话:${dialogueHist.length}`, LogLevels.BASIC);
-    buildAndApply(stream, bgBlock, dialogueHist, currentUser);
-    updateStats(true);
-}
-
-function buildAndApply(stream, bgBlock, dialogueHist, currentUser) {
-    const final = [];
-    bgBlock.forEach(b => final.push({ role: b.role, content: b.content }));
-    dialogueHist.forEach(d => final.push({ role: d.role, content: d.content }));
-    if (currentUser) final.push({ role: currentUser.role, content: currentUser.content });
-
-    if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[最终序列] 背景:${bgBlock.length} 对话:${dialogueHist.length} 用户:${currentUser?1:0}`, LogLevels.DEBUG);
-        final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
-    }
-    stream.splice(0, stream.length, ...final);
-}
-
-function findNewEntries(oldSeq, newSeq) {
-    const oldUids = new Set(oldSeq.map(m => m.uid));
-    return newSeq.filter(m => !oldUids.has(m.uid));
-}
-
-function computeSetSimilarity(setA, setB) {
-    if (setA.size === 0 && setB.size === 0) return 1;
-    const union = new Set([...setA, ...setB]);
-    let intersection = 0;
-    for (const item of setA) if (setB.has(item)) intersection++;
-    return union.size === 0 ? 1 : intersection / union.size;
 }
 
 function updateStats(isInit = false) {
-    const bgTokens = CacheState.backgroundBlock?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
-    const dialogueTokens = CacheState.dialogueHistory?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
-    CacheState.stats.prefixTokens = bgTokens + dialogueTokens;
+    const tokens = CacheState.prefix?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
+    CacheState.stats.prefixTokens = tokens;
     CacheState.stats.hits++;
-    CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
+    CacheState.stats.savedTokens += tokens;
     updateStatsUI();
 }
 
@@ -301,8 +161,7 @@ function updateStatsUI() {
 // 重置函数
 // ==========================================
 function performReset() {
-    CacheState.backgroundBlock = null;
-    CacheState.dialogueHistory = null;
+    CacheState.prefix = null;
     CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
     updateStatsUI();
     Logger.warn('[重置] 前缀已清空，下次请求重建', LogLevels.BASIC);
@@ -320,7 +179,7 @@ async function setupUI() {
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">背景/对话分离，绝对稳定前缀，弹窗+菜单重置。</p>
+                <p style="font-size:0.9em;opacity:0.8;">线性前缀强匹配，完全锁定提示词顺序，100%缓存命中。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
                 <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
                 <div style="margin:8px 0;">
@@ -394,5 +253,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，强制阻塞确认，保证发送前干预 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，线性前缀强匹配，锁定顺序 ══════', LogLevels.BASIC);
 });
