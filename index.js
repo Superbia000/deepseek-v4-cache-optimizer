@@ -100,7 +100,7 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理请求流 (增强日志)
+// 处理请求流 (消除重复，纳入预填充)
 // ==========================================
 function processStream(stream, originalChat) {
     let prefillStart = stream.length;
@@ -109,6 +109,12 @@ function processStream(stream, originalChat) {
     }
     const prefills = stream.slice(prefillStart);
     const nonPrefill = stream.slice(0, prefillStart);
+
+    // 将预填充消息转化为对象，纳入对话历史
+    const prefillMessages = prefills.map(msg => {
+        const cls = classifyMessage(msg, originalChat);
+        return createMessageObj(msg, cls);
+    });
 
     if (logLevel >= LogLevels.DEBUG) {
         Logger.log(`[流分割] 非预填充: ${nonPrefill.length} 条, 预填充: ${prefills.length} 条`, LogLevels.DEBUG);
@@ -126,10 +132,15 @@ function processStream(stream, originalChat) {
                 Logger.log(`[当前用户消息] 索引 ${i}: ${obj.content.substring(0, 30)}...`, LogLevels.DEBUG);
             }
         } else {
+            // 跳过与当前用户消息完全相同的重复条目
+            if (currentUserMsg && cls.isRealUser && msg.role === 'user' && obj.uid === currentUserMsg.uid) {
+                Logger.log(`[跳过重复用户消息] ${obj.content.substring(0, 30)}...`, LogLevels.DEBUG);
+                continue;
+            }
             others.unshift(obj);
         }
     }
-    return { currentUserMsg, others, prefills };
+    return { currentUserMsg, others, prefillMessages };
 }
 
 // ==========================================
@@ -148,10 +159,12 @@ function interceptAndRestructurePrompt(data) {
         const context = getContext();
         const originalChat = context?.chat ?? [];
 
-        const { currentUserMsg, others, prefills } = processStream(stream, originalChat);
+        const { currentUserMsg, others, prefillMessages } = processStream(stream, originalChat);
 
         const currentBg = others.filter(m => m.isInstructional);
         const currentDialogue = others.filter(m => !m.isInstructional);
+        // 完整的对话历史 = 非预填充对话 + 预填充（通常为最新的AI回复）
+        const completeDialogue = currentDialogue.concat(prefillMessages);
 
         // 去重背景
         const seenBgNorm = new Set();
@@ -168,9 +181,9 @@ function interceptAndRestructurePrompt(data) {
         // 初始化
         if (!CacheState.backgroundBlock || !CacheState.dialogueHistory) {
             CacheState.backgroundBlock = dedupBg;
-            CacheState.dialogueHistory = currentDialogue;
-            Logger.log(`[初始化] 背景:${dedupBg.length} 对话:${currentDialogue.length}`, LogLevels.BASIC);
-            buildAndApply(stream, dedupBg, currentDialogue, currentUserMsg, prefills);
+            CacheState.dialogueHistory = completeDialogue;
+            Logger.log(`[初始化] 背景:${dedupBg.length} 对话:${completeDialogue.length}`, LogLevels.BASIC);
+            buildAndApply(stream, dedupBg, completeDialogue, currentUserMsg);
             updateStats(true);
             return;
         }
@@ -192,19 +205,19 @@ function interceptAndRestructurePrompt(data) {
                 throw new Error('User cancelled send due to cache prefix change');
             }
             Logger.warn('[用户选择重置] 因背景变动，重置前缀并重新构建', LogLevels.BASIC);
-            rebuildCacheAndApply(stream, dedupBg, currentDialogue, currentUserMsg, prefills);
+            rebuildCacheAndApply(stream, dedupBg, completeDialogue, currentUserMsg);
             return;
         }
 
         // 对话增量
-        const newDialogue = findNewEntries(CacheState.dialogueHistory, currentDialogue);
+        const newDialogue = findNewEntries(CacheState.dialogueHistory, completeDialogue);
         if (newDialogue.length > 0) {
             Logger.warn(`[对话增量] +${newDialogue.length} 条`, LogLevels.DETAILED);
         }
         CacheState.dialogueHistory = CacheState.dialogueHistory.concat(newDialogue);
 
         // 大幅删除检测
-        if (currentDialogue.length < CacheState.dialogueHistory.length * 0.7) {
+        if (completeDialogue.length < CacheState.dialogueHistory.length * 0.7) {
             const shouldReset = confirm(
                 '对话历史被大幅删除，缓存命中率将下降，建议重置。\n\n' +
                 '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
@@ -214,40 +227,37 @@ function interceptAndRestructurePrompt(data) {
                 throw new Error('User cancelled send due to dialogue deletion');
             }
             Logger.warn('[用户选择重置] 因对话删除，重置前缀并重新构建', LogLevels.BASIC);
-            rebuildCacheAndApply(stream, dedupBg, currentDialogue, currentUserMsg, prefills);
+            rebuildCacheAndApply(stream, dedupBg, completeDialogue, currentUserMsg);
             return;
         }
 
         // 构建最终序列
-        buildAndApply(stream, CacheState.backgroundBlock, CacheState.dialogueHistory, currentUserMsg, prefills);
+        buildAndApply(stream, CacheState.backgroundBlock, CacheState.dialogueHistory, currentUserMsg);
         updateStats(false);
 
     } catch (err) {
         Logger.error('拦截器致命错误', err);
-        throw err; // 中断生成
+        throw err;
     }
 }
 
-function rebuildCacheAndApply(stream, bgBlock, dialogueHist, currentUser, prefills) {
-    // 完全重置状态
+function rebuildCacheAndApply(stream, bgBlock, dialogueHist, currentUser) {
     performReset();
-    // 立即重建
     CacheState.backgroundBlock = bgBlock;
     CacheState.dialogueHistory = dialogueHist;
     Logger.log(`[重置后重建] 背景:${bgBlock.length} 对话:${dialogueHist.length}`, LogLevels.BASIC);
-    buildAndApply(stream, bgBlock, dialogueHist, currentUser, prefills);
+    buildAndApply(stream, bgBlock, dialogueHist, currentUser);
     updateStats(true);
 }
 
-function buildAndApply(stream, bgBlock, dialogueHist, currentUser, prefills) {
+function buildAndApply(stream, bgBlock, dialogueHist, currentUser) {
     const final = [];
     bgBlock.forEach(b => final.push({ role: b.role, content: b.content }));
     dialogueHist.forEach(d => final.push({ role: d.role, content: d.content }));
     if (currentUser) final.push({ role: currentUser.role, content: currentUser.content });
-    prefills.forEach(p => final.push({ role: p.role, content: p.content }));
 
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[最终序列] 背景:${bgBlock.length} 对话:${dialogueHist.length} 用户:${currentUser?1:0} 预填充:${prefills.length}`, LogLevels.DEBUG);
+        Logger.log(`[最终序列] 背景:${bgBlock.length} 对话:${dialogueHist.length} 用户:${currentUser?1:0}`, LogLevels.DEBUG);
         final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
     }
     stream.splice(0, stream.length, ...final);
