@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 日志系统
+// 日志系统 (增強版)
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 let logLevel = 2;
@@ -64,19 +64,27 @@ const CacheState = {
 };
 
 // ==========================================
-// 消息分类
+// 消息分类 (增强日志)
 // ==========================================
 function classifyMessage(msg, originalChat) {
     const orig = originalChat.find(m => m.mes === msg.content);
+    let cls;
     if (orig) {
-        if (orig.is_user) return { isRealUser: true, isRealAI: false, isInstructional: false };
-        if (!orig.is_system) {
-            if (msg.role === 'assistant') return { isRealUser: false, isRealAI: true, isInstructional: false };
-            return { isRealUser: false, isRealAI: false, isInstructional: true };
+        if (orig.is_user) cls = { isRealUser: true, isRealAI: false, isInstructional: false };
+        else if (!orig.is_system) {
+            if (msg.role === 'assistant') cls = { isRealUser: false, isRealAI: true, isInstructional: false };
+            else cls = { isRealUser: false, isRealAI: false, isInstructional: true };
+        } else {
+            cls = { isRealUser: false, isRealAI: false, isInstructional: true };
         }
-        return { isRealUser: false, isRealAI: false, isInstructional: true };
+    } else {
+        cls = { isRealUser: false, isRealAI: false, isInstructional: true };
     }
-    return { isRealUser: false, isRealAI: false, isInstructional: true };
+    if (logLevel >= LogLevels.DEBUG) {
+        const label = cls.isRealUser ? '👤真实用户' : (cls.isRealAI ? '🤖真实AI' : '📋教学/系统');
+        Logger.log(`[分类] ${label} | ${msg.role}: ${msg.content.substring(0, 30)}...`, LogLevels.DEBUG);
+    }
+    return cls;
 }
 
 function createMessageObj(msg, cls, uid) {
@@ -92,7 +100,7 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理请求流
+// 处理请求流 (增强日志)
 // ==========================================
 function processStream(stream, originalChat) {
     let prefillStart = stream.length;
@@ -102,6 +110,10 @@ function processStream(stream, originalChat) {
     const prefills = stream.slice(prefillStart);
     const nonPrefill = stream.slice(0, prefillStart);
 
+    if (logLevel >= LogLevels.DEBUG) {
+        Logger.log(`[流分割] 非预填充: ${nonPrefill.length} 条, 预填充: ${prefills.length} 条`, LogLevels.DEBUG);
+    }
+
     let currentUserMsg = null;
     const others = [];
     for (let i = nonPrefill.length - 1; i >= 0; i--) {
@@ -110,6 +122,9 @@ function processStream(stream, originalChat) {
         const obj = createMessageObj(msg, cls);
         if (!currentUserMsg && cls.isRealUser && msg.role === 'user') {
             currentUserMsg = obj;
+            if (logLevel >= LogLevels.DEBUG) {
+                Logger.log(`[当前用户消息] 索引 ${i}: ${obj.content.substring(0, 30)}...`, LogLevels.DEBUG);
+            }
         } else {
             others.unshift(obj);
         }
@@ -168,22 +183,20 @@ function interceptAndRestructurePrompt(data) {
         Logger.log(`[背景相似度] ${(bgSimilarity*100).toFixed(1)}%`, LogLevels.DEBUG);
 
         if (bgSimilarity < 0.9) {
-            // ★ 阻塞式确认，用戶選擇前完全阻止請求發送
             const shouldReset = confirm(
-                '檢測到系統提示詞核心變動（更換角色卡/預設），建議重置快取前綴以保證效能。\n\n' +
-                '按「確定」重置前綴並發送訊息；按「取消」放棄本次發送。'
+                '检测到系统提示词核心变动（更换角色卡/预设），建议重置缓存前缀以保证性能。\n\n' +
+                '按「确定」重置前缀并发送消息；按「取消」放弃本次发送。'
             );
             if (!shouldReset) {
-                // 用戶取消，中斷生成流程 → 相當於未發送任何對話
-                if (typeof toastr !== 'undefined') toastr.warning('發送已取消');
+                if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
                 throw new Error('User cancelled send due to cache prefix change');
             }
-            // 用戶確認重置
-            performReset();
-            // 不 return，讓函數繼續進入初始化分支，使用當前 stream 重建前綴
+            Logger.warn('[用户选择重置] 因背景变动，重置前缀并重新构建', LogLevels.BASIC);
+            rebuildCacheAndApply(stream, dedupBg, currentDialogue, currentUserMsg, prefills);
+            return;
         }
 
-        // 對話增量
+        // 对话增量
         const newDialogue = findNewEntries(CacheState.dialogueHistory, currentDialogue);
         if (newDialogue.length > 0) {
             Logger.warn(`[对话增量] +${newDialogue.length} 条`, LogLevels.DETAILED);
@@ -193,20 +206,15 @@ function interceptAndRestructurePrompt(data) {
         // 大幅删除检测
         if (currentDialogue.length < CacheState.dialogueHistory.length * 0.7) {
             const shouldReset = confirm(
-                '對話歷史被大幅刪除，快取命中率將下降，建議重置前綴。\n\n' +
-                '按「確定」重置前綴並發送；按「取消」放棄本次發送。'
+                '对话历史被大幅删除，缓存命中率将下降，建议重置。\n\n' +
+                '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
             );
             if (!shouldReset) {
-                if (typeof toastr !== 'undefined') toastr.warning('發送已取消');
+                if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
                 throw new Error('User cancelled send due to dialogue deletion');
             }
-            performReset();
-            // 重置後會走初始化分支，但仍然需要重新構建當前請求
-            // 直接重新呼叫本函數會遞歸，因此這裡重新執行解析和構建部分
-            CacheState.backgroundBlock = null; // 強制初始化
-            CacheState.dialogueHistory = null;
-            // 重新執行本函數的初始化流程（遞歸）
-            interceptAndRestructurePrompt(data);
+            Logger.warn('[用户选择重置] 因对话删除，重置前缀并重新构建', LogLevels.BASIC);
+            rebuildCacheAndApply(stream, dedupBg, currentDialogue, currentUserMsg, prefills);
             return;
         }
 
@@ -216,9 +224,19 @@ function interceptAndRestructurePrompt(data) {
 
     } catch (err) {
         Logger.error('拦截器致命错误', err);
-        // 重新拋出，讓 ST 中斷生成
-        throw err;
+        throw err; // 中断生成
     }
+}
+
+function rebuildCacheAndApply(stream, bgBlock, dialogueHist, currentUser, prefills) {
+    // 完全重置状态
+    performReset();
+    // 立即重建
+    CacheState.backgroundBlock = bgBlock;
+    CacheState.dialogueHistory = dialogueHist;
+    Logger.log(`[重置后重建] 背景:${bgBlock.length} 对话:${dialogueHist.length}`, LogLevels.BASIC);
+    buildAndApply(stream, bgBlock, dialogueHist, currentUser, prefills);
+    updateStats(true);
 }
 
 function buildAndApply(stream, bgBlock, dialogueHist, currentUser, prefills) {
@@ -288,7 +306,7 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 緩存命中優化</b>
+                <b>Deepseek 缓存命中优化</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
@@ -340,7 +358,6 @@ async function setupUI() {
     }
 }
 
-// 确保菜单在扩展加载时注册
 function registerMenuItems() {
     if (typeof extension_settings !== 'undefined') {
         extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
