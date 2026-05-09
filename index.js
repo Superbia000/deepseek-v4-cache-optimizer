@@ -58,9 +58,9 @@ const Logger = {
 // ==========================================
 const CacheState = {
     enabled: true,
-    frozenBackground: [],
-    frozenDialogue: [],
-    extraBackground: [],
+    frozenBackground: [],   // 初次對話的提示詞陣列（去重、逐條）
+    frozenTurns: [],        // [{ user, assistant }]  assistant 由多條助手訊息合併
+    extraBackground: [],    // 後續新增的背景條目（去重）
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
 
@@ -104,31 +104,27 @@ function createMessageObj(msg, cls, uid) {
 // 处理请求流
 // ==========================================
 function processStream(stream, originalChat) {
+    // 找出预填充（尾部连续的 assistant）
     let prefillStart = stream.length;
     while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
         prefillStart--;
     }
-    const prefills = stream.slice(prefillStart);
-    const nonPrefill = stream.slice(0, prefillStart);
-
-    const prefillMessages = prefills.map(msg => {
+    const prefills = stream.slice(prefillStart).map(msg => {
         const cls = classifyMessage(msg, originalChat);
         return createMessageObj(msg, cls);
     });
+    const nonPrefill = stream.slice(0, prefillStart);
 
     if (logLevel >= LogLevels.DEBUG) {
         Logger.log(`[流分割] 非预填充: ${nonPrefill.length} 条, 预填充: ${prefills.length} 条`, LogLevels.DEBUG);
     }
 
-    let currentUserMsg = null;
     const backgroundCandidates = [];
-    const dialogueParts = [];
+    const dialogueParts = [];  // 只含真實用戶和AI消息（非背景）
 
-    for (let i = 0; i < nonPrefill.length; i++) {
-        const msg = nonPrefill[i];
+    for (const msg of nonPrefill) {
         const cls = classifyMessage(msg, originalChat);
         const obj = createMessageObj(msg, cls);
-
         if (obj.isInstructional) {
             backgroundCandidates.push(obj);
         } else {
@@ -136,7 +132,8 @@ function processStream(stream, originalChat) {
         }
     }
 
-    // 从尾部提取当前用户消息
+    // 提取当前用户消息（dialogueParts 尾部第一个真实用户且 role===user）
+    let currentUserMsg = null;
     for (let i = dialogueParts.length - 1; i >= 0; i--) {
         const obj = dialogueParts[i];
         if (obj.isRealUser && obj.role === 'user') {
@@ -146,39 +143,39 @@ function processStream(stream, originalChat) {
         }
     }
 
-    return { currentUserMsg, backgroundCandidates, dialogueParts, prefillMessages };
+    return { currentUserMsg, backgroundCandidates, dialogueParts, prefills };
 }
 
 // ==========================================
-// 构建冻结的对话轮次
+// 构建对话轮次 (用户输入 → AI 长文)
 // ==========================================
-function buildDialogueTurns(dialogueParts) {
+function buildTurns(dialogueParts) {
     const turns = [];
-    let currentTurn = { user: null, assistants: [] };
+    let current = { user: null, assistants: [] };
 
     for (const obj of dialogueParts) {
         if (obj.isRealUser && obj.role === 'user') {
-            if (currentTurn.user && currentTurn.assistants.length > 0) {
+            if (current.user && current.assistants.length > 0) {
                 turns.push({
-                    user: currentTurn.user,
-                    assistant: combineAssistantMessages(currentTurn.assistants),
+                    user: current.user,
+                    assistant: combineAssistants(current.assistants),
                 });
             }
-            currentTurn = { user: obj, assistants: [] };
+            current = { user: obj, assistants: [] };
         } else if (obj.isRealAI && obj.role === 'assistant') {
-            currentTurn.assistants.push(obj);
+            current.assistants.push(obj);
         }
     }
-    if (currentTurn.user && currentTurn.assistants.length > 0) {
+    if (current.user && current.assistants.length > 0) {
         turns.push({
-            user: currentTurn.user,
-            assistant: combineAssistantMessages(currentTurn.assistants),
+            user: current.user,
+            assistant: combineAssistants(current.assistants),
         });
     }
     return turns;
 }
 
-function combineAssistantMessages(msgs) {
+function combineAssistants(msgs) {
     if (msgs.length === 0) return null;
     const combinedContent = msgs.map(m => m.content).join('\n');
     return createMessageObj(
@@ -204,101 +201,103 @@ function interceptAndRestructurePrompt(data) {
         const context = getContext();
         const originalChat = context?.chat ?? [];
 
-        const { currentUserMsg, backgroundCandidates, dialogueParts, prefillMessages } =
+        const { currentUserMsg, backgroundCandidates, dialogueParts, prefills } =
             processStream(stream, originalChat);
 
-        // 去重背景
-        const seenBgNorm = new Set();
+        // 去重背景候选（只保留第一次出现的）
+        const seenBg = new Set();
         const dedupBg = [];
         for (const m of backgroundCandidates) {
-            if (!seenBgNorm.has(m.norm)) {
-                seenBgNorm.add(m.norm);
+            if (!seenBg.has(m.norm)) {
+                seenBg.add(m.norm);
                 dedupBg.push(m);
+            } else {
+                Logger.log(`[背景去重] 跳过: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG);
             }
         }
 
-        const currentTurns = buildDialogueTurns(dialogueParts);
+        const currentTurns = buildTurns(dialogueParts);
 
-        // 初始化
-        if (CacheState.frozenBackground.length === 0 && CacheState.frozenDialogue.length === 0) {
+        // ---------- 初次初始化 ----------
+        if (CacheState.frozenBackground.length === 0 && CacheState.frozenTurns.length === 0) {
             CacheState.frozenBackground = dedupBg;
-            CacheState.frozenDialogue = currentTurns;
+            CacheState.frozenTurns = currentTurns;
             Logger.log(`[初始化] 背景:${dedupBg.length} 对话轮次:${currentTurns.length}`, LogLevels.BASIC);
-            buildFinalSequence(stream, currentUserMsg, prefillMessages);
+            applyFinalSequence(stream, currentUserMsg, prefills);
             updateStats(true);
             return;
         }
 
+        // ---------- 背景相似度 ----------
         const frozenBgNorms = new Set(CacheState.frozenBackground.map(m => m.norm));
         const currentBgNorms = new Set(dedupBg.map(m => m.norm));
         const bgSimilarity = computeSetSimilarity(frozenBgNorms, currentBgNorms);
         Logger.log(`[背景相似度] ${(bgSimilarity * 100).toFixed(1)}%`, LogLevels.DEBUG);
 
         if (bgSimilarity < 0.9) {
-            const shouldReset = confirm(
+            const ok = confirm(
                 '检测到系统提示词核心变动（更换角色卡/预设），建议重置缓存前缀以保证性能。\n\n' +
                 '按「确定」重置前缀并发送消息；按「取消」放弃本次发送。'
             );
-            if (!shouldReset) {
+            if (!ok) {
                 if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
                 throw new Error('User cancelled send due to cache prefix change');
             }
             Logger.warn('[用户选择重置] 因背景变动，重置所有缓存', LogLevels.BASIC);
             performReset();
             CacheState.frozenBackground = dedupBg;
-            CacheState.frozenDialogue = currentTurns;
-            buildFinalSequence(stream, currentUserMsg, prefillMessages);
+            CacheState.frozenTurns = currentTurns;
+            applyFinalSequence(stream, currentUserMsg, prefills);
             updateStats(true);
             return;
         }
 
-        // 新增背景条目
+        // ---------- 新增背景（世界书/新预设） ----------
         const newBg = dedupBg.filter(m => !frozenBgNorms.has(m.norm));
+        for (const m of newBg) {
+            // 也检查 extraBackground 中是否已存在
+            if (!CacheState.extraBackground.some(ex => ex.norm === m.norm)) {
+                CacheState.extraBackground.push(m);
+            }
+        }
         if (newBg.length > 0) {
             Logger.warn(`[新增背景] +${newBg.length} 条`, LogLevels.DETAILED);
-            for (const m of newBg) {
-                if (!CacheState.extraBackground.some(ex => ex.norm === m.norm)) {
-                    CacheState.extraBackground.push(m);
-                }
-            }
         }
 
-        // 新增对话轮次
-        const newTurns = [];
-        const existingKeys = new Set(
-            CacheState.frozenDialogue.map(t => `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`)
+        // ---------- 对话增量 ----------
+        const frozenTurnKeys = new Set(
+            CacheState.frozenTurns.map(t => `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`)
         );
-        for (const turn of currentTurns) {
-            const key = `${turn.user.uid}|${turn.assistant ? turn.assistant.uid : ''}`;
-            if (!existingKeys.has(key)) {
-                newTurns.push(turn);
-            }
-        }
+        const newTurns = currentTurns.filter(t => {
+            const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
+            return !frozenTurnKeys.has(key);
+        });
         if (newTurns.length > 0) {
             Logger.warn(`[对话增量] +${newTurns.length} 轮`, LogLevels.DETAILED);
-            CacheState.frozenDialogue.push(...newTurns);
+            CacheState.frozenTurns.push(...newTurns);
         }
 
-        // 对话大幅删除检测
-        if (currentTurns.length < CacheState.frozenDialogue.length * 0.7) {
-            const shouldReset = confirm(
+        // ---------- 大幅删除检测 ----------
+        if (currentTurns.length < CacheState.frozenTurns.length * 0.7) {
+            const ok = confirm(
                 '对话历史被大幅删除，缓存命中率将下降，建议重置。\n\n' +
                 '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
             );
-            if (!shouldReset) {
+            if (!ok) {
                 if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
                 throw new Error('User cancelled send due to dialogue deletion');
             }
             Logger.warn('[用户选择重置] 因对话删除，重置所有缓存', LogLevels.BASIC);
             performReset();
             CacheState.frozenBackground = dedupBg;
-            CacheState.frozenDialogue = currentTurns;
-            buildFinalSequence(stream, currentUserMsg, prefillMessages);
+            CacheState.frozenTurns = currentTurns;
+            applyFinalSequence(stream, currentUserMsg, prefills);
             updateStats(true);
             return;
         }
 
-        buildFinalSequence(stream, currentUserMsg, prefillMessages);
+        // ---------- 正常构建 ----------
+        applyFinalSequence(stream, currentUserMsg, prefills);
         updateStats(false);
 
     } catch (err) {
@@ -307,40 +306,52 @@ function interceptAndRestructurePrompt(data) {
     }
 }
 
-function buildFinalSequence(stream, currentUserMsg, prefillMessages) {
+// ==========================================
+// 最终序列应用
+// ==========================================
+function applyFinalSequence(stream, currentUserMsg, prefills) {
     const final = [];
 
+    // 1. 冻结背景
     for (const bg of CacheState.frozenBackground) {
         final.push({ role: bg.role, content: bg.content });
     }
 
-    for (const turn of CacheState.frozenDialogue) {
+    // 2. 冻结的对话轮次（不含预填充）
+    for (const turn of CacheState.frozenTurns) {
         final.push({ role: turn.user.role, content: turn.user.content });
         if (turn.assistant) {
             final.push({ role: turn.assistant.role, content: turn.assistant.content });
         }
     }
 
+    // 3. 新增背景（世界书等）
     for (const extra of CacheState.extraBackground) {
         final.push({ role: extra.role, content: extra.content });
     }
 
+    // 4. 当前用户输入
     if (currentUserMsg) {
         final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
     }
 
-    for (const p of prefillMessages) {
+    // 5. 预填充
+    for (const p of prefills) {
         final.push({ role: p.role, content: p.content });
     }
 
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结对话:${CacheState.frozenDialogue.length} 新增背景:${CacheState.extraBackground.length} 用户:${currentUserMsg?1:0} 预填充:${prefillMessages.length}`, LogLevels.DEBUG);
+        Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结轮次:${CacheState.frozenTurns.length} 新增背景:${CacheState.extraBackground.length} 用户:${currentUserMsg?1:0} 预填充:${prefills.length}`, LogLevels.DEBUG);
         final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
     }
 
+    // 替换原始 stream
     stream.splice(0, stream.length, ...final);
 }
 
+// ==========================================
+// 相似度计算
+// ==========================================
 function computeSetSimilarity(setA, setB) {
     if (setA.size === 0 && setB.size === 0) return 1;
     const union = new Set([...setA, ...setB]);
@@ -349,15 +360,19 @@ function computeSetSimilarity(setA, setB) {
     return union.size === 0 ? 1 : intersection / union.size;
 }
 
+// ==========================================
+// 统计与重置
+// ==========================================
 function updateStats(isInit = false) {
-    const bgTokens = CacheState.frozenBackground.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) +
-                     CacheState.extraBackground.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0);
-    let dialogueTokens = 0;
-    for (const turn of CacheState.frozenDialogue) {
-        dialogueTokens += Logger.estimateTokens(turn.user.content);
-        if (turn.assistant) dialogueTokens += Logger.estimateTokens(turn.assistant.content);
+    let bgTokens = 0;
+    for (const m of CacheState.frozenBackground) bgTokens += Logger.estimateTokens(m.content);
+    for (const m of CacheState.extraBackground) bgTokens += Logger.estimateTokens(m.content);
+    let turnTokens = 0;
+    for (const t of CacheState.frozenTurns) {
+        turnTokens += Logger.estimateTokens(t.user.content);
+        if (t.assistant) turnTokens += Logger.estimateTokens(t.assistant.content);
     }
-    CacheState.stats.prefixTokens = bgTokens + dialogueTokens;
+    CacheState.stats.prefixTokens = bgTokens + turnTokens;
     CacheState.stats.hits++;
     CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
     updateStatsUI();
@@ -377,7 +392,7 @@ function updateStatsUI() {
 
 function performReset() {
     CacheState.frozenBackground = [];
-    CacheState.frozenDialogue = [];
+    CacheState.frozenTurns = [];
     CacheState.extraBackground = [];
     CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
     updateStatsUI();
@@ -414,13 +429,13 @@ async function setupUI() {
         $('#extensions_settings').append(html);
         Logger._uiTextarea = document.getElementById('ds-cache-log');
 
-        $('#ds-cache-enable').on('change', function() {
+        $('#ds-cache-enable').on('change', function () {
             CacheState.enabled = $(this).is(':checked');
-            Logger.log(`插件 ${CacheState.enabled?'启用':'停用'}`, LogLevels.BASIC);
+            Logger.log(`插件 ${CacheState.enabled ? '启用' : '停用'}`, LogLevels.BASIC);
         });
-        $('#ds-cache-loglevel').on('change', function() {
+        $('#ds-cache-loglevel').on('change', function () {
             logLevel = parseInt($(this).val());
-            Logger.log(`日志等级: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC);
+            Logger.log(`日志等级: ${['关闭', '简要', '详细', '调试'][logLevel]}`, LogLevels.BASIC);
         });
         $('#ds-cache-reset').on('click', () => performReset());
         $('#ds-cache-clearlog').on('click', () => {
@@ -453,6 +468,9 @@ function registerMenuItems() {
     }
 }
 
+// ==========================================
+// 启动
+// ==========================================
 jQuery(async () => {
     await setupUI();
     registerMenuItems();
