@@ -54,18 +54,18 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机（新增 prefills 冻結）
+// 状态机
 // ==========================================
 const CacheState = {
     enabled: true,
-    frozenBackground: [],
-    frozenTurns: [],          // { user, assistant, prefills[] }
-    extraBackground: [],
+    frozenBackground: [],   // 冻结背景提示词（去重、逐条）
+    frozenTurns: [],        // [{ user, assistant, prefills }] 冻结对话轮次
+    extraBackground: [],    // 新增背景条目
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
 
 // ==========================================
-// 消息分类（改进匹配）
+// 消息分类
 // ==========================================
 function classifyMessage(msg, originalChat) {
     const normContent = Logger.normalize(msg.content);
@@ -83,7 +83,7 @@ function classifyMessage(msg, originalChat) {
             cls = { isRealUser: false, isRealAI: false, isInstructional: true };
         }
     } else {
-        // 无法匹配时，根据 role 智能推断
+        // 无法匹配时，按 role 智能推断
         if (msg.role === 'user') {
             cls = { isRealUser: true, isRealAI: false, isInstructional: false };
         } else if (msg.role === 'assistant') {
@@ -112,7 +112,7 @@ function createMessageObj(msg, cls, uid) {
 }
 
 // ==========================================
-// 处理请求流（保留预填充，正确分类）
+// 处理请求流
 // ==========================================
 function processStream(stream, originalChat) {
     let prefillStart = stream.length;
@@ -157,7 +157,7 @@ function processStream(stream, originalChat) {
 }
 
 // ==========================================
-// 构建对话轮次（包含预填充）
+// 构建对话轮次（关联预填充）
 // ==========================================
 function buildTurns(dialogueParts, currentPrefills) {
     const turns = [];
@@ -177,13 +177,15 @@ function buildTurns(dialogueParts, currentPrefills) {
             cur.assistants.push(obj);
         }
     }
-    // 处理最后一个轮次（可能只有 user，没有 assistant）
+    // 处理最后一轮：如果没有助手回复，则预填充属于当前轮次
     if (cur.user) {
-        // 如果是当前轮次（没有 assistant），则使用传入的 currentPrefills
+        if (cur.assistants.length === 0) {
+            cur.prefills = currentPrefills;   // 绑定预填充
+        }
         turns.push({
             user: cur.user,
             assistant: cur.assistants.length > 0 ? combineAssistants(cur.assistants) : null,
-            prefills: cur.assistants.length === 0 ? currentPrefills : [],
+            prefills: cur.prefills,
         });
     }
     return turns;
@@ -284,7 +286,7 @@ function interceptAndRestructurePrompt(data) {
             return !frozenTurnKeys.has(key);
         });
 
-        // 检测移除的轮次（即 frozen 中有但 current 中没有）
+        // 检测移除的轮次
         const removedTurns = CacheState.frozenTurns.filter(t => {
             const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
             return !currentTurns.some(ct => `${ct.user.uid}|${ct.assistant ? ct.assistant.uid : ''}` === key);
@@ -292,36 +294,37 @@ function interceptAndRestructurePrompt(data) {
 
         if (removedTurns.length > 0) {
             Logger.warn(`[检测到删除轮次] -${removedTurns.length} 轮`, LogLevels.DETAILED);
-            // 自適應：从冻结中移除这些轮次，避免前缀被破坏
-            CacheState.frozenTurns = CacheState.frozenTurns.filter(t => {
-                const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
-                return currentTurns.some(ct => `${ct.user.uid}|${ct.assistant ? ct.assistant.uid : ''}` === key);
-            });
+            // 若删除轮次过多（少于70%剩余），弹窗强制重置
+            if (currentTurns.length < CacheState.frozenTurns.length * 0.7) {
+                const ok = confirm(
+                    `对话历史被大幅删除（剩余 ${currentTurns.length}/${CacheState.frozenTurns.length} 轮），缓存命中率将严重下降。\n\n` +
+                    '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
+                );
+                if (!ok) {
+                    if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
+                    throw new Error('User cancelled send due to heavy dialogue deletion');
+                }
+                Logger.warn('[用户选择重置] 因重度删除，重置所有缓存', LogLevels.BASIC);
+                performReset();
+                CacheState.frozenBackground = dedupBg;
+                CacheState.frozenTurns = currentTurns;
+                applyFinalSequence(stream, currentUserMsg, prefills);
+                updateStats(true);
+                return;
+            } else {
+                // 少量删除，自动移除并提示
+                CacheState.frozenTurns = CacheState.frozenTurns.filter(t => {
+                    const key = `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`;
+                    return currentTurns.some(ct => `${ct.user.uid}|${ct.assistant ? ct.assistant.uid : ''}` === key);
+                });
+                if (typeof toastr !== 'undefined') toastr.info(`已自动适配：移除 ${removedTurns.length} 个被删除的对话轮次，缓存命中率可能轻微下降。`);
+            }
         }
 
         // 添加新轮次
         if (newTurns.length > 0) {
             Logger.warn(`[对话增量] +${newTurns.length} 轮`, LogLevels.DETAILED);
             CacheState.frozenTurns.push(...newTurns);
-        }
-
-        // 若删除后剩余轮次太少（<70%），则弹窗重置
-        if (currentTurns.length < CacheState.frozenTurns.length * 0.7) {
-            const ok = confirm(
-                '对话历史被大幅删除，缓存命中率将下降，建议重置。\n\n' +
-                '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
-            );
-            if (!ok) {
-                if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
-                throw new Error('User cancelled send due to dialogue deletion');
-            }
-            Logger.warn('[用户选择重置] 因对话删除，重置所有缓存', LogLevels.BASIC);
-            performReset();
-            CacheState.frozenBackground = dedupBg;
-            CacheState.frozenTurns = currentTurns;
-            applyFinalSequence(stream, currentUserMsg, prefills);
-            updateStats(true);
-            return;
         }
 
         applyFinalSequence(stream, currentUserMsg, prefills);
@@ -334,20 +337,20 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 最终序列应用（包含轮次预填充）
+// 最终序列应用
 // ==========================================
 function applyFinalSequence(stream, currentUserMsg, prefills) {
     const final = [];
 
-    // 冻结背景
+    // 1. 冻结背景
     for (const bg of CacheState.frozenBackground) {
         final.push({ role: bg.role, content: bg.content });
     }
 
-    // 冻结对话轮次
+    // 2. 冻结对话轮次（含预填充）
     for (const turn of CacheState.frozenTurns) {
         final.push({ role: turn.user.role, content: turn.user.content });
-        // 输出该轮次的预填充（如果有）
+        // 输出该轮次的预填充
         if (turn.prefills && turn.prefills.length > 0) {
             for (const p of turn.prefills) {
                 final.push({ role: p.role, content: p.content });
@@ -358,17 +361,17 @@ function applyFinalSequence(stream, currentUserMsg, prefills) {
         }
     }
 
-    // 新增背景
+    // 3. 新增背景
     for (const extra of CacheState.extraBackground) {
         final.push({ role: extra.role, content: extra.content });
     }
 
-    // 当前用户输入
+    // 4. 当前用户输入
     if (currentUserMsg) {
         final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
     }
 
-    // 当前请求的预填充
+    // 5. 当前请求的预填充
     for (const p of prefills) {
         final.push({ role: p.role, content: p.content });
     }
@@ -382,7 +385,7 @@ function applyFinalSequence(stream, currentUserMsg, prefills) {
 }
 
 // ==========================================
-// 工具函数（相似度、统计、重置）
+// 工具函数
 // ==========================================
 function computeSetSimilarity(setA, setB) {
     if (setA.size === 0 && setB.size === 0) return 1;
@@ -430,7 +433,7 @@ function performReset() {
 }
 
 // ==========================================
-// UI 初始化 + ST菜单项
+// UI 初始化
 // ==========================================
 async function setupUI() {
     try {
@@ -510,5 +513,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，强制阻塞确认，自適應凍結預填充 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，预填充冻结 + 自适应删除 ══════', LogLevels.BASIC);
 });
