@@ -7,8 +7,8 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 let Settings = {};
 
 function initSettings() {
-    if (!extension_settings.ds_cache_v11) {
-        extension_settings.ds_cache_v11 = {
+    if (!extension_settings.ds_cache_v12) {
+        extension_settings.ds_cache_v12 = {
             enabled: true,
             toastSys: true,
             toastLore: true,
@@ -18,7 +18,7 @@ function initSettings() {
             chats: {} 
         };
     }
-    Settings = extension_settings.ds_cache_v11;
+    Settings = extension_settings.ds_cache_v12;
     if (!Settings.chats) Settings.chats = {}; 
 }
 
@@ -31,7 +31,7 @@ function safeSave() {
 }
 
 // ==========================================
-// 深度日誌系統 (軍用級)
+// 深度日誌系統
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
@@ -41,10 +41,10 @@ function logAt(level, type, msg) {
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     const fullMsg = `[${time}] ${msg}`;
     
-    if (type === 'warn') console.warn(`%c[DS Cache v11.0] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    else if (type === 'error') console.error(`[DS Cache v11.0] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[DS Cache v11.0] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
-    else console.log(`%c[DS Cache v11.0] ✅ ${msg}`, 'color: #00ff00;');
+    if (type === 'warn') console.warn(`%c[DS Cache v12] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    else if (type === 'error') console.error(`[DS Cache v12] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[DS Cache v12] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
+    else console.log(`%c[DS Cache v12] ✅ ${msg}`, 'color: #00ff00;');
     
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -59,7 +59,7 @@ const Logger = {
     map: (msg, level = LogLevels.BASIC) => logAt(level, 'map', msg),
     error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
     normalize: (text) => text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
-    getSeqString: (seq) => seq.map(m => `[${m.tag}](${m.len})`).join(' ➔ ')
+    getSeqString: (seq) => seq.map(m => `[${m.tag}]`).join(' ➔ ')
 };
 
 // ==========================================
@@ -87,16 +87,15 @@ function getChatState(chatKeyInfo) {
 
 function addTopMenuButton() {
     if ($('#ds-top-reset-btn').length === 0) {
-        const btn = $(`<li id="ds-top-reset-btn" class="menu_button interactable" title="重置當前 DS 緩存排序"><span class="fa-solid fa-rotate-right"></span> 重置當前 DS 緩存</li>`);
+        const btn = $(`<li id="ds-top-reset-btn" class="menu_button interactable" title="重置當前 DS 緩存排序"><span class="fa-solid fa-rotate-right"></span> 廠級清空 DS 緩存</li>`);
         btn.on('click', () => {
+            if(!confirm("確定要完全清空當前聊天的緩存排序狀態嗎？(這將使所有提示詞回到 ST 預設的頂部排序)")) return;
             const key = getChatKey().key;
             delete Settings.chats[key];
             safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success("當前聊天的緩存排序已重置並清空！", "DS Cache");
-            Logger.warn(`[手動觸發] 用戶透過頂部擴展選單清空了當前存檔: ${key}`);
+            if (typeof toastr !== 'undefined') toastr.success("當前聊天的緩存排序已清空！", "DS Cache");
+            Logger.warn(`[手動觸發] 用戶清空了當前存檔: ${key}`);
         });
-        
-        // 嘗試加入 ST 原生的魔杖選單或右側選單
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
         else if ($('#right-nav-extensions').length > 0) $('#right-nav-extensions').append(btn);
     }
@@ -139,9 +138,6 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
     return assistantObj;
 }
 
-// ==========================================
-// 解析 ST 數據流
-// ==========================================
 function parseSTStream(stream) {
     const sysMsgs = [];
     const chatMsgs = [];
@@ -187,24 +183,22 @@ function askUserForResetAsync(dropPercent, mapInfo) {
         const overlay = $('<div style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:999999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(3px);"></div>');
         const box = $('<div style="background:#1e1e1e;border:2px solid #f44336;padding:25px;border-radius:12px;max-width:600px;text-align:center;color:#fff;font-size:15px;box-shadow: 0 10px 25px rgba(0,0,0,0.8);font-family:sans-serif;"></div>');
         
-        const title = $('<h2 style="color:#f44336;margin-top:0;">🚨 緩存嚴重斷裂預警 🚨</h2>');
-        const text = $(`<p style="text-align:left;line-height:1.6;font-size:14px;">檢測到陣列前排發生了人為變更。<br>這將導致 KV 緩存鏈條斷裂，預計 <b>${dropPercent}%</b> 的歷史對話緩存將全部失效 (需重新運算)！</p>`);
+        const title = $('<h2 style="color:#f44336;margin-top:0;">🚨 緩存斷裂預警 (原位同步中) 🚨</h2>');
+        const text = $(`<p style="text-align:left;line-height:1.6;font-size:14px;">檢測到陣列前排發生了變更。<br>這將導致 KV 緩存鏈條斷裂，預計 <b>${dropPercent}%</b> 的歷史對話緩存將失效並重新運算。<br><br><b>插件已自動完成時序陣列的原位更新與補位。</b>請問要接受本次修改嗎？</p>`);
         
         const mapDiv = $(`<div style="text-align:left; background:#000; padding:10px; border-radius:5px; font-family:monospace; font-size:11px; color:#00e5ff; margin:10px 0; overflow-x:auto;">斷裂詳情：<br>${mapInfo}</div>`);
 
         const btnContainer = $('<div style="margin-top:25px;display:flex;justify-content:space-between;gap:10px;"></div>');
         
-        const btnReset = $('<button style="flex:1;background:#4CAF50;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">🔄 廠級重置排序<br><span style="font-size:11px;font-weight:normal;">(清除碎片，重新排列)</span></button>');
+        const btnReset = $('<button style="flex:1;background:#4CAF50;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">🔄 確認同步<br><span style="font-size:11px;font-weight:normal;">(接受原位修改並發送)</span></button>');
         const btnAbort = $('<button style="flex:1;background:#f44336;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">🛑 攔截發送<br><span style="font-size:11px;font-weight:normal;">(中止生成去復原)</span></button>');
-        const btnIgnore = $('<button style="flex:1;background:#555;color:white;padding:12px;border:none;border-radius:6px;cursor:pointer;font-weight:bold;font-size:14px;transition:0.2s;">⚠️ 強行發送<br><span style="font-size:11px;font-weight:normal;">(容忍運算消耗)</span></button>');
 
-        [btnReset, btnAbort, btnIgnore].forEach(b => b.hover(function(){$(this).css('opacity','0.8')}, function(){$(this).css('opacity','1')}));
+        [btnReset, btnAbort].forEach(b => b.hover(function(){$(this).css('opacity','0.8')}, function(){$(this).css('opacity','1')}));
 
         btnReset.click(() => { overlay.remove(); resolve('reset'); });
         btnAbort.click(() => { overlay.remove(); resolve('abort'); });
-        btnIgnore.click(() => { overlay.remove(); resolve('ignore'); });
 
-        btnContainer.append(btnReset, btnAbort, btnIgnore);
+        btnContainer.append(btnReset, btnAbort);
         box.append(title, text, mapDiv, btnContainer);
         overlay.append(box);
         $('body').append(overlay);
@@ -212,7 +206,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
 }
 
 // ==========================================
-// 核心處理器 (v11 絕對時序排列引擎)
+// 核心處理器 (v12 統一對象池映射引擎)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -224,19 +218,25 @@ async function interceptAndRestructurePrompt(data) {
         const stream = data.chat;
 
         const { sysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
-
         Logger.log(`=================================================`, LogLevels.BASIC);
-        Logger.log(`[請求截獲] 處理存檔: ${chatKeyInfo.label}`, LogLevels.BASIC);
 
-        // =======================================================
-        // 第一階段：構建平鋪對比序列 (嚴格保留原位，新增附加尾部)
-        // =======================================================
+        // 建立 ST 當前的扁平歷史池
+        const flatHistoryPool = [];
+        for(let t of historyTurns) {
+            flatHistoryPool.push(t.user);
+            if(t.assistant) flatHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
+        }
+
         let rawFrozenSequence = [];
         const sysMsgsPool = [...sysMsgs];
+        const remainingHistory = [...flatHistoryPool];
         
-        // 1. 原位更新與刪除檢測
+        // ---------------------------------------------------------
+        // 第一階段：遍歷凍結陣列，進行原位同步 (SYS/USER/AI)
+        // ---------------------------------------------------------
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const item = state.frozenSequence[i];
+            
             if (item.tag === 'SYS') {
                 let bestIdx = -1, bestScore = 0;
                 for (let j = 0; j < sysMsgsPool.length; j++) {
@@ -244,56 +244,48 @@ async function interceptAndRestructurePrompt(data) {
                     if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
                 if (bestScore === 1) { 
-                    rawFrozenSequence.push(item); 
+                    rawFrozenSequence.push(sysMsgsPool[bestIdx]); 
                     sysMsgsPool.splice(bestIdx, 1); 
-                } else if (bestScore > 0.4) { // 放寬閾值，容忍大幅度世界書修改
+                } else if (bestScore > 0.2) { // 寬容度極高的原位修改檢測
                     const matchedItem = sysMsgsPool[bestIdx];
                     rawFrozenSequence.push(matchedItem); 
                     sysMsgsPool.splice(bestIdx, 1);
-                    Logger.warn(`[SYS 同步] 原位修改: ${matchedItem.content.substring(0,25).replace(/\n/g, '')}...`, LogLevels.DEBUG);
+                    Logger.warn(`[SYS 同步] 原位修改: ${matchedItem.content.substring(0,20).replace(/\n/g, '')}...`, LogLevels.DEBUG);
                 } else {
-                    Logger.warn(`[SYS 同步] 原位刪除: ${item.content.substring(0,25).replace(/\n/g, '')}... (後方陣列上移)`, LogLevels.DEBUG);
-                    // 不 push，等於被刪除抽出，後續自然上移補位
+                    Logger.warn(`[SYS 同步] 原位刪除: 某提示詞被移除，後方陣列自動上移。`, LogLevels.DEBUG);
                 }
-            } else { 
-                rawFrozenSequence.push(item); 
-            }
-        }
-
-        // 2. 歷史同步對接
-        let lastFrozenUserNorm = [...rawFrozenSequence].reverse().find(m => m.tag === 'USER')?.norm;
-        let startIdx = 0;
-        if (lastFrozenUserNorm) {
-            for (let i = 0; i < historyTurns.length; i++) {
-                if (historyTurns[i].user.norm === lastFrozenUserNorm) {
-                    startIdx = i + 1;
-                    if (historyTurns[i].assistant) {
-                        const cleanAssistant = stripPrefillFromAssistant(historyTurns[i].assistant, state.lastPrefills || []);
-                        // 確保這個 AI 回覆有被更新在凍結序列中
-                        for (let k = rawFrozenSequence.length - 1; k >= 0; k--) {
-                            if (rawFrozenSequence[k].tag === 'SYS') break;
-                            if (rawFrozenSequence[k].tag === 'AI') { rawFrozenSequence[k] = cleanAssistant; break; }
-                            if (rawFrozenSequence[k].tag === 'USER') { rawFrozenSequence.splice(k + 1, 0, cleanAssistant); break; }
-                        }
-                    }
-                    break;
+            } 
+            else if (item.tag === 'USER' || item.tag === 'AI') {
+                let bestIdx = -1, bestScore = 0;
+                for (let j = 0; j < remainingHistory.length; j++) {
+                    if (item.tag !== remainingHistory[j].tag) continue;
+                    const score = getSimilarity(item.norm, remainingHistory[j].norm);
+                    if (score > bestScore) { bestScore = score; bestIdx = j; }
+                }
+                if (bestScore > 0.3) {
+                    rawFrozenSequence.push(remainingHistory[bestIdx]);
+                    remainingHistory.splice(bestIdx, 1);
+                } else {
+                    Logger.warn(`[歷史同步] 偵測到歷史對話被刪除，自動抽出上移補位。`, LogLevels.DEBUG);
                 }
             }
         }
 
-        // 寫入新的歷史對話
-        for (let i = startIdx; i < historyTurns.length; i++) {
-            rawFrozenSequence.push(historyTurns[i].user);
-            if (historyTurns[i].assistant) rawFrozenSequence.push(stripPrefillFromAssistant(historyTurns[i].assistant, state.lastPrefills || []));
+        // ---------------------------------------------------------
+        // 第二階段：附加新生代數據 (保持交錯排序)
+        // ---------------------------------------------------------
+        // 1. 附加新產生的歷史對話 (對話1的AI回覆等)
+        for (let h of remainingHistory) {
+            rawFrozenSequence.push(h);
         }
 
-        // 3. 處理「新增」的 SYS (新世界書/預設) -> 嚴格附加在上一輪對話的尾部！
+        // 2. 附加新產生的 SYS 提示詞 (新增加的世界書/預設) -> 完美排在對話2的User前面
         for (let sys of sysMsgsPool) {
             rawFrozenSequence.push(sys);
-            Logger.log(`[SYS 同步] 新增提示詞附加至歷史尾部: ${sys.content.substring(0,25).replace(/\n/g, '')}...`, LogLevels.DEBUG);
+            Logger.log(`[SYS 同步] 新增提示詞附加至歷史尾部: ${sys.content.substring(0,20).replace(/\n/g, '')}...`, LogLevels.DEBUG);
         }
 
-        // 嚴格去重
+        // 去重
         let dedupedSequence = [];
         const seenSysNorms = new Set();
         for (const item of rawFrozenSequence) {
@@ -304,16 +296,16 @@ async function interceptAndRestructurePrompt(data) {
             dedupedSequence.push(item);
         }
 
-        // 構建擬態流 (預測最終發送形態)
+        // 構建擬態流 (包含當前回合用戶輸入與預填充)
         const proposedStream = [...dedupedSequence];
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
-        Logger.map(`當前擬態排序: \n${Logger.getSeqString(proposedStream)}`, LogLevels.BASIC);
+        Logger.map(`當前時序拓撲圖: \n${Logger.getSeqString(proposedStream)}`, LogLevels.BASIC);
 
-        // =========================================================
-        // 第二階段：智能防誤報 KV 緩存斷裂計算器
-        // =========================================================
+        // ---------------------------------------------------------
+        // 第三階段：智能防誤報 KV 緩存斷裂計算器
+        // ---------------------------------------------------------
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
         let mapInfoText = "無變更";
@@ -325,21 +317,17 @@ async function interceptAndRestructurePrompt(data) {
             let breakIndex = -1;
             for (let i = 0; i < Math.min(L.length, P.length); i++) {
                 if (L[i].role !== P[i].role || L[i].norm !== P[i].norm) {
-                    breakIndex = i;
-                    break;
+                    breakIndex = i; break;
                 }
             }
             if (breakIndex === -1) breakIndex = P.length;
 
             let isPureContextShift = false;
-            
-            // Context Shift 嗅探
             if (breakIndex < L.length && breakIndex < P.length) {
                 let isAtHistoryStart = true;
                 for (let i = 0; i < breakIndex; i++) {
                     if (L[i].tag !== 'SYS' && L[i].role !== 'system') { isAtHistoryStart = false; break; }
                 }
-
                 if (isAtHistoryStart) {
                     for (let x = breakIndex + 1; x < L.length; x++) {
                         if (L[x].role === P[breakIndex].role && L[x].norm === P[breakIndex].norm) {
@@ -352,7 +340,6 @@ async function interceptAndRestructurePrompt(data) {
                 }
             }
 
-            // 計算浪費的 Token 長度
             let wastedTokensLen = 0;
             let proposedTotalLen = 0;
             for (let i = 0; i < P.length; i++) {
@@ -365,7 +352,7 @@ async function interceptAndRestructurePrompt(data) {
 
             if (isPureContextShift) {
                 wastedTokensLen = 0; 
-                Logger.log(`[緩存分析] 偵測到自然對話推移 (Context Shift)，智能抑制彈窗`, LogLevels.DEBUG);
+                Logger.log(`[緩存分析] 偵測到自然對話推移，智能抑制彈窗`, LogLevels.DEBUG);
             }
 
             let dropRatio = proposedTotalLen === 0 ? 0 : (wastedTokensLen / proposedTotalLen);
@@ -378,9 +365,9 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // =========================================================
-        // 第三階段：決策執行
-        // =========================================================
+        // ---------------------------------------------------------
+        // 第四階段：決策與覆蓋 (v12 核心修復區)
+        // ---------------------------------------------------------
         let decision = 'ignore';
         if (requireResetConfirm) {
             decision = await askUserForResetAsync(dropPercentStr, mapInfoText);
@@ -394,22 +381,9 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         if (decision === 'reset') {
-            Logger.warn('[廠級重置排序] 放棄時序凍結，將所有系統提示推至頂部...', LogLevels.BASIC);
-            let resetSequence = [];
-            for (let sys of sysMsgs) resetSequence.push(sys);
-            for (let turn of historyTurns) {
-                resetSequence.push(turn.user);
-                if (turn.assistant) resetSequence.push(turn.assistant);
-            }
-            dedupedSequence = [];
-            seenSysNorms.clear();
-            for (let item of resetSequence) {
-                if (item.tag === 'SYS') {
-                    if (seenSysNorms.has(item.norm)) continue;
-                    seenSysNorms.add(item.norm);
-                }
-                dedupedSequence.push(item);
-            }
+            // 【v12 史詩修復】：絕對不再打亂 dedupedSequence！
+            // 用戶點擊了「確認同步」，代表接受緩存流失，我們直接讓已經排好序的 dedupedSequence 生效！
+            Logger.warn('[確認同步] 用戶接受緩存流失，已按時序規則原位更新/增刪提示詞。', LogLevels.BASIC);
         }
 
         // 寫入最終狀態
@@ -460,7 +434,7 @@ function renderChatsUI() {
         const html = `
             <div style="display:flex; justify-content:space-between; align-items:center; background:#222; padding:5px; margin-bottom:5px; border-radius:4px;">
                 <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:75%;" title="${chat.label}">${chat.label}</span>
-                <button class="menu_button interactable ds-reset-btn" data-key="${key}" style="font-size:0.8em; padding:2px 5px;">重置</button>
+                <button class="menu_button interactable ds-reset-btn" data-key="${key}" style="font-size:0.8em; padding:2px 5px;">清空</button>
             </div>
         `;
         container.append(html);
@@ -470,7 +444,7 @@ function renderChatsUI() {
         const key = $(this).data('key');
         delete Settings.chats[key];
         safeSave(); renderChatsUI();
-        if (typeof toastr !== 'undefined') toastr.success("已重置該存檔");
+        if (typeof toastr !== 'undefined') toastr.success("已清空該存檔排序");
     });
 }
 
@@ -479,7 +453,7 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 缓存优化 (v11.0 絕對時序版)</b>
+                <b>Deepseek 缓存优化 (v12.0 絕對時序原位同步版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
@@ -498,7 +472,7 @@ async function setupUI() {
                         <option value="0" ${Settings.logLevel===0?'selected':''}>關閉</option>
                         <option value="1" ${Settings.logLevel===1?'selected':''}>拓撲圖與簡要</option>
                         <option value="2" ${Settings.logLevel===2?'selected':''}>詳細追蹤</option>
-                        <option value="3" ${Settings.logLevel===3?'selected':''}>極限除錯(軍用級)</option>
+                        <option value="3" ${Settings.logLevel===3?'selected':''}>極限除錯</option>
                     </select>
                 </div>
 
@@ -506,7 +480,7 @@ async function setupUI() {
                 <b style="font-size:0.9em;">📂 存檔緩存管理區：</b>
                 <div id="ds-chat-list-container" style="max-height:150px; overflow-y:auto; margin:5px 0; border:1px solid #444; padding:5px;"></div>
                 
-                <button id="ds-cache-factory-reset" class="menu_button" style="width:100%;margin:5px 0;background:#722;">⚠️ 清空所有存檔數據</button>
+                <button id="ds-cache-factory-reset" class="menu_button" style="width:100%;margin:5px 0;background:#722;">⚠️ 清空所有存檔數據 (還原 ST 默認排序)</button>
                 <button id="ds-cache-clearlog" class="menu_button" style="width:100%;margin:5px 0;">🗑️ 清空日誌面板</button>
                 <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:180px;background:#0d0d0d;color:#00e5ff;font-family:Consolas,monospace;font-size:10px;white-space:pre-wrap;"></textarea>
             </div>
@@ -522,7 +496,7 @@ async function setupUI() {
         $('#ds-cache-loglevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
         
         $('#ds-cache-factory-reset').on('click', () => {
-            if (confirm("清除所有存檔的緩存狀態？")) { Settings.chats = {}; safeSave(); renderChatsUI(); }
+            if (confirm("這將使所有提示詞回到 ST 預設的頂部排序！確定要清除嗎？")) { Settings.chats = {}; safeSave(); renderChatsUI(); }
         });
         $('#ds-cache-clearlog').on('click', () => { if (Logger._uiTextarea) Logger._uiTextarea.value = ''; });
         
@@ -535,7 +509,6 @@ jQuery(async () => {
         initSettings(); 
         await setupUI();
         
-        // 綁定 UI 生成後加入頂部選單
         setTimeout(addTopMenuButton, 2000);
         if (eventSource) eventSource.on(event_types.CHAT_CHANGED, addTopMenuButton);
 
@@ -543,8 +516,8 @@ jQuery(async () => {
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
                 eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             }
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('手動刪除歷史對話將引發緩存重組！', Settings.toastHistory));
-            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('修改歷史對話將引發緩存重組！', Settings.toastHistory));
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('歷史對話被刪除！將在原位進行補位。', Settings.toastHistory));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('歷史對話已修改！將在原位進行熱更新。', Settings.toastHistory));
         }
 
         $(document).on('change select2:select input focusout', '#chat_completion_preset, .preset_select, select[id*="preset"], #main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt', function() {
@@ -555,7 +528,7 @@ jQuery(async () => {
             triggerWarning('世界書已變更！將在原位進行熱更新/附加。', Settings.toastLore);
         });
 
-        Logger.log('══════ v11.0 絕對時序同步版 就緒 ══════', LogLevels.BASIC);
+        Logger.log('══════ v12.0 絕對時序原位同步版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
