@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 日志系统
+// 日志系统（增强差异对比）
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 let logLevel = 2;
@@ -10,9 +10,9 @@ function logAt(level, type, msg) {
     if (logLevel < level) return;
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
-    if (type === 'warn') console.warn(`%c[DS Cache v6.9] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    else if (type === 'error') console.error(`[DS Cache v6.9] 🔴 ${msg}`);
-    else console.log(`%c[DS Cache v6.9] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+    if (type === 'warn') console.warn(`%c[DS Cache v6.10] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    else if (type === 'error') console.error(`[DS Cache v6.10] 🔴 ${msg}`);
+    else console.log(`%c[DS Cache v6.10] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
         Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
@@ -29,7 +29,7 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机 v6.9
+// 状态机 v6.10
 // ==========================================
 const CacheState = {
     enabled: true,
@@ -40,97 +40,81 @@ const CacheState = {
 };
 
 // ==========================================
-// 消息分类（不变）
+// 判断是否为系统注入提示词（不依赖 originalChat）
 // ==========================================
-function classifyMessage(msg, originalChat) {
-    const exactIndex = originalChat.findIndex(m => m.mes === msg.content);
-    if (exactIndex !== -1) {
-        const orig = originalChat[exactIndex];
-        if (orig.is_user) return { isRealUser: true, isRealAI: false, isInstructional: false, matched: true };
-        if (!orig.is_system && orig.role === 'assistant') return { isRealUser: false, isRealAI: true, isInstructional: false, matched: true };
-        if (orig.is_system) return { isRealUser: false, isRealAI: false, isInstructional: true, matched: true };
-        return { isRealUser: false, isRealAI: false, isInstructional: true, matched: true };
-    }
-    return { isRealUser: false, isRealAI: false, isInstructional: true, matched: false };
-}
-
-function createMessageObj(msg, cls, uid) {
-    return {
-        role: msg.role,
-        content: msg.content,
-        isRealUser: cls.isRealUser,
-        isRealAI: cls.isRealAI,
-        isInstructional: cls.isInstructional,
-        uid: uid || `${msg.role}:${Logger.simpleHash(msg.content)}`,
-        norm: Logger.normalize(msg.content),
-        matched: cls.matched,
-    };
+function isSystemPrompt(content) {
+    const pattern = /<\w+|<\/\w+|\{\{setvar|\[SYSTEM:|\[World Loading|<lore>|<\/lore>|<context>|<\/context>|# RULE|core_rules|Absolute zero/;
+    return pattern.test(content);
 }
 
 // ==========================================
-// 增强过程流 - 初始化时严格丢弃非 system 背景
+// 处理请求流（基于位置和内容特征，不再依赖 originalChat）
 // ==========================================
-function processStream(stream, originalChat) {
-    // 预填充检测
+function processStream(stream) {
+    // 1. 寻找预填充：尾部连续的 assistant 消息（且内容不包含 XML 标签，排除系统注入）
     let prefillStart = stream.length;
     while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
+        const content = stream[prefillStart - 1].content;
+        if (isSystemPrompt(content)) break; // 系统注入的 assistant 不算预填充
         prefillStart--;
     }
-    let hasRealReply = false;
-    for (let i = prefillStart; i < stream.length; i++) {
-        const cls = classifyMessage(stream[i], originalChat);
-        if (cls.isRealAI) { hasRealReply = true; break; }
-    }
-    if (hasRealReply) prefillStart = stream.length;
     const prefills = stream.slice(prefillStart);
     const nonPrefill = stream.slice(0, prefillStart);
 
-    // 分类所有非预填充
-    const classified = nonPrefill.map(msg => {
-        const cls = classifyMessage(msg, originalChat);
-        return { msg, cls, obj: createMessageObj(msg, cls) };
-    });
-
-    // 找到所有真实用户消息，仅保留最后一个作为当前用户输入，其余强制转为提示词（会被初始化丢弃）
-    const realUserIndices = [];
-    classified.forEach((c, i) => {
-        if (c.cls.isRealUser && c.msg.role === 'user') realUserIndices.push(i);
-    });
+    // 2. 找到当前用户输入：最后一个 role === 'user' 且不是系统提示词的消息
     let currentUserMsg = null;
-    if (realUserIndices.length > 0) {
-        const lastIdx = realUserIndices[realUserIndices.length - 1];
-        currentUserMsg = classified[lastIdx].obj;
-        for (let i = 0; i < realUserIndices.length - 1; i++) {
-            const idx = realUserIndices[i];
-            classified[idx].cls.isRealUser = false;
-            classified[idx].cls.isInstructional = true;
-            classified[idx].obj.isRealUser = false;
-            classified[idx].obj.isInstructional = true;
+    const others = [];
+    let foundCurrentUser = false;
+    for (let i = nonPrefill.length - 1; i >= 0; i--) {
+        const msg = nonPrefill[i];
+        if (!foundCurrentUser && msg.role === 'user' && !isSystemPrompt(msg.content)) {
+            currentUserMsg = { role: msg.role, content: msg.content };
+            foundCurrentUser = true;
+        } else {
+            others.unshift({ role: msg.role, content: msg.content });
         }
     }
 
-    // 构建 others 列表（排除当前用户输入）
-    const others = [];
-    for (const c of classified) {
-        if (c.obj === currentUserMsg) continue;
-        others.push(c.obj);
+    // 3. 分类 others 为背景或对话历史
+    const bgCandidates = [];
+    const dialogue = [];
+    for (const msg of others) {
+        if (msg.role === 'system' || isSystemPrompt(msg.content)) {
+            bgCandidates.push(msg);
+        } else {
+            dialogue.push(msg); // 真实对话
+        }
+    }
+
+    // 背景去重（基于标准化内容）
+    const seen = new Set();
+    const dedupBg = [];
+    for (const msg of bgCandidates) {
+        const norm = Logger.normalize(msg.content);
+        if (!seen.has(norm)) {
+            seen.add(norm);
+            dedupBg.push(msg);
+        } else {
+            Logger.log(`[背景去重] 跳过: ${msg.role}: ${msg.content.substring(0, 40)}...`, LogLevels.DEBUG);
+        }
     }
 
     // 诊断日志
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[originalChat 尾部] 共 ${originalChat.length} 条`, LogLevels.DEBUG);
-        originalChat.slice(-3).forEach((m, i) => Logger.log(`  ${originalChat.length-3+i}: role=${m.role} is_user=${m.is_user} mes="${m.mes?.substring(0,30)}..."`, LogLevels.DEBUG));
-        Logger.log('[过程分类]', LogLevels.DEBUG);
-        classified.forEach((c, i) => {
-            Logger.log(`  [${i}] ${c.msg.role} | realUser:${c.cls.isRealUser} realAI:${c.cls.isRealAI} instr:${c.cls.isInstructional} | ${c.msg.content.substring(0, 40)}...`, LogLevels.DEBUG);
+        Logger.log('[stream 完整内容]', LogLevels.DEBUG);
+        stream.forEach((m, i) => {
+            Logger.log(`  [${i}] ${m.role}: ${m.content.substring(0, 50)}...`, LogLevels.DEBUG);
         });
+        Logger.log('[背景/对话分离]', LogLevels.DEBUG);
+        dedupBg.forEach(m => Logger.log(`  背景: ${m.role}: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
+        dialogue.forEach(m => Logger.log(`  对话: ${m.role}: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
     }
 
-    return { currentUserMsg, others, prefills };
+    return { currentUserMsg, dedupBg, dialogue, prefills };
 }
 
 // ==========================================
-// 核心拦截器 - 初始化只收集 system 背景
+// 核心拦截器（初始化逻辑简化）
 // ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
@@ -146,58 +130,22 @@ function interceptAndRestructurePrompt(data) {
 
         if (!data?.chat?.length) return;
         const stream = data.chat;
-        const context = getContext();
-        const originalChat = context?.chat ?? [];
+        const { currentUserMsg, dedupBg, dialogue, prefills } = processStream(stream);
 
-        const { currentUserMsg, others, prefills } = processStream(stream, originalChat);
-
-        // 初始化：背景块只包含 system 角色且非真实用户的消息，丢弃一切对话历史
+        // 初始化：背景块直接采用当前去重背景，对话历史为空
         if (!CacheState.backgroundBlock) {
-            // 收集背景：从 others 中挑选 role === 'system' 且 isInstructional 且不是 realUser 的消息
-            const validBg = others.filter(m => m.role === 'system' && m.isInstructional && !m.isRealUser);
-            // 背景去重
-            const seenBgNorm = new Set();
-            const dedupBg = [];
-            for (const m of validBg) {
-                if (!seenBgNorm.has(m.norm)) {
-                    seenBgNorm.add(m.norm);
-                    dedupBg.push(m);
-                } else {
-                    Logger.log(`[初始化背景去重] 跳过: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG);
-                }
-            }
-            // 丢弃其他所有消息（留到日志）
-            const discarded = others.filter(m => !validBg.includes(m));
-            if (discarded.length > 0 && logLevel >= LogLevels.DEBUG) {
-                Logger.log('[初始化丢弃历史消息]', LogLevels.DEBUG);
-                discarded.forEach(m => Logger.log(`  丢弃: role=${m.role} realUser=${m.isRealUser} instr=${m.isInstructional} | ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
-            }
-
             CacheState.backgroundBlock = dedupBg;
-            CacheState.dialogueHistory = [];  // 清空历史
+            CacheState.dialogueHistory = [];
             Logger.log(`[初始化] 背景:${dedupBg.length} 对话:0（已丢弃历史）`, LogLevels.BASIC);
             buildAndApply(stream, dedupBg, [], currentUserMsg, prefills);
             updateStats(true);
             return;
         }
 
-        // 常规运行：背景相似度检查
-        const currentBg = others.filter(m => m.isInstructional);
-        const currentDialogue = others.filter(m => !m.isInstructional);
-
-        // 背景去重
-        const seenBgNorm = new Set();
-        const dedupBg = [];
-        for (const m of currentBg) {
-            if (!seenBgNorm.has(m.norm)) {
-                seenBgNorm.add(m.norm);
-                dedupBg.push(m);
-            }
-        }
-
+        // 背景相似度检测
         const bgSim = computeSetSimilarity(
-            new Set(CacheState.backgroundBlock.map(m => m.norm)),
-            new Set(dedupBg.map(m => m.norm))
+            new Set(CacheState.backgroundBlock.map(m => Logger.normalize(m.content))),
+            new Set(dedupBg.map(m => Logger.normalize(m.content)))
         );
         Logger.log(`[背景相似度] ${(bgSim*100).toFixed(1)}%`, LogLevels.DEBUG);
         if (bgSim < 0.9) {
@@ -205,11 +153,12 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        const newDial = findNewEntries(CacheState.dialogueHistory, currentDialogue);
+        // 对话增量
+        const newDial = findNewEntries(CacheState.dialogueHistory, dialogue);
         if (newDial.length > 0) Logger.warn(`[对话增量] +${newDial.length} 条`, LogLevels.DETAILED);
         const updatedDialogue = CacheState.dialogueHistory.concat(newDial);
 
-        if (currentDialogue.length < CacheState.dialogueHistory.length * 0.7) {
+        if (dialogue.length < CacheState.dialogueHistory.length * 0.7) {
             triggerResetAlert('对话历史被大幅删除，建议重置。');
             return;
         }
@@ -228,7 +177,7 @@ function buildAndApply(stream, bg, dialogue, curUser, prefills) {
     bg.forEach(b => final.push({ role: b.role, content: b.content }));
     dialogue.forEach(d => final.push({ role: d.role, content: d.content }));
     if (curUser) final.push({ role: curUser.role, content: curUser.content });
-    prefills.forEach(p => final.push(p.role === 'assistant' ? p : { role: p.role, content: p.content }));
+    prefills.forEach(p => final.push({ role: p.role, content: p.content }));
 
     if (logLevel >= LogLevels.DEBUG) {
         Logger.log(`[最终序列] bg:${bg.length} dl:${dialogue.length} usr:${curUser?1:0} pf:${prefills.length}`, LogLevels.DEBUG);
@@ -238,14 +187,14 @@ function buildAndApply(stream, bg, dialogue, curUser, prefills) {
 }
 
 function findNewEntries(oldSeq, newSeq) {
-    const oldUids = new Set(oldSeq.map(m => m.uid));
-    return newSeq.filter(m => !oldUids.has(m.uid));
+    const oldUids = new Set(oldSeq.map(m => `${m.role}:${Logger.simpleHash(m.content)}`));
+    return newSeq.filter(m => !oldUids.has(`${m.role}:${Logger.simpleHash(m.content)}`));
 }
-function computeSetSimilarity(a, b) {
-    if (a.size === 0 && b.size === 0) return 1;
-    const union = new Set([...a, ...b]);
+function computeSetSimilarity(setA, setB) {
+    if (setA.size === 0 && setB.size === 0) return 1;
+    const union = new Set([...setA, ...setB]);
     let intersection = 0;
-    for (const item of a) if (b.has(item)) intersection++;
+    for (const item of setA) if (setB.has(item)) intersection++;
     return union.size === 0 ? 1 : intersection / union.size;
 }
 
@@ -311,28 +260,21 @@ function performReset() {
 }
 
 // ==========================================
-// 扩展菜单注册（ST 1.17 标准）
+// 扩展菜单注册（尝试所有已知方式）
 // ==========================================
 function registerMenuItems() {
+    const menuItem = { label: '重置DS缓存前缀', callback: performReset };
     try {
-        // 尝试使用 SillyTavern 全局 API
         if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext().addExtensionMenu) {
-            SillyTavern.getContext().addExtensionMenu([
-                { label: '重置DS缓存前缀', callback: performReset }
-            ]);
-            Logger.log('[菜单] 已通过 addExtensionMenu 注册', LogLevels.BASIC);
+            SillyTavern.getContext().addExtensionMenu([menuItem]);
+            Logger.log('[菜单] 已通过 SillyTavern API 注册', LogLevels.BASIC);
         } else if (typeof window['registerExtensionsMenu'] === 'function') {
-            window['registerExtensionsMenu']([
-                { label: '重置DS缓存前缀', callback: performReset }
-            ]);
+            window['registerExtensionsMenu']([menuItem]);
             Logger.log('[菜单] 已通过 registerExtensionsMenu 注册', LogLevels.BASIC);
         } else {
-            // 兜底：extension_settings，需要用户在扩展面板勾选
             extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
-            extension_settings['ds-cache'].menu = [
-                { label: '重置DS缓存前缀', callback: performReset }
-            ];
-            Logger.warn('[菜单] 采用 extension_settings 注册（需在扩展面板中勾选“显示菜单”）', LogLevels.BASIC);
+            extension_settings['ds-cache'].menu = [menuItem];
+            Logger.warn('[菜单] 采用 extension_settings 注册（需在扩展面板勾选“显示菜单”）', LogLevels.BASIC);
         }
     } catch (e) {
         Logger.error('菜单注册失败', e);
@@ -346,11 +288,11 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v4-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>🧠 DS Cache Optimizer v6.9 (纯净背景)</b>
+            <b>🧠 DS Cache Optimizer v6.10 (内容分类)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:10px;">
-            <p>初始化仅保留 system 背景，丢弃所有历史对话，确保新预设序列整洁。</p>
+            <p>完全基于内容特征识别系统提示词，摆脱 originalChat 依赖，精确分离背景与对话。</p>
             <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
             <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
             <div style="margin:8px 0;">
@@ -382,5 +324,5 @@ jQuery(async () => {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         Logger.log('[系统] 钩子已挂载', LogLevels.BASIC);
     } else Logger.error('无法挂载钩子');
-    Logger.log('══════ v6.9 就绪，纯净初始化 + 菜单修复 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.10 就绪，纯内容分类 + 菜单尝试 ══════', LogLevels.BASIC);
 });
