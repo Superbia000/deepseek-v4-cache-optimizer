@@ -1,9 +1,7 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
-// ==========================================
-// 日志系统（增强差异对比）
-// ==========================================
+// 日志系统（同前）
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 let logLevel = 2;
 function logAt(level, type, msg) {
@@ -20,155 +18,181 @@ function logAt(level, type, msg) {
 }
 const Logger = {
     _uiTextarea: null,
-    log: (msg, level = LogLevels.DETAILED) => logAt(level, 'log', msg),
-    warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
-    error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
-    simpleHash: (str) => { let hash = 0; for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; } return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8); },
-    estimateTokens: (text) => { if (!text) return 0; let tokens = 0; for (const ch of text) { const code = ch.charCodeAt(0); if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3040 && code <= 0x30FF) || (code >= 0xAC00 && code <= 0xD7AF)) tokens += 1; else tokens += 0.25; } return Math.ceil(tokens); },
+    log: (msg, lvl = LogLevels.DETAILED) => logAt(lvl, 'log', msg),
+    warn: (msg, lvl = LogLevels.BASIC) => logAt(lvl, 'warn', msg),
+    error: (msg, err, lvl = LogLevels.BASIC) => logAt(lvl, 'error', err ? `${msg} ${err}` : msg),
+    simpleHash: (str) => { let h = 0; for (let i = 0; i < str.length; i++) { h = ((h << 5) - h) + str.charCodeAt(i); h |= 0; } return (h >>> 0).toString(16).padStart(8, '0').slice(0, 8); },
+    estimateTokens: (text) => { if (!text) return 0; let t = 0; for (const ch of text) { const c = ch.charCodeAt(0); if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3040 && c <= 0x30FF) || (c >= 0xAC00 && c <= 0xD7AF)) t += 1; else t += 0.25; } return Math.ceil(t); },
     normalize: (text) => text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
 };
 
-// ==========================================
-// 状态机 v6.10
-// ==========================================
 const CacheState = {
     enabled: true,
     backgroundBlock: null,
     dialogueHistory: null,
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
     blocked: false,
+    pendingData: null, // 用于重置后重新处理
 };
 
-// ==========================================
-// 判断是否为系统注入提示词（不依赖 originalChat）
-// ==========================================
-function isSystemPrompt(content) {
-    const pattern = /<\w+|<\/\w+|\{\{setvar|\[SYSTEM:|\[World Loading|<lore>|<\/lore>|<context>|<\/context>|# RULE|core_rules|Absolute zero/;
-    return pattern.test(content);
+// 消息分类（同前）
+function classifyMessage(msg, originalChat) {
+    const idx = originalChat.findIndex(m => m.mes === msg.content);
+    if (idx !== -1) {
+        const orig = originalChat[idx];
+        if (orig.is_user) return { isRealUser: true, isRealAI: false, isInstructional: false, matched: true };
+        if (!orig.is_system && orig.role === 'assistant') return { isRealUser: false, isRealAI: true, isInstructional: false, matched: true };
+        if (orig.is_system) return { isRealUser: false, isRealAI: false, isInstructional: true, matched: true };
+        return { isRealUser: false, isRealAI: false, isInstructional: true, matched: true };
+    }
+    return { isRealUser: false, isRealAI: false, isInstructional: true, matched: false };
+}
+function createMessageObj(msg, cls, uid) {
+    return { role: msg.role, content: msg.content, isRealUser: cls.isRealUser, isRealAI: cls.isRealAI, isInstructional: cls.isInstructional, uid: uid || `${msg.role}:${Logger.simpleHash(msg.content)}`, norm: Logger.normalize(msg.content), matched: cls.matched };
 }
 
-// ==========================================
-// 处理请求流（基于位置和内容特征，不再依赖 originalChat）
-// ==========================================
-function processStream(stream) {
-    // 1. 寻找预填充：尾部连续的 assistant 消息（且内容不包含 XML 标签，排除系统注入）
+// 改进 processStream：正确处理预填充
+function processStream(stream, originalChat) {
+    // 从后向前找真实的 AI 回复边界
     let prefillStart = stream.length;
-    while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
-        const content = stream[prefillStart - 1].content;
-        if (isSystemPrompt(content)) break; // 系统注入的 assistant 不算预填充
-        prefillStart--;
+    // 辅助函数：检查给定消息是否是真实 AI 回复
+    const isRealAI = (msg) => {
+        const cls = classifyMessage(msg, originalChat);
+        return cls.isRealAI && msg.role === 'assistant';
+    };
+    // 扫描尾部 assistant，找到最后一个真实 AI 回复之后的预填充起点
+    let lastRealAIIndex = -1;
+    for (let i = stream.length - 1; i >= 0; i--) {
+        if (stream[i].role === 'assistant' && isRealAI(stream[i])) {
+            lastRealAIIndex = i;
+            break;
+        }
+    }
+    if (lastRealAIIndex !== -1) {
+        // 真实 AI 回复之后的消息才是预填充
+        prefillStart = lastRealAIIndex + 1;
+    } else {
+        // 没有真实 AI，则所有尾部 assistant 都可能作为预填充（但进一步检查是否有系统生成的预填充）
+        // 保持原样
     }
     const prefills = stream.slice(prefillStart);
     const nonPrefill = stream.slice(0, prefillStart);
 
-    // 2. 找到当前用户输入：最后一个 role === 'user' 且不是系统提示词的消息
+    // 分类所有非预填充
+    const classified = nonPrefill.map(msg => {
+        const cls = classifyMessage(msg, originalChat);
+        return { msg, cls, obj: createMessageObj(msg, cls) };
+    });
+
+    // 找到所有真实用户消息，仅保留最后一个作为当前用户输入，其余强制转为提示词
+    const realUserIndices = [];
+    classified.forEach((c, i) => {
+        if (c.cls.isRealUser && c.msg.role === 'user') realUserIndices.push(i);
+    });
     let currentUserMsg = null;
+    if (realUserIndices.length > 0) {
+        const lastIdx = realUserIndices[realUserIndices.length - 1];
+        currentUserMsg = classified[lastIdx].obj;
+        for (let i = 0; i < realUserIndices.length - 1; i++) {
+            const idx = realUserIndices[i];
+            classified[idx].cls.isRealUser = false;
+            classified[idx].cls.isInstructional = true;
+            classified[idx].obj.isRealUser = false;
+            classified[idx].obj.isInstructional = true;
+        }
+    }
+
     const others = [];
-    let foundCurrentUser = false;
-    for (let i = nonPrefill.length - 1; i >= 0; i--) {
-        const msg = nonPrefill[i];
-        if (!foundCurrentUser && msg.role === 'user' && !isSystemPrompt(msg.content)) {
-            currentUserMsg = { role: msg.role, content: msg.content };
-            foundCurrentUser = true;
-        } else {
-            others.unshift({ role: msg.role, content: msg.content });
-        }
-    }
-
-    // 3. 分类 others 为背景或对话历史
-    const bgCandidates = [];
-    const dialogue = [];
-    for (const msg of others) {
-        if (msg.role === 'system' || isSystemPrompt(msg.content)) {
-            bgCandidates.push(msg);
-        } else {
-            dialogue.push(msg); // 真实对话
-        }
-    }
-
-    // 背景去重（基于标准化内容）
-    const seen = new Set();
-    const dedupBg = [];
-    for (const msg of bgCandidates) {
-        const norm = Logger.normalize(msg.content);
-        if (!seen.has(norm)) {
-            seen.add(norm);
-            dedupBg.push(msg);
-        } else {
-            Logger.log(`[背景去重] 跳过: ${msg.role}: ${msg.content.substring(0, 40)}...`, LogLevels.DEBUG);
-        }
+    for (const c of classified) {
+        if (c.obj === currentUserMsg) continue;
+        others.push(c.obj);
     }
 
     // 诊断日志
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log('[stream 完整内容]', LogLevels.DEBUG);
-        stream.forEach((m, i) => {
-            Logger.log(`  [${i}] ${m.role}: ${m.content.substring(0, 50)}...`, LogLevels.DEBUG);
-        });
-        Logger.log('[背景/对话分离]', LogLevels.DEBUG);
-        dedupBg.forEach(m => Logger.log(`  背景: ${m.role}: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
-        dialogue.forEach(m => Logger.log(`  对话: ${m.role}: ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
+        Logger.log(`[originalChat 尾部] ${originalChat.length} 条，最后真实AI索引:${lastRealAIIndex}`, LogLevels.DEBUG);
+        originalChat.slice(-3).forEach((m, i) => Logger.log(`  ${originalChat.length-3+i}: role=${m.role} isUser=${m.is_user} mes="${m.mes?.substring(0,30)}..."`, LogLevels.DEBUG));
+        Logger.log('[过程分类]', LogLevels.DEBUG);
+        classified.forEach((c, i) => Logger.log(`  [${i}] ${c.msg.role} | rU:${c.cls.isRealUser} rAI:${c.cls.isRealAI} instr:${c.cls.isInstructional} | ${c.msg.content.substring(0, 40)}...`, LogLevels.DEBUG));
     }
-
-    return { currentUserMsg, dedupBg, dialogue, prefills };
+    return { currentUserMsg, others, prefills };
 }
 
-// ==========================================
-// 核心拦截器（初始化逻辑简化）
-// ==========================================
+// 核心拦截器，增加重置后重新处理
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
     if (CacheState.blocked) {
-        Logger.warn('[阻塞中] 保持原始消息', LogLevels.BASIC);
+        Logger.warn('[阻塞] 保持原样', LogLevels.BASIC);
+        CacheState.pendingData = data; // 存储以便重置后使用
         return;
     }
+    // 调用实际处理逻辑
+    _processRequest(data);
+}
 
+function _processRequest(data) {
     try {
         CacheState.stats.total++;
         Logger.log(`==============================`);
         Logger.log(`[请求 #${CacheState.stats.total}] 开始处理...`);
 
-        if (!data?.chat?.length) return;
         const stream = data.chat;
-        const { currentUserMsg, dedupBg, dialogue, prefills } = processStream(stream);
+        const context = getContext();
+        const originalChat = context?.chat ?? [];
 
-        // 初始化：背景块直接采用当前去重背景，对话历史为空
+        const { currentUserMsg, others, prefills } = processStream(stream, originalChat);
+
+        // 初始化：背景块仅收集 system 角色且是提示词的消息，丢弃一切对话历史
         if (!CacheState.backgroundBlock) {
+            const validBg = others.filter(m => m.role === 'system' && m.isInstructional && !m.isRealUser);
+            const seenBgNorm = new Set();
+            const dedupBg = [];
+            for (const m of validBg) {
+                if (!seenBgNorm.has(m.norm)) {
+                    seenBgNorm.add(m.norm);
+                    dedupBg.push(m);
+                } else Logger.log(`[背景去重] 跳过: ${m.content.substring(0, 30)}...`, LogLevels.DEBUG);
+            }
+            const discarded = others.filter(m => !validBg.includes(m));
+            if (discarded.length > 0 && logLevel >= LogLevels.DEBUG) {
+                Logger.log('[初始化丢弃]', LogLevels.DEBUG);
+                discarded.forEach(m => Logger.log(`  丢弃: role=${m.role} rU=${m.isRealUser} instr=${m.isInstructional} ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
+            }
             CacheState.backgroundBlock = dedupBg;
             CacheState.dialogueHistory = [];
-            Logger.log(`[初始化] 背景:${dedupBg.length} 对话:0（已丢弃历史）`, LogLevels.BASIC);
+            Logger.log(`[初始化] 背景:${dedupBg.length} 对话:0`, LogLevels.BASIC);
             buildAndApply(stream, dedupBg, [], currentUserMsg, prefills);
             updateStats(true);
             return;
         }
 
-        // 背景相似度检测
-        const bgSim = computeSetSimilarity(
-            new Set(CacheState.backgroundBlock.map(m => Logger.normalize(m.content))),
-            new Set(dedupBg.map(m => Logger.normalize(m.content)))
-        );
+        // 常规运行
+        const currentBg = others.filter(m => m.isInstructional);
+        const currentDialogue = others.filter(m => !m.isInstructional);
+        const seenBgNorm = new Set();
+        const dedupBg = [];
+        for (const m of currentBg) {
+            if (!seenBgNorm.has(m.norm)) { seenBgNorm.add(m.norm); dedupBg.push(m); }
+        }
+        const bgSim = computeSetSimilarity(new Set(CacheState.backgroundBlock.map(m => m.norm)), new Set(dedupBg.map(m => m.norm)));
         Logger.log(`[背景相似度] ${(bgSim*100).toFixed(1)}%`, LogLevels.DEBUG);
         if (bgSim < 0.9) {
-            triggerResetAlert('检测到系统提示词核心变动，建议重置缓存前缀以保证性能。');
+            triggerResetAlert(data, '检测到系统提示词核心变动，建议重置以保证性能。');
             return;
         }
-
-        // 对话增量
-        const newDial = findNewEntries(CacheState.dialogueHistory, dialogue);
-        if (newDial.length > 0) Logger.warn(`[对话增量] +${newDial.length} 条`, LogLevels.DETAILED);
+        const newDial = findNewEntries(CacheState.dialogueHistory, currentDialogue);
+        if (newDial.length > 0) Logger.warn(`[对话增量] +${newDial.length}`, LogLevels.DETAILED);
         const updatedDialogue = CacheState.dialogueHistory.concat(newDial);
-
-        if (dialogue.length < CacheState.dialogueHistory.length * 0.7) {
-            triggerResetAlert('对话历史被大幅删除，建议重置。');
+        if (currentDialogue.length < CacheState.dialogueHistory.length * 0.7) {
+            triggerResetAlert(data, '对话历史被大幅删除，建议重置。');
             return;
         }
-
         CacheState.dialogueHistory = updatedDialogue;
         buildAndApply(stream, CacheState.backgroundBlock, CacheState.dialogueHistory, currentUserMsg, prefills);
         updateStats(false);
 
     } catch (err) {
-        Logger.error('拦截器致命错误', err);
+        Logger.error('处理致命错误', err);
     }
 }
 
@@ -187,21 +211,21 @@ function buildAndApply(stream, bg, dialogue, curUser, prefills) {
 }
 
 function findNewEntries(oldSeq, newSeq) {
-    const oldUids = new Set(oldSeq.map(m => `${m.role}:${Logger.simpleHash(m.content)}`));
-    return newSeq.filter(m => !oldUids.has(`${m.role}:${Logger.simpleHash(m.content)}`));
+    const oldUids = new Set(oldSeq.map(m => m.uid));
+    return newSeq.filter(m => !oldUids.has(m.uid));
 }
-function computeSetSimilarity(setA, setB) {
-    if (setA.size === 0 && setB.size === 0) return 1;
-    const union = new Set([...setA, ...setB]);
+function computeSetSimilarity(a, b) {
+    if (a.size === 0 && b.size === 0) return 1;
+    const union = new Set([...a, ...b]);
     let intersection = 0;
-    for (const item of setA) if (setB.has(item)) intersection++;
+    for (const item of a) if (b.has(item)) intersection++;
     return union.size === 0 ? 1 : intersection / union.size;
 }
 
-function updateStats(isInit = false) {
-    const bgTokens = CacheState.backgroundBlock?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
-    const dgTokens = CacheState.dialogueHistory?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
-    CacheState.stats.prefixTokens = bgTokens + dgTokens;
+function updateStats(isInit) {
+    const bg = CacheState.backgroundBlock?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
+    const dg = CacheState.dialogueHistory?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
+    CacheState.stats.prefixTokens = bg + dg;
     CacheState.stats.hits++;
     CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
     updateStatsUI();
@@ -214,29 +238,37 @@ function updateStatsUI() {
     el.innerHTML = `<span>命中: ${hits}/${total} (${rate}%)</span> <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span> <span style="margin-left:10px;">节省: ~${savedTokens.toLocaleString()}t</span>`;
 }
 
-// ==========================================
-// 弹窗与阻塞（同前）
-// ==========================================
-function triggerResetAlert(reason) {
+// 弹窗：传递 data 以便重置后重新处理
+function triggerResetAlert(data, reason) {
     if (CacheState.blocked) return;
     CacheState.blocked = true;
-    Logger.warn('[阻塞] 弹窗已弹出', LogLevels.BASIC);
+    Logger.warn('[阻塞] 弹窗已弹出，等待用户选择', LogLevels.BASIC);
     const onResolve = (reset) => {
         if (reset) {
+            // 清空状态
             CacheState.backgroundBlock = null;
             CacheState.dialogueHistory = null;
             CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
             updateStatsUI();
-            Logger.warn('[重置] 前缀已清空', LogLevels.BASIC);
-        } else Logger.warn('[取消] 不重置', LogLevels.BASIC);
-        CacheState.blocked = false;
+            Logger.warn('[重置] 已清空，立即重新处理当前请求', LogLevels.BASIC);
+            // 解除阻塞并重新处理
+            CacheState.blocked = false;
+            if (data) {
+                _processRequest(data);
+            }
+        } else {
+            Logger.warn('[取消] 不重置，继续使用当前前缀', LogLevels.BASIC);
+            CacheState.blocked = false;
+        }
     };
     if (typeof callPopup === 'function') {
         callPopup(`<h4>缓存优化器</h4><p>${reason}</p>`, [
             { text: '重置', className: 'btn-danger', callback: () => onResolve(true) },
             { text: '取消', callback: () => onResolve(false) }
         ]);
-    } else showFallbackDialog(reason, onResolve);
+    } else {
+        showFallbackDialog(reason, onResolve);
+    }
 }
 function showFallbackDialog(reason, cb) {
     const id = 'ds-reset-fallback-dialog';
@@ -257,42 +289,39 @@ function performReset() {
     Logger.warn('[强制重置] 已清空', LogLevels.BASIC);
     const fb = document.getElementById('ds-reset-fallback-dialog');
     if (fb) fb.remove();
+    // 强制重置后下一次请求会自动初始化，不需要额外操作
 }
 
-// ==========================================
-// 扩展菜单注册（尝试所有已知方式）
-// ==========================================
+// 扩展菜单注册（多方式尝试）
 function registerMenuItems() {
-    const menuItem = { label: '重置DS缓存前缀', callback: performReset };
     try {
         if (typeof SillyTavern !== 'undefined' && SillyTavern.getContext().addExtensionMenu) {
-            SillyTavern.getContext().addExtensionMenu([menuItem]);
-            Logger.log('[菜单] 已通过 SillyTavern API 注册', LogLevels.BASIC);
+            SillyTavern.getContext().addExtensionMenu([{ label: '重置DS缓存前缀', callback: performReset }]);
+            Logger.log('[菜单] addExtensionMenu 注册成功', LogLevels.BASIC);
         } else if (typeof window['registerExtensionsMenu'] === 'function') {
-            window['registerExtensionsMenu']([menuItem]);
-            Logger.log('[菜单] 已通过 registerExtensionsMenu 注册', LogLevels.BASIC);
+            window['registerExtensionsMenu']([{ label: '重置DS缓存前缀', callback: performReset }]);
+            Logger.log('[菜单] registerExtensionsMenu 注册成功', LogLevels.BASIC);
         } else {
+            // extension_settings方式，需要用户在扩展面板勾选“显示菜单”
             extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
-            extension_settings['ds-cache'].menu = [menuItem];
-            Logger.warn('[菜单] 采用 extension_settings 注册（需在扩展面板勾选“显示菜单”）', LogLevels.BASIC);
+            extension_settings['ds-cache'].menu = [{ label: '重置DS缓存前缀', callback: performReset }];
+            Logger.warn('[菜单] 已在extension_settings中注册，请在扩展设置中勾选“显示菜单”', LogLevels.BASIC);
         }
     } catch (e) {
         Logger.error('菜单注册失败', e);
     }
 }
 
-// ==========================================
-// UI 初始化
-// ==========================================
+// UI初始化
 async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v4-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>🧠 DS Cache Optimizer v6.10 (内容分类)</b>
+            <b>🧠 DS Cache Optimizer v6.10 (重置重处理)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:10px;">
-            <p>完全基于内容特征识别系统提示词，摆脱 originalChat 依赖，精确分离背景与对话。</p>
+            <p>重置后立即重新处理当前请求，确保新序列正确。</p>
             <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
             <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
             <div style="margin:8px 0;">
@@ -309,7 +338,6 @@ async function setupUI() {
     </div>`;
     $('#extensions_settings').append(html);
     Logger._uiTextarea = document.getElementById('ds-cache-log');
-
     $('#ds-cache-enable').on('change', function() { CacheState.enabled = $(this).is(':checked'); Logger.log(`插件 ${CacheState.enabled?'启用':'停用'}`, LogLevels.BASIC); });
     $('#ds-cache-loglevel').on('change', function() { logLevel = parseInt($(this).val()); Logger.log(`日志等级: ${['关闭','简要','详细','调试'][logLevel]}`, LogLevels.BASIC); });
     $('#ds-cache-reset').on('click', () => performReset());
@@ -324,5 +352,5 @@ jQuery(async () => {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         Logger.log('[系统] 钩子已挂载', LogLevels.BASIC);
     } else Logger.error('无法挂载钩子');
-    Logger.log('══════ v6.10 就绪，纯内容分类 + 菜单尝试 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.10 就绪，重置即时重处理 ══════', LogLevels.BASIC);
 });
