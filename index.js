@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 日志系统 (增强版)
+// 日志系统
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 let logLevel = 2;
@@ -54,13 +54,139 @@ const Logger = {
 };
 
 // ==========================================
-// 状态机 v6.4 - 改用线性前缀
+// 状态机
 // ==========================================
 const CacheState = {
     enabled: true,
-    prefix: null,              // 完整的提示词前缀序列 [{role, content}, ...]
+    frozenBackground: [],
+    frozenDialogue: [],
+    extraBackground: [],
     stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
+
+// ==========================================
+// 消息分类
+// ==========================================
+function classifyMessage(msg, originalChat) {
+    const orig = originalChat.find(m => m.mes === msg.content);
+    let cls;
+    if (orig) {
+        if (orig.is_user) cls = { isRealUser: true, isRealAI: false, isInstructional: false };
+        else if (!orig.is_system) {
+            if (msg.role === 'assistant') cls = { isRealUser: false, isRealAI: true, isInstructional: false };
+            else cls = { isRealUser: false, isRealAI: false, isInstructional: true };
+        } else {
+            cls = { isRealUser: false, isRealAI: false, isInstructional: true };
+        }
+    } else {
+        cls = { isRealUser: false, isRealAI: false, isInstructional: true };
+    }
+    if (logLevel >= LogLevels.DEBUG) {
+        const label = cls.isRealUser ? '👤真实用户' : (cls.isRealAI ? '🤖真实AI' : '📋教学/系统');
+        Logger.log(`[分类] ${label} | ${msg.role}: ${msg.content.substring(0, 30)}...`, LogLevels.DEBUG);
+    }
+    return cls;
+}
+
+function createMessageObj(msg, cls, uid) {
+    return {
+        role: msg.role,
+        content: msg.content,
+        isRealUser: cls.isRealUser,
+        isRealAI: cls.isRealAI,
+        isInstructional: cls.isInstructional,
+        uid: uid || `${msg.role}:${Logger.simpleHash(msg.content)}`,
+        norm: Logger.normalize(msg.content),
+    };
+}
+
+// ==========================================
+// 处理请求流
+// ==========================================
+function processStream(stream, originalChat) {
+    let prefillStart = stream.length;
+    while (prefillStart > 0 && stream[prefillStart - 1].role === 'assistant') {
+        prefillStart--;
+    }
+    const prefills = stream.slice(prefillStart);
+    const nonPrefill = stream.slice(0, prefillStart);
+
+    const prefillMessages = prefills.map(msg => {
+        const cls = classifyMessage(msg, originalChat);
+        return createMessageObj(msg, cls);
+    });
+
+    if (logLevel >= LogLevels.DEBUG) {
+        Logger.log(`[流分割] 非预填充: ${nonPrefill.length} 条, 预填充: ${prefills.length} 条`, LogLevels.DEBUG);
+    }
+
+    let currentUserMsg = null;
+    const backgroundCandidates = [];
+    const dialogueParts = [];
+
+    for (let i = 0; i < nonPrefill.length; i++) {
+        const msg = nonPrefill[i];
+        const cls = classifyMessage(msg, originalChat);
+        const obj = createMessageObj(msg, cls);
+
+        if (obj.isInstructional) {
+            backgroundCandidates.push(obj);
+        } else {
+            dialogueParts.push(obj);
+        }
+    }
+
+    // 从尾部提取当前用户消息
+    for (let i = dialogueParts.length - 1; i >= 0; i--) {
+        const obj = dialogueParts[i];
+        if (obj.isRealUser && obj.role === 'user') {
+            currentUserMsg = obj;
+            dialogueParts.splice(i, 1);
+            break;
+        }
+    }
+
+    return { currentUserMsg, backgroundCandidates, dialogueParts, prefillMessages };
+}
+
+// ==========================================
+// 构建冻结的对话轮次
+// ==========================================
+function buildDialogueTurns(dialogueParts) {
+    const turns = [];
+    let currentTurn = { user: null, assistants: [] };
+
+    for (const obj of dialogueParts) {
+        if (obj.isRealUser && obj.role === 'user') {
+            if (currentTurn.user && currentTurn.assistants.length > 0) {
+                turns.push({
+                    user: currentTurn.user,
+                    assistant: combineAssistantMessages(currentTurn.assistants),
+                });
+            }
+            currentTurn = { user: obj, assistants: [] };
+        } else if (obj.isRealAI && obj.role === 'assistant') {
+            currentTurn.assistants.push(obj);
+        }
+    }
+    if (currentTurn.user && currentTurn.assistants.length > 0) {
+        turns.push({
+            user: currentTurn.user,
+            assistant: combineAssistantMessages(currentTurn.assistants),
+        });
+    }
+    return turns;
+}
+
+function combineAssistantMessages(msgs) {
+    if (msgs.length === 0) return null;
+    const combinedContent = msgs.map(m => m.content).join('\n');
+    return createMessageObj(
+        { role: 'assistant', content: combinedContent },
+        { isRealUser: false, isRealAI: true, isInstructional: false },
+        msgs[0].uid
+    );
+}
 
 // ==========================================
 // 核心拦截器
@@ -74,74 +200,166 @@ function interceptAndRestructurePrompt(data) {
         Logger.log(`[请求 #${CacheState.stats.total}] 开始处理...`);
 
         if (!data?.chat?.length) return;
-        const stream = data.chat;  // 当前完整的消息数组
+        const stream = data.chat;
+        const context = getContext();
+        const originalChat = context?.chat ?? [];
 
-        // 初始化：直接用当前流作为前缀
-        if (!CacheState.prefix) {
-            CacheState.prefix = stream.map(m => ({ role: m.role, content: m.content }));
-            Logger.log(`[初始化] 前缀长度: ${CacheState.prefix.length}`, LogLevels.BASIC);
+        const { currentUserMsg, backgroundCandidates, dialogueParts, prefillMessages } =
+            processStream(stream, originalChat);
+
+        // 去重背景
+        const seenBgNorm = new Set();
+        const dedupBg = [];
+        for (const m of backgroundCandidates) {
+            if (!seenBgNorm.has(m.norm)) {
+                seenBgNorm.add(m.norm);
+                dedupBg.push(m);
+            }
+        }
+
+        const currentTurns = buildDialogueTurns(dialogueParts);
+
+        // 初始化
+        if (CacheState.frozenBackground.length === 0 && CacheState.frozenDialogue.length === 0) {
+            CacheState.frozenBackground = dedupBg;
+            CacheState.frozenDialogue = currentTurns;
+            Logger.log(`[初始化] 背景:${dedupBg.length} 对话轮次:${currentTurns.length}`, LogLevels.BASIC);
+            buildFinalSequence(stream, currentUserMsg, prefillMessages);
             updateStats(true);
             return;
         }
 
-        // 计算共同前缀长度
-        const maxMatch = Math.min(CacheState.prefix.length, stream.length);
-        let matchLen = 0;
-        while (matchLen < maxMatch &&
-               CacheState.prefix[matchLen].role === stream[matchLen].role &&
-               CacheState.prefix[matchLen].content === stream[matchLen].content) {
-            matchLen++;
-        }
-        Logger.log(`[匹配长度] ${matchLen} / ${CacheState.prefix.length} 条`, LogLevels.DEBUG);
+        const frozenBgNorms = new Set(CacheState.frozenBackground.map(m => m.norm));
+        const currentBgNorms = new Set(dedupBg.map(m => m.norm));
+        const bgSimilarity = computeSetSimilarity(frozenBgNorms, currentBgNorms);
+        Logger.log(`[背景相似度] ${(bgSimilarity * 100).toFixed(1)}%`, LogLevels.DEBUG);
 
-        // 检测前缀是否被破坏
-        if (matchLen < CacheState.prefix.length) {
+        if (bgSimilarity < 0.9) {
             const shouldReset = confirm(
-                '检测到提示词前缀变动（更换角色卡/预设、世界书变更等），缓存前缀已被破坏。\n\n' +
+                '检测到系统提示词核心变动（更换角色卡/预设），建议重置缓存前缀以保证性能。\n\n' +
                 '按「确定」重置前缀并发送消息；按「取消」放弃本次发送。'
             );
             if (!shouldReset) {
                 if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
-                throw new Error('User cancelled send due to prefix mismatch');
+                throw new Error('User cancelled send due to cache prefix change');
             }
-            Logger.warn('[用户选择重置] 因前缀破坏，重置并重建', LogLevels.BASIC);
+            Logger.warn('[用户选择重置] 因背景变动，重置所有缓存', LogLevels.BASIC);
             performReset();
-            // 重建前缀：用当前完整的 stream
-            CacheState.prefix = stream.map(m => ({ role: m.role, content: m.content }));
-            Logger.log(`[重置后重建] 前缀长度: ${CacheState.prefix.length}`, LogLevels.BASIC);
+            CacheState.frozenBackground = dedupBg;
+            CacheState.frozenDialogue = currentTurns;
+            buildFinalSequence(stream, currentUserMsg, prefillMessages);
             updateStats(true);
             return;
         }
 
-        // 前缀完全匹配，取出新消息（共同前缀之后的部分）
-        const newMessages = stream.slice(matchLen);
-        if (newMessages.length > 0) {
-            Logger.warn(`[新增消息] +${newMessages.length} 条`, LogLevels.DETAILED);
-            CacheState.prefix.push(...newMessages.map(m => ({ role: m.role, content: m.content })));
+        // 新增背景条目
+        const newBg = dedupBg.filter(m => !frozenBgNorms.has(m.norm));
+        if (newBg.length > 0) {
+            Logger.warn(`[新增背景] +${newBg.length} 条`, LogLevels.DETAILED);
+            for (const m of newBg) {
+                if (!CacheState.extraBackground.some(ex => ex.norm === m.norm)) {
+                    CacheState.extraBackground.push(m);
+                }
+            }
         }
 
-        // 用更新后的前缀覆盖 stream（保持原始顺序）
-        stream.splice(0, stream.length, ...CacheState.prefix);
-
-        if (logLevel >= LogLevels.DEBUG) {
-            Logger.log(`[最终序列] 前缀长度: ${CacheState.prefix.length}`, LogLevels.DEBUG);
-            CacheState.prefix.forEach((m, i) => {
-                Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG);
-            });
+        // 新增对话轮次
+        const newTurns = [];
+        const existingKeys = new Set(
+            CacheState.frozenDialogue.map(t => `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`)
+        );
+        for (const turn of currentTurns) {
+            const key = `${turn.user.uid}|${turn.assistant ? turn.assistant.uid : ''}`;
+            if (!existingKeys.has(key)) {
+                newTurns.push(turn);
+            }
+        }
+        if (newTurns.length > 0) {
+            Logger.warn(`[对话增量] +${newTurns.length} 轮`, LogLevels.DETAILED);
+            CacheState.frozenDialogue.push(...newTurns);
         }
 
+        // 对话大幅删除检测
+        if (currentTurns.length < CacheState.frozenDialogue.length * 0.7) {
+            const shouldReset = confirm(
+                '对话历史被大幅删除，缓存命中率将下降，建议重置。\n\n' +
+                '按「确定」重置前缀并发送；按「取消」放弃本次发送。'
+            );
+            if (!shouldReset) {
+                if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
+                throw new Error('User cancelled send due to dialogue deletion');
+            }
+            Logger.warn('[用户选择重置] 因对话删除，重置所有缓存', LogLevels.BASIC);
+            performReset();
+            CacheState.frozenBackground = dedupBg;
+            CacheState.frozenDialogue = currentTurns;
+            buildFinalSequence(stream, currentUserMsg, prefillMessages);
+            updateStats(true);
+            return;
+        }
+
+        buildFinalSequence(stream, currentUserMsg, prefillMessages);
         updateStats(false);
+
     } catch (err) {
         Logger.error('拦截器致命错误', err);
-        throw err; // 中断生成
+        throw err;
     }
 }
 
+function buildFinalSequence(stream, currentUserMsg, prefillMessages) {
+    const final = [];
+
+    for (const bg of CacheState.frozenBackground) {
+        final.push({ role: bg.role, content: bg.content });
+    }
+
+    for (const turn of CacheState.frozenDialogue) {
+        final.push({ role: turn.user.role, content: turn.user.content });
+        if (turn.assistant) {
+            final.push({ role: turn.assistant.role, content: turn.assistant.content });
+        }
+    }
+
+    for (const extra of CacheState.extraBackground) {
+        final.push({ role: extra.role, content: extra.content });
+    }
+
+    if (currentUserMsg) {
+        final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
+    }
+
+    for (const p of prefillMessages) {
+        final.push({ role: p.role, content: p.content });
+    }
+
+    if (logLevel >= LogLevels.DEBUG) {
+        Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结对话:${CacheState.frozenDialogue.length} 新增背景:${CacheState.extraBackground.length} 用户:${currentUserMsg?1:0} 预填充:${prefillMessages.length}`, LogLevels.DEBUG);
+        final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
+    }
+
+    stream.splice(0, stream.length, ...final);
+}
+
+function computeSetSimilarity(setA, setB) {
+    if (setA.size === 0 && setB.size === 0) return 1;
+    const union = new Set([...setA, ...setB]);
+    let intersection = 0;
+    for (const item of setA) if (setB.has(item)) intersection++;
+    return union.size === 0 ? 1 : intersection / union.size;
+}
+
 function updateStats(isInit = false) {
-    const tokens = CacheState.prefix?.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) ?? 0;
-    CacheState.stats.prefixTokens = tokens;
+    const bgTokens = CacheState.frozenBackground.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0) +
+                     CacheState.extraBackground.reduce((acc, m) => acc + Logger.estimateTokens(m.content), 0);
+    let dialogueTokens = 0;
+    for (const turn of CacheState.frozenDialogue) {
+        dialogueTokens += Logger.estimateTokens(turn.user.content);
+        if (turn.assistant) dialogueTokens += Logger.estimateTokens(turn.assistant.content);
+    }
+    CacheState.stats.prefixTokens = bgTokens + dialogueTokens;
     CacheState.stats.hits++;
-    CacheState.stats.savedTokens += tokens;
+    CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
     updateStatsUI();
 }
 
@@ -157,14 +375,13 @@ function updateStatsUI() {
     `;
 }
 
-// ==========================================
-// 重置函数
-// ==========================================
 function performReset() {
-    CacheState.prefix = null;
+    CacheState.frozenBackground = [];
+    CacheState.frozenDialogue = [];
+    CacheState.extraBackground = [];
     CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
     updateStatsUI();
-    Logger.warn('[重置] 前缀已清空，下次请求重建', LogLevels.BASIC);
+    Logger.warn('[重置] 所有缓存已清空', LogLevels.BASIC);
 }
 
 // ==========================================
@@ -179,7 +396,7 @@ async function setupUI() {
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">线性前缀强匹配，完全锁定提示词顺序，100%缓存命中。</p>
+                <p style="font-size:0.9em;opacity:0.8;">背景/对话分离，绝对稳定前缀，弹窗+菜单重置。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
                 <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
                 <div style="margin:8px 0;">
@@ -210,14 +427,10 @@ async function setupUI() {
             if (Logger._uiTextarea) Logger._uiTextarea.value = '';
         });
 
-        // 注册 ST 扩展菜单项
         if (typeof extension_settings !== 'undefined') {
             extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
             extension_settings['ds-cache'].extensionsMenu = [
-                {
-                    label: '重置DS缓存前缀',
-                    action: () => performReset(),
-                }
+                { label: '重置DS缓存前缀', action: () => performReset() }
             ];
         }
 
@@ -240,18 +453,14 @@ function registerMenuItems() {
     }
 }
 
-// ==========================================
-// 启动
-// ==========================================
 jQuery(async () => {
     await setupUI();
     registerMenuItems();
-
     if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         Logger.log('[系统] 钩子已挂载', LogLevels.BASIC);
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.4 就绪，线性前缀强匹配，锁定顺序 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.4 就绪，强制阻塞确认，绝对稳定前缀 ══════', LogLevels.BASIC);
 });
