@@ -1,5 +1,7 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types } from '../../../../script.js';
+import { SlashCommandParser } from '../../../../slash-commands/SlashCommandParser.js';
+import { SlashCommand } from '../../../../slash-commands/SlashCommand.js';
 
 // ==========================================
 // 日志系统
@@ -12,11 +14,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v6.5] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v6.6] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v6.5] 🔴 ${msg}`);
+        console.error(`[DS Cache v6.6] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v6.5] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v6.6] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -37,32 +39,73 @@ const Logger = {
         }
         return (hash >>> 0).toString(16).padStart(8, '0').slice(0, 8);
     },
-    estimateTokens: (text) => {
-        if (!text) return 0;
-        let tokens = 0;
-        for (const ch of text) {
-            const code = ch.charCodeAt(0);
-            if ((code >= 0x4E00 && code <= 0x9FFF) || (code >= 0x3040 && code <= 0x30FF) || (code >= 0xAC00 && code <= 0xD7AF)) {
-                tokens += 1;
-            } else {
-                tokens += 0.25;
-            }
-        }
-        return Math.ceil(tokens);
-    },
     normalize: (text) => text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
 };
 
 // ==========================================
-// 状态机（重构：新增 pendingCurrentTurn 彻底解决预填充丢失）
+// 状态机（彻底无统计功能）
 // ==========================================
 const CacheState = {
     enabled: true,
     frozenBackground: [],     // 初始化时的系统提示词
     frozenTurns: [],          // 历史轮次: { user, prefills, extraBackground, assistant }
     pendingCurrentTurn: null, // 当前待完成轮次: { user, prefills, extraBackground }
-    stats: { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 },
 };
+
+// ==========================================
+// 实时监听自适应截断（核心新功能）
+// ==========================================
+function onHistoryChanged() {
+    // 延迟100ms确保SillyTavern内部的chat数组已完成DOM和数据更新
+    setTimeout(() => {
+        if (!CacheState.enabled || CacheState.frozenTurns.length === 0) return;
+        const context = getContext();
+        const currentChat = context.chat || [];
+        
+        // 获取当前所有存在于聊天栏中的消息内容哈希/标准化文本
+        const currentNorms = new Set(currentChat.map(m => Logger.normalize(m.mes || '')));
+
+        let brokenIndex = -1;
+        
+        // 按顺序检查已冻结的轮次，发现断裂立刻记录
+        for (let i = 0; i < CacheState.frozenTurns.length; i++) {
+            const turn = CacheState.frozenTurns[i];
+            let isBroken = false;
+            
+            if (turn.user && !currentNorms.has(turn.user.norm)) isBroken = true;
+            if (turn.assistant && !currentNorms.has(turn.assistant.norm)) isBroken = true;
+            
+            if (isBroken) {
+                brokenIndex = i;
+                break;
+            }
+        }
+
+        if (brokenIndex !== -1) {
+            if (brokenIndex === 0) {
+                // 第一轮对话被删，彻底失效
+                CacheState.frozenTurns = [];
+                CacheState.pendingCurrentTurn = null;
+                if (typeof toastr !== 'undefined') toastr.warning('检测到大量历史记录变动，为了保证 Deepseek 正常运作，缓存已自适应重置！', 'DS 缓存优化');
+                Logger.warn('[自适应] 全局历史被删，强制清空缓存序列。');
+            } else if (brokenIndex === CacheState.frozenTurns.length - 1) {
+                // 仅删除了最后一次对话（撤回重做等）
+                CacheState.frozenTurns.splice(brokenIndex, 1);
+                if (typeof toastr !== 'undefined') {
+                    toastr.success('已自适应移除最新对话的缓存。<br/>前置提示词及历史仍保持 <b>100% 命中</b>！', 'DS 缓存优化', {timeOut: 4000, escapeHtml: false});
+                }
+                Logger.warn('[自适应] 检测到尾部删除，已弹出最后一次对话缓存，前缀完整保留！');
+            } else {
+                // 删除了中间的对话（导致断点后缓存全部错位）
+                CacheState.frozenTurns = CacheState.frozenTurns.slice(0, brokenIndex);
+                if (typeof toastr !== 'undefined') {
+                    toastr.warning('检测到您修改或删除了历史中间的对话！<br/>系统已自适应<b>截断断点后</b>的缓存，断点前的历史仍保持 <b>100% 命中</b>。', 'DS 缓存截断', {timeOut: 8000, escapeHtml: false});
+                }
+                Logger.warn(`[自适应] 检测到中间对话变动(断点: ${brokenIndex})，已截断断点后的无效缓存。`);
+            }
+        }
+    }, 100);
+}
 
 // ==========================================
 // 工具：消息分类与生成
@@ -91,7 +134,7 @@ function combineAssistants(msgs) {
     return createMessageObj({ role: 'assistant', content: content });
 }
 
-// 智慧切除：防止 ST 把预填充和AI回复合并后，导致我们强制塞入预填充时出现文本重复
+// 智慧切除预填充
 function stripPrefillFromAssistant(assistantObj, prefills) {
     if (!assistantObj || !prefills || prefills.length === 0) return assistantObj;
     let content = assistantObj.content || '';
@@ -113,14 +156,14 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
     }
     
     if (modified) {
-        content = content.replace(/^[\s\n]+/, ''); // 移除切除后可能残留的换行
+        content = content.replace(/^[\s\n]+/, ''); 
         return createMessageObj({ role: 'assistant', content: content });
     }
     return assistantObj;
 }
 
 // ==========================================
-// 核心：解析 ST 数据流
+// 核心：解析与状态同步
 // ==========================================
 function parseSTStream(stream) {
     const systemMsgs = [];
@@ -130,11 +173,8 @@ function parseSTStream(stream) {
         classifyMsgLog(msg);
         const obj = createMessageObj(msg);
         const isInstructional = (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant'));
-        if (isInstructional) {
-            systemMsgs.push(obj);
-        } else {
-            dialogueMsgs.push(obj);
-        }
+        if (isInstructional) systemMsgs.push(obj);
+        else dialogueMsgs.push(obj);
     }
 
     let lastUserIdx = -1;
@@ -149,7 +189,6 @@ function parseSTStream(stream) {
     let stCurrentTurn = { user: null, prefills: [] };
 
     if (lastUserIdx === -1) {
-        // 全是预填充 / 异常流
         stCurrentTurn.prefills = dialogueMsgs.filter(m => m.role === 'assistant');
     } else {
         const historyMsgs = dialogueMsgs.slice(0, lastUserIdx);
@@ -161,36 +200,22 @@ function parseSTStream(stream) {
         let cur = { user: null, assistants: [] };
         for (const msg of historyMsgs) {
             if (msg.role === 'user') {
-                if (cur.user) {
-                    stHistoryTurns.push({ user: cur.user, assistant: combineAssistants(cur.assistants) });
-                }
+                if (cur.user) stHistoryTurns.push({ user: cur.user, assistant: combineAssistants(cur.assistants) });
                 cur = { user: msg, assistants: [] };
             } else if (msg.role === 'assistant') {
                 cur.assistants.push(msg);
             }
         }
-        if (cur.user) {
-            stHistoryTurns.push({ user: cur.user, assistant: combineAssistants(cur.assistants) });
-        }
+        if (cur.user) stHistoryTurns.push({ user: cur.user, assistant: combineAssistants(cur.assistants) });
     }
-
-    if (stHistoryTurns.length > 0) {
-        Logger.log(`[解析历史] 发现 ST 历史共 ${stHistoryTurns.length} 轮`, LogLevels.DEBUG);
-    }
-    Logger.log(`[解析当前] 用户: ${stCurrentTurn.user ? stCurrentTurn.user.content.substring(0, 15) : '无'}... 预填充数: ${stCurrentTurn.prefills.length}`, LogLevels.DEBUG);
-
     return { systemMsgs, stHistoryTurns, stCurrentTurn };
 }
 
-// ==========================================
-// 状态机同步与去重算法
-// ==========================================
 function syncState(systemMsgs, stHistoryTurns, stCurrentTurn) {
     const newFrozenTurns = [];
     const oldFrozenTurns = [...CacheState.frozenTurns];
     let pendingMatched = false;
 
-    // 1. 系统背景去重
     const uniqueSystemMsgs = [];
     const seenSys = new Set();
     for (const m of systemMsgs) {
@@ -200,190 +225,103 @@ function syncState(systemMsgs, stHistoryTurns, stCurrentTurn) {
         }
     }
 
-    // 2. 深度同步并匹配历史对话，找回丢失的预填充
     for (let i = 0; i < stHistoryTurns.length; i++) {
         const stTurn = stHistoryTurns[i];
         let matched = false;
 
-        // A. 尝试在已冻结的历史记录中寻找
         for (let j = 0; j < oldFrozenTurns.length; j++) {
             const fTurn = oldFrozenTurns[j];
             if (fTurn.user && stTurn.user && fTurn.user.norm === stTurn.user.norm) {
                 const cleanAssistant = stripPrefillFromAssistant(stTurn.assistant, fTurn.prefills);
-                newFrozenTurns.push({
-                    user: fTurn.user, 
-                    prefills: fTurn.prefills, // 彻底保留原预填充！
-                    extraBackground: fTurn.extraBackground,
-                    assistant: cleanAssistant 
-                });
+                newFrozenTurns.push({ user: fTurn.user, prefills: fTurn.prefills, extraBackground: fTurn.extraBackground, assistant: cleanAssistant });
                 matched = true;
                 oldFrozenTurns.splice(j, 1);
-                Logger.log(`[历史同步] 命中旧缓存轮次 | 保留原有预填充`, LogLevels.DEBUG);
                 break;
             }
         }
 
-        // B. 如果未找到，尝试在刚刚处理过的 Pending 轮次中寻找
         if (!matched && CacheState.pendingCurrentTurn) {
             const pTurn = CacheState.pendingCurrentTurn;
             if (pTurn.user && stTurn.user && pTurn.user.norm === stTurn.user.norm) {
                 const cleanAssistant = stripPrefillFromAssistant(stTurn.assistant, pTurn.prefills);
-                newFrozenTurns.push({
-                    user: pTurn.user,
-                    prefills: pTurn.prefills, // 彻底保留原预填充！
-                    extraBackground: pTurn.extraBackground,
-                    assistant: cleanAssistant
-                });
+                newFrozenTurns.push({ user: pTurn.user, prefills: pTurn.prefills, extraBackground: pTurn.extraBackground, assistant: cleanAssistant });
                 matched = true;
                 pendingMatched = true;
-                Logger.log(`[历史同步] 命中刚刚结束的 Pending 轮次 | 固化为新历史`, LogLevels.DEBUG);
             }
         }
 
-        // C. 完全未知的插入轮次
         if (!matched) {
-            newFrozenTurns.push({
-                user: stTurn.user,
-                prefills: [],
-                extraBackground: [],
-                assistant: stTurn.assistant
-            });
-            Logger.warn(`[状态同步] 检测到游离历史插入，生成新缓存节`, LogLevels.DETAILED);
+            newFrozenTurns.push({ user: stTurn.user, prefills: [], extraBackground: [], assistant: stTurn.assistant });
         }
     }
 
     CacheState.frozenTurns = newFrozenTurns;
     if (pendingMatched) CacheState.pendingCurrentTurn = null; 
 
-    // 3. 统计已冻结使用的 System Norm，用于筛选新产生的世界书/提示词
     const usedSysNorms = new Set();
     CacheState.frozenBackground.forEach(m => usedSysNorms.add(m.norm));
-    CacheState.frozenTurns.forEach(t => {
-        t.extraBackground.forEach(m => usedSysNorms.add(m.norm));
-    });
+    CacheState.frozenTurns.forEach(t => t.extraBackground.forEach(m => usedSysNorms.add(m.norm)));
 
     const newSysMsgs = uniqueSystemMsgs.filter(m => !usedSysNorms.has(m.norm));
-    Logger.log(`[背景同步] 提取旧系统背景数: ${usedSysNorms.size}, 本轮新激活(世界书等): ${newSysMsgs.length}`, LogLevels.DEBUG);
 
-    // 4. 更新待定轮次 (Pending Current Turn)
     if (CacheState.frozenBackground.length === 0 && newFrozenTurns.length === 0) {
-        CacheState.frozenBackground = newSysMsgs; // 首次对话，全部归入顶层核心
-        CacheState.pendingCurrentTurn = {
-            user: stCurrentTurn.user,
-            prefills: stCurrentTurn.prefills,
-            extraBackground: []
-        };
-        Logger.log(`[初始化] 完成！建立最初始背景与挂载钩子`, LogLevels.BASIC);
+        CacheState.frozenBackground = newSysMsgs;
+        CacheState.pendingCurrentTurn = { user: stCurrentTurn.user, prefills: stCurrentTurn.prefills, extraBackground: [] };
     } else {
-        CacheState.pendingCurrentTurn = {
-            user: stCurrentTurn.user,
-            prefills: stCurrentTurn.prefills,
-            extraBackground: newSysMsgs // 按照排序要求，新激活的置于当前回复前
-        };
-        if (newSysMsgs.length > 0) {
-            Logger.warn(`[新增背景] +${newSysMsgs.length} 条 (已附着于当前轮次前缀)`, LogLevels.DETAILED);
-        }
+        CacheState.pendingCurrentTurn = { user: stCurrentTurn.user, prefills: stCurrentTurn.prefills, extraBackground: newSysMsgs };
     }
 }
 
-// ==========================================
-// 组合输出最终数组
-// ==========================================
 function applyFinalSequence(stream) {
     const final = [];
-
-    // 1. 冻结背景 (首轮)
     for (const bg of CacheState.frozenBackground) final.push({ role: bg.role, content: bg.content });
-
-    // 2. 冻结的历史轮次
     for (let i = 0; i < CacheState.frozenTurns.length; i++) {
         const turn = CacheState.frozenTurns[i];
         for (const extra of turn.extraBackground) final.push({ role: extra.role, content: extra.content });
         if (turn.user) final.push({ role: turn.user.role, content: turn.user.content });
-        for (const p of turn.prefills) final.push({ role: p.role, content: p.content }); // 强制召回预填充
+        for (const p of turn.prefills) final.push({ role: p.role, content: p.content });
         if (turn.assistant) final.push({ role: turn.assistant.role, content: turn.assistant.content });
     }
-
-    // 3. 当前轮次
     if (CacheState.pendingCurrentTurn) {
         const pTurn = CacheState.pendingCurrentTurn;
         for (const extra of pTurn.extraBackground) final.push({ role: extra.role, content: extra.content });
         if (pTurn.user) final.push({ role: pTurn.user.role, content: pTurn.user.content });
         for (const p of pTurn.prefills) final.push({ role: p.role, content: p.content });
     }
-
-    if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[构建最终序列] 总长: ${final.length} | 冻结背景: ${CacheState.frozenBackground.length} | 历史轮次: ${CacheState.frozenTurns.length}`, LogLevels.DEBUG);
-    }
-
     stream.splice(0, stream.length, ...final);
 }
 
-// ==========================================
-// 拦截与主程序
-// ==========================================
 function interceptAndRestructurePrompt(data) {
     if (!CacheState.enabled || data.dryRun) return;
-
     try {
-        CacheState.stats.total++;
-        Logger.log(`==============================`);
-        Logger.log(`[请求 #${CacheState.stats.total}] 开始处理...`);
-
         if (!data?.chat?.length) return;
-        const stream = data.chat;
+        Logger.log(`==============================`);
+        Logger.log(`[请求拦截] 开始重构缓存...`);
 
+        const stream = data.chat;
         const { systemMsgs, stHistoryTurns, stCurrentTurn } = parseSTStream(stream);
 
-        // --- 核心防崩坏：相似度重置检测 ---
+        // 检测背景设定是否整体更换
         const currentSysNorms = new Set(systemMsgs.map(m => m.norm));
         const usedSysNorms = new Set();
         CacheState.frozenBackground.forEach(m => usedSysNorms.add(m.norm));
         CacheState.frozenTurns.forEach(t => t.extraBackground.forEach(m => usedSysNorms.add(m.norm)));
         if (CacheState.pendingCurrentTurn) CacheState.pendingCurrentTurn.extraBackground.forEach(m => usedSysNorms.add(m.norm));
 
-        if (usedSysNorms.size === 0 && CacheState.frozenBackground.length === 0) {
-            // 这是彻底的第一次，直接跳过
-        } else {
+        if (usedSysNorms.size > 0) {
             const union = new Set([...usedSysNorms, ...currentSysNorms]);
             let intersection = 0;
             for (const item of usedSysNorms) if (currentSysNorms.has(item)) intersection++;
             const similarity = union.size === 0 ? 1 : intersection / union.size;
 
             if (similarity < 0.9) {
-                Logger.log(`[背景相似度] ${(similarity * 100).toFixed(1)}%`, LogLevels.DEBUG);
-                const ok = confirm('检测到系统提示词核心变动（更换角色卡/预设），建议重置缓存前缀以保证性能。\n\n按「确定」重置前缀并发送消息；按「取消」放弃本次发送。');
-                if (!ok) {
-                    if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
-                    throw new Error('User cancelled send due to cache prefix change');
-                }
-                Logger.warn('[用户选择重置] 因背景变动，重置所有缓存', LogLevels.BASIC);
-                performReset();
-                return interceptAndRestructurePrompt(data); // 递归重入重新处理
-            }
-
-            // 自适应删除防护
-            const stCount = stHistoryTurns.length;
-            const frozenCount = CacheState.frozenTurns.length;
-            if (frozenCount > 0 && stCount < frozenCount * 0.7) {
-                const ok = confirm(`对话历史被大幅删除（剩余 ${stCount}/${frozenCount} 轮），缓存命中率将严重下降。\n\n按「确定」重置前缀并发送；按「取消」放弃本次发送。`);
-                if (!ok) {
-                    if (typeof toastr !== 'undefined') toastr.warning('发送已取消');
-                    throw new Error('User cancelled send due to heavy dialogue deletion');
-                }
-                Logger.warn('[用户选择重置] 因重度删除，重置所有缓存', LogLevels.BASIC);
-                performReset();
-                return interceptAndRestructurePrompt(data); 
+                Logger.warn(`[系统背景相似度] ${(similarity * 100).toFixed(1)}% - 检测到角色卡或世界设定大改！`);
+                performReset(); // 直接自适应重置
             }
         }
 
-        // 核心同步与构建
         syncState(systemMsgs, stHistoryTurns, stCurrentTurn);
         applyFinalSequence(stream);
-        
-        // 只在非初始化时才算做一次“命中尝试”
-        updateStats(CacheState.frozenTurns.length === 0 && stHistoryTurns.length === 0);
-
     } catch (err) {
         Logger.error('拦截器致命错误', err);
         throw err;
@@ -391,72 +329,38 @@ function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 其他辅助 UI
+// 辅助与 UI
 // ==========================================
-function updateStats(isInit = false) {
-    let turnTokens = 0;
-    for (const m of CacheState.frozenBackground) turnTokens += Logger.estimateTokens(m.content);
-    for (const t of CacheState.frozenTurns) {
-        for (const m of t.extraBackground) turnTokens += Logger.estimateTokens(m.content);
-        if (t.user) turnTokens += Logger.estimateTokens(t.user.content);
-        for (const p of t.prefills) turnTokens += Logger.estimateTokens(p.content);
-        if (t.assistant) turnTokens += Logger.estimateTokens(t.assistant.content);
-    }
-    if (CacheState.pendingCurrentTurn) {
-        for (const m of CacheState.pendingCurrentTurn.extraBackground) turnTokens += Logger.estimateTokens(m.content);
-    }
-
-    CacheState.stats.prefixTokens = turnTokens;
-    if (!isInit) {
-        CacheState.stats.hits++;
-        CacheState.stats.savedTokens += CacheState.stats.prefixTokens;
-    }
-    updateStatsUI();
-}
-
-function updateStatsUI() {
-    const el = document.getElementById('ds-cache-stats');
-    if (!el) return;
-    const { total, hits, savedTokens, prefixTokens } = CacheState.stats;
-    const rate = total ? ((hits / total) * 100).toFixed(1) : '0.0';
-    el.innerHTML = `
-        <span>命中: ${hits}/${total} (${rate}%)</span>
-        <span style="margin-left:10px;">前缀: ~${prefixTokens.toLocaleString()}t</span>
-        <span style="margin-left:10px;">节省: ~${savedTokens.toLocaleString()}t</span>
-    `;
-}
-
 function performReset() {
     CacheState.frozenBackground = [];
     CacheState.frozenTurns = [];
     CacheState.pendingCurrentTurn = null;
-    CacheState.stats = { total: 0, hits: 0, savedTokens: 0, prefixTokens: 0 };
-    updateStatsUI();
-    Logger.warn('[重置] 所有缓存已清空', LogLevels.BASIC);
+    if (typeof toastr !== 'undefined') toastr.success('DS 缓存前缀已强制重置', 'Deepseek Cache');
+    Logger.warn('[系统] 所有对话与系统缓存序列已清空');
 }
 
 async function setupUI() {
     try {
+        // UI已完全同步ST原版设计，移除了破坏布局的长标题和统计面板
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 缓存命中优化 (v6.5 强化版)</b>
+                <b>DS 缓存优化</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">背景/对话分离，绝对稳定前缀，弹窗+菜单重置。</p>
-                <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
-                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
+                <p style="font-size:0.9em;opacity:0.8;">自适应截断机制生效中，当删除中间对话时，确保断点前的记录完美命中。</p>
+                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用插件核心钩子</label>
                 <div style="margin:8px 0;">
-                    <span style="font-size:0.9em;">日志等级:</span>
+                    <span style="font-size:0.9em;">输出日志等级:</span>
                     <select id="ds-cache-loglevel">
                         <option value="0">关闭</option><option value="1">简要</option>
                         <option value="2" selected>详细</option><option value="3">调试</option>
                     </select>
                 </div>
                 <button id="ds-cache-reset" class="menu_button" style="width:100%;margin:5px 0;">🔄 强制重置缓存前缀</button>
-                <button id="ds-cache-clearlog" class="menu_button" style="width:100%;margin:5px 0;">🗑️ 清空日志</button>
-                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:200px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
+                <button id="ds-cache-clearlog" class="menu_button" style="width:100%;margin:5px 0;">🗑️ 清空调试日志</button>
+                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:150px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
@@ -466,33 +370,55 @@ async function setupUI() {
         $('#ds-cache-loglevel').on('change', function () { logLevel = parseInt($(this).val()); });
         $('#ds-cache-reset').on('click', () => performReset());
         $('#ds-cache-clearlog').on('click', () => { if (Logger._uiTextarea) Logger._uiTextarea.value = ''; });
-        updateStatsUI();
     } catch (e) {
         Logger.error('UI初始化失败', e);
     }
 }
 
-function registerMenuItems() {
+// 注册重置命令到原生的魔杖菜单与斜线命令
+function registerExtensionsMenu() {
+    // 方法1: 注册到ST官方扩展 Wand Menu 中
     if (typeof extension_settings !== 'undefined') {
         extension_settings['ds-cache'] = extension_settings['ds-cache'] || {};
         extension_settings['ds-cache'].extensionsMenu = extension_settings['ds-cache'].extensionsMenu || [];
-        if (!extension_settings['ds-cache'].extensionsMenu.find(m => m.label === '重置DS缓存前缀')) {
-            extension_settings['ds-cache'].extensionsMenu.push({ label: '重置DS缓存前缀', action: () => performReset() });
+        if (!extension_settings['ds-cache'].extensionsMenu.find(m => m.label === '🔄 重置 DS 缓存前缀')) {
+            extension_settings['ds-cache'].extensionsMenu.push({
+                label: '🔄 重置 DS 缓存前缀',
+                action: () => performReset()
+            });
         }
+    }
+
+    // 方法2: 添加供玩家调用的斜线命令 /dsreset
+    try {
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name: 'dsreset',
+            callback: () => { performReset(); return 'Deepseek 自适应缓存已重置。'; },
+            helpString: '手动强制重置 Deepseek 的提示词缓存序列。',
+        }));
+    } catch (e) {
+        Logger.log('Slash Command 注册跳过', LogLevels.DEBUG);
     }
 }
 
 // ==========================================
-// 启动
+// 启动事件挂载
 // ==========================================
 jQuery(async () => {
     await setupUI();
-    registerMenuItems();
-    if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
+    registerExtensionsMenu();
+
+    if (eventSource) {
+        // 挂载消息流发送拦截
         eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-        Logger.log('[系统] 钩子已挂载', LogLevels.BASIC);
+        
+        // 挂载所有可能导致历史断裂的变更事件，作自适应即时响应
+        eventSource.on(event_types.MESSAGE_DELETED, onHistoryChanged);
+        eventSource.on(event_types.MESSAGE_UPDATED, onHistoryChanged);
+        eventSource.on(event_types.MESSAGE_SWIPED, onHistoryChanged);
+        
+        Logger.log('[系统] v6.6 钩子全量挂载完成', LogLevels.BASIC);
     } else {
-        Logger.error('无法挂载事件钩子');
+        Logger.error('无法挂载核心事件钩子');
     }
-    Logger.log('══════ v6.5 就绪，预填充彻底独立冻结 + 强化状态自适应 ══════', LogLevels.BASIC);
 });
