@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (現代化 UI、時間軸與釘選按鈕)
+// 1. 樣式注入 (維持原生與現代化 UI)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -53,13 +53,11 @@ const injectCSS = () => {
         .ds-btn-sub { font-size: 10px; font-weight: normal; opacity: 0.8; }
         .ds-key-hint { position: absolute; right: 8px; top: 8px; font-size: 10px; opacity: 0.6; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px; }
 
-        /* 時間軸拓撲視圖 */
         .ds-timeline-container { max-height: 400px; overflow-y: auto; padding-right: 5px; }
         .ds-timeline-item { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
         .ds-timeline-content { flex: 1; color: #abb2bf; font-size: 12px; line-height: 1.4; word-wrap: break-word; }
         .ds-timeline-index { width: 25px; text-align: right; color: #5c6370; font-size: 10px; padding-top: 3px; }
 
-        /* 小按鈕樣式 */
         .ds-mini-btn { cursor:pointer; opacity:0.7; transition:0.2s; font-size:12px; }
         .ds-mini-btn:hover { opacity:1; transform:scale(1.1); }
         
@@ -70,17 +68,19 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態設定、智能防抖與 GC 防護系統
+// 2. 狀態設定與防抖觸發器引擎 (獨立 Key)
 // ==========================================
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v16 || extension_settings.ds_cache_v15 || {};
-    if (!extension_settings.ds_cache_v17) {
-        extension_settings.ds_cache_v17 = {
+    const oldSettings = extension_settings.ds_cache_v17 || extension_settings.ds_cache_v16 || {};
+    if (!extension_settings.ds_cache_v18) {
+        extension_settings.ds_cache_v18 = {
             enabled: oldSettings.enabled ?? true,
             toastSys: oldSettings.toastSys ?? true,
+            toastSysToggle: oldSettings.toastSysToggle ?? true, // 新增: 預設提示詞開關
             toastLore: oldSettings.toastLore ?? true,
+            toastGlobalLore: oldSettings.toastGlobalLore ?? true, // 新增: 全局世界書
             toastHistory: oldSettings.toastHistory ?? true,
             showResetPrompt: oldSettings.showResetPrompt ?? true,
             autoAccept: oldSettings.autoAccept ?? false,
@@ -88,10 +88,10 @@ function initSettings() {
             tolerance: oldSettings.tolerance ?? 1,
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
             chats: oldSettings.chats || {},
-            pinnedChats: oldSettings.pinnedChats || {} // 新增：釘選保護區
+            pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v17;
+    Settings = extension_settings.ds_cache_v18;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -115,23 +115,30 @@ function debounce(func, wait) {
     };
 }
 
+// 獨立分類防抖管理器
+const triggerDebouncers = {};
+function triggerWarning(key, msg, toggle) {
+    if (!Settings.enabled || !toggle) return;
+    if (!triggerDebouncers[key]) {
+        triggerDebouncers[key] = debounce(() => {
+            if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DS 狀態變更', { timeOut: 2000 });
+        }, 1200);
+    }
+    triggerDebouncers[key]();
+}
+
 function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-// 垃圾回收機制 (加入釘選免疫邏輯)
 function performGarbageCollection() {
-    // 篩選出「未被釘選」的存檔 Key
     const unpinnedKeys = Object.keys(Settings.chats).filter(k => !Settings.pinnedChats[k]);
     if (unpinnedKeys.length <= Settings.maxCacheSize) return;
-    
-    // 依照最後存取時間排序 (舊 -> 新)
     const sortedKeys = unpinnedKeys.sort((a, b) => (Settings.chats[a].lastAccessed || 0) - (Settings.chats[b].lastAccessed || 0));
     const toRemove = sortedKeys.slice(0, unpinnedKeys.length - Settings.maxCacheSize);
-    
     toRemove.forEach(k => delete Settings.chats[k]);
     safeSave();
-    Logger.warn(`[GC] 已自動清理 ${toRemove.length} 個休眠存檔 (已跳過釘選項目)。`);
+    Logger.warn(`[GC] 已自動清理 ${toRemove.length} 個休眠存檔。`);
     renderChatsUI();
 }
 
@@ -143,7 +150,6 @@ const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 function updateTopBarState() {
     const dot = $('#ds-top-status-dot');
     if (!dot.length) return;
-    
     if (!Settings.enabled) {
         dot.css('color', '#5c6370');
         $('#ds-top-reset-btn').attr('title', 'DS Cache: 已停用 (左鍵開啟 / 右鍵清空)');
@@ -166,11 +172,10 @@ function logAt(level, type, msg) {
     if (Settings.logLevel < level) return;
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
-    
-    if (type === 'warn') console.warn(`%c[DS v17] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    else if (type === 'error') console.error(`[DS v17] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[DS v17] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
-    else console.log(`%c[DS v17] ✅ ${msg}`, 'color: #00ff00;');
+    if (type === 'warn') console.warn(`%c[DS v18] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    else if (type === 'error') console.error(`[DS v18] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[DS v18] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
+    else console.log(`%c[DS v18] ✅ ${msg}`, 'color: #00ff00;');
     
     const container = document.getElementById('ds-cache-log-container');
     if (container) {
@@ -193,7 +198,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理、資料匯出入與頂部捷徑
+// 4. 狀態管理、原生擴充選單與頂部捷徑
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -218,56 +223,71 @@ function getChatState(chatKeyInfo) {
     return Settings.chats[chatKeyInfo.key];
 }
 
+// 頂部導航列的晶片按鈕
 function addTopMenuButton() {
     if ($('#ds-top-reset-btn').length === 0) {
         const btn = $(`
-            <li id="ds-top-reset-btn" class="menu_button interactable" title="DS Cache (左鍵: 開關 / 右鍵: 清空快取)">
+            <li id="ds-top-reset-btn" class="menu_button interactable" title="DS Cache">
                 <span class="fa-solid fa-microchip"></span>
                 <span id="ds-top-status-dot" style="font-size:0.7em; margin-left:2px; vertical-align:top;"><i class="fa-solid fa-circle"></i></span>
             </li>
         `);
-        
-        // 左鍵: 快速開關插件
         btn.on('click', (e) => {
             e.preventDefault();
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
-            safeSave();
-            updateTopBarState();
-            if (typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "DS 時序引擎已啟動" : "DS 時序引擎已關閉", "DS Cache");
+            safeSave(); updateTopBarState();
+            if (typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "時序引擎已啟動" : "時序引擎已關閉", "DS Cache");
         });
-
-        // 右鍵: 清空當前快取
         btn.on('contextmenu', (e) => {
             e.preventDefault();
-            if(!confirm("確定要完全清空當前聊天的緩存狀態嗎？(回到 ST 預設頂部排序)")) return;
+            if(!confirm("確定要完全清空當前聊天的緩存狀態嗎？")) return;
             const key = getChatKey().key;
             delete Settings.chats[key];
             safeSave(); renderChatsUI();
             setTopBarStatus('#00ff00', 'DS Cache: 已清空');
             if (typeof toastr !== 'undefined') toastr.success("當前聊天的快取已清空！");
-            Logger.warn(`手動清空了當前存檔: ${key}`);
         });
-
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
         else if ($('#right-nav-extensions').length > 0) $('#right-nav-extensions').append(btn);
-        
         updateTopBarState();
     }
 }
 
-// 資料備份功能
+// 整合至 ST 原生左下角擴充選單 (Magic Wand Popup)
+function addBottomLeftMenuButton() {
+    // #extensions_menu 通常是魔法棒點擊後彈出的 ul 列表
+    if ($('#extensions_menu').length > 0 && $('#ds-bottom-reset-btn').length === 0) {
+        const btn = $(`
+            <li id="ds-bottom-reset-btn" class="menu_button interactable" title="清空當前聊天的 DS 快取池">
+                <span class="fa-solid fa-microchip"></span> 重置 DS 快取
+            </li>
+        `);
+        btn.on('click', () => {
+            if(!confirm("確定要完全清空當前聊天的緩存狀態嗎？(回到 ST 預設頂部排序)")) return;
+            const key = getChatKey().key;
+            delete Settings.chats[key];
+            safeSave(); renderChatsUI();
+            setTopBarStatus('#00ff00', 'DS Cache: 已清空');
+            if (typeof toastr !== 'undefined') toastr.success("當前聊天快取已重置！");
+            Logger.warn(`由擴充選單手動清空了存檔: ${key}`);
+            
+            // 點擊後自動收起選單
+            if ($('#extensions_menu').hasClass('open')) {
+                $('#extensions_menu').removeClass('open').hide();
+            }
+        });
+        $('#extensions_menu').append(btn);
+    }
+}
+
 function exportData() {
     const dataStr = JSON.stringify(Settings, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `DS_Cache_Backup_v17_${new Date().getTime()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = `DS_Cache_Backup_v18_${new Date().getTime()}.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
     if (typeof toastr !== 'undefined') toastr.success("備份檔案已匯出！");
 }
 
@@ -280,18 +300,15 @@ function importData(event) {
             const imported = JSON.parse(e.target.result);
             if (imported && typeof imported === 'object') {
                 Object.assign(Settings, imported);
-                safeSave();
-                renderChatsUI();
+                safeSave(); renderChatsUI();
                 $('#ds-cache-enable').prop('checked', Settings.enabled);
                 updateTopBarState();
                 if (typeof toastr !== 'undefined') toastr.success("資料還原成功！");
-                Logger.log("從備份檔案成功還原資料。");
             }
         } catch (err) {
             Logger.error("匯入失敗", err);
             if (typeof toastr !== 'undefined') toastr.error("檔案格式錯誤");
         }
-        // 重置 input，允許重複匯入同一個檔案
         event.target.value = '';
     };
     reader.readAsText(file);
@@ -385,13 +402,8 @@ function askUserForResetAsync(dropPercent, mapInfo) {
                 <div class="ds-modal">
                     <h2 class="ds-modal-title"><span class="fa-solid fa-code-merge"></span> 緩存斷裂預警 (原位同步中)</h2>
                     <p class="ds-modal-text">檢測到陣列發生變更。這將導致預計 <b style="color:${progColor}">${dropPercent}%</b> 的歷史對話緩存失效並重新運算。<br><br><b>插件已自動完成時序陣列的原位更新與補位。</b>請問要接受本次修改嗎？</p>
-                    
-                    <div class="ds-progress-container">
-                        <div class="ds-progress-bar" id="ds-prog-bar" style="background: ${progColor};"></div>
-                    </div>
-                    
+                    <div class="ds-progress-container"><div class="ds-progress-bar" id="ds-prog-bar" style="background: ${progColor};"></div></div>
                     <div class="ds-map-box">${mapInfo}</div>
-                    
                     <div class="ds-btn-group">
                         <button class="ds-btn ds-btn-accept" id="ds-btn-accept">
                             <span class="fa-solid fa-check-double"></span> 確認同步
@@ -408,14 +420,9 @@ function askUserForResetAsync(dropPercent, mapInfo) {
             </div>
         `;
         $('body').append(html);
-        
         setTimeout(() => { $('#ds-prog-bar').css('width', `${Math.min(dropPercent, 100)}%`); }, 50);
 
-        const cleanup = () => {
-            $('#ds-modal-wrapper').remove();
-            document.removeEventListener('keydown', keyHandler, true);
-        };
-
+        const cleanup = () => { $('#ds-modal-wrapper').remove(); document.removeEventListener('keydown', keyHandler, true); };
         const accept = () => { cleanup(); resolve('reset'); };
         const abort = () => { cleanup(); resolve('abort'); };
 
@@ -509,8 +516,6 @@ async function interceptAndRestructurePrompt(data) {
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
-        Logger.map(`擬態排序: ${Logger.getSeqString(proposedStream)}`, LogLevels.DEBUG);
-
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
         let mapInfoText = "無變更";
@@ -545,7 +550,6 @@ async function interceptAndRestructurePrompt(data) {
                 }
             }
 
-            // 計算斷裂字元比例
             for (let i = 0; i < P.length; i++) {
                 let len = P[i].content?.length || 0;
                 proposedLen += len;
@@ -555,10 +559,7 @@ async function interceptAndRestructurePrompt(data) {
                 }
             }
 
-            if (isPureContextShift) {
-                wastedLen = 0; 
-                Logger.log(`[分析] 自然上下文推移，抑制彈窗。`, LogLevels.DEBUG);
-            }
+            if (isPureContextShift) { wastedLen = 0; Logger.log(`[分析] 自然上下文推移，抑制彈窗。`, LogLevels.DEBUG); }
 
             let dropRatio = proposedLen === 0 ? 0 : (wastedLen / proposedLen);
             
@@ -585,13 +586,11 @@ async function interceptAndRestructurePrompt(data) {
 
         if (requireResetConfirm) {
             setTopBarStatus('#ffaa00', `DS Cache: 阻斷中`);
-            
             if (Settings.autoAccept) {
-                Logger.warn(`[靜默重組] 已自動放行緩存重組，流失 ${dropPercentStr}%`);
-                if (typeof toastr !== 'undefined') toastr.info(`已在背景自動重組時序 (流失 ${dropPercentStr}%)`, "DS Cache 自動同步");
+                Logger.warn(`[靜默重組] 自動放行重組，流失 ${dropPercentStr}%`);
+                if (typeof toastr !== 'undefined') toastr.info(`已在背景自動重組時序 (流失 ${dropPercentStr}%)`, "DS Cache");
                 decision = 'reset';
             } else {
-                Logger.warn(`緩存流失 ${dropPercentStr}%，掛起等待確認...`, LogLevels.BASIC);
                 decision = await askUserForResetAsync(dropPercentStr, mapInfoText);
             }
         }
@@ -621,7 +620,7 @@ async function interceptAndRestructurePrompt(data) {
         safeSave();
 
         stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-        Logger.log('✅ 數據排序整理完成，授權發送。', LogLevels.BASIC);
+        Logger.log('✅ 排序整理完成，授權發送。', LogLevels.BASIC);
 
     } catch (err) {
         setTopBarStatus('#e06c75', 'DS Cache: 核心崩潰');
@@ -631,15 +630,8 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 8. 介面面板與事件綁定
+// 8. 介面面板與事件綁定 (精細化感知)
 // ==========================================
-function triggerWarningDirect(msg, toggle) {
-    if (!Settings.enabled || !toggle) return;
-    if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DS 狀態變更', { timeOut: 2000 });
-}
-
-const triggerWarningDebounced = debounce(triggerWarningDirect, 1200);
-
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
     if (container.length === 0) return;
@@ -653,7 +645,6 @@ function renderChatsUI() {
 
     const currentKey = getChatKey().key; 
     const sortedKeys = keys.sort((a, b) => {
-        // 當前聊天置頂，接著釘選置頂，最後照時間
         if (a === currentKey) return -1;
         if (b === currentKey) return 1;
         const pinA = Settings.pinnedChats[a] ? 1 : 0;
@@ -687,7 +678,7 @@ function renderChatsUI() {
                     </div>
                 </div>
                 <div class="ds-action-group">
-                    <button class="menu_button interactable ds-pin-btn" data-key="${key}" style="font-size:0.8em; padding:4px 8px; border-radius:4px; color:${pinColor};" title="${isPinned ? '取消釘選' : '釘選保護 (無視 GC 清理)'}">
+                    <button class="menu_button interactable ds-pin-btn" data-key="${key}" style="font-size:0.8em; padding:4px 8px; border-radius:4px; color:${pinColor};" title="${isPinned ? '取消釘選' : '釘選保護'}">
                         <span class="fa-solid fa-thumbtack"></span>
                     </button>
                     <button class="menu_button interactable ds-reset-btn" data-key="${key}" style="font-size:0.8em; padding:4px 8px; border-radius:4px; color:#e06c75;" title="刪除快取">
@@ -706,7 +697,6 @@ function renderChatsUI() {
         safeSave(); renderChatsUI();
         if (typeof toastr !== 'undefined') toastr.success("已刪除該存檔");
     });
-
     container.find('.ds-pin-btn').on('click', function() {
         const key = $(this).data('key');
         if (Settings.pinnedChats[key]) delete Settings.pinnedChats[key];
@@ -722,8 +712,6 @@ function showTopology() {
         if (typeof toastr !== 'undefined') toastr.info("當前對話尚無快取數據");
         return;
     }
-    
-    // 生成時間軸 HTML
     let timelineHtml = '';
     state.frozenSequence.forEach((m, idx) => {
         const preview = escapeHtml(m.content || '').substring(0, 100).replace(/\n/g, ' ↵ ');
@@ -746,7 +734,6 @@ function showTopology() {
         </div>
     `;
     $('body').append(html);
-    
     const closeTopo = () => { $('#ds-topo-wrapper').remove(); document.removeEventListener('keydown', topoKeyHandler, true); };
     $('#ds-btn-close-topo').click(closeTopo);
     const topoKeyHandler = (e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeTopo(); } };
@@ -757,24 +744,26 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v17-opt-drawer">
+        <div class="inline-drawer" id="ds-v18-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b><span class="fa-solid fa-shield-halved"></span> Deepseek Cache (v17 守護版)</b>
+                <b><span class="fa-solid fa-satellite-dish"></span> Deepseek Cache (v18 完備感知版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:15px; background: rgba(0,0,0,0.2);">
                 
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                     <label class="checkbox_label" style="font-weight:bold; color:#00e5ff;"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用時序守護引擎</label>
-                    <button id="ds-btn-topo" class="menu_button interactable" style="font-size:0.8em; padding:3px 8px; background:rgba(86,182,194,0.1); color:#56b6c2; border:1px solid #56b6c2;"><span class="fa-solid fa-eye"></span> 檢視拓撲時間軸</button>
+                    <button id="ds-btn-topo" class="menu_button interactable" style="font-size:0.8em; padding:3px 8px; background:rgba(86,182,194,0.1); color:#56b6c2; border:1px solid #56b6c2;"><span class="fa-solid fa-eye"></span> 檢視拓撲</button>
                 </div>
                 
-                <div style="margin:5px 0 15px 15px; border-left: 3px solid #00e5ff; padding-left: 12px;">
-                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 提示詞變更防抖通知</label>
-                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 世界書變更防抖通知</label>
-                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 歷史對話變更通知</label>
-                    <hr style="border: 0; border-top: 1px dashed rgba(255,255,255,0.1); margin: 6px 0;">
-                    <label class="checkbox_label" style="font-size:0.85em; color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 啟用視覺化攔截阻斷器</label>
+                <div style="margin:5px 0 15px 15px; border-left: 3px solid #00e5ff; padding-left: 12px; display:flex; flex-direction:column; gap:4px;">
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 📝 提示詞 (內容) 變更通知</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys-toggle" ${Settings.toastSysToggle ? 'checked' : ''}> 🎚️ 提示詞 (開關) 切換通知</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 📖 角色世界書變更通知</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-global-lore" ${Settings.toastGlobalLore ? 'checked' : ''}> 🌍 全局世界書變更通知</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 💬 歷史對話編輯/刪除通知</label>
+                    <hr style="border: 0; border-top: 1px dashed rgba(255,255,255,0.1); margin: 4px 0;">
+                    <label class="checkbox_label" style="font-size:0.85em; color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 🛑 啟用視覺化攔截阻斷器</label>
                     <label class="checkbox_label" style="font-size:0.85em; color:#e5c07b;" title="遇到斷裂時，自動在背景放行重組，不彈視窗"><input type="checkbox" id="ds-cache-auto-accept" ${Settings.autoAccept ? 'checked' : ''}> ⚡ 啟用靜默自動修復 (Auto-Accept)</label>
                 </div>
                 
@@ -820,7 +809,9 @@ async function setupUI() {
 
         $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); updateTopBarState(); });
         $('#ds-toast-sys').on('change', function () { Settings.toastSys = $(this).is(':checked'); safeSave(); });
+        $('#ds-toast-sys-toggle').on('change', function () { Settings.toastSysToggle = $(this).is(':checked'); safeSave(); });
         $('#ds-toast-lore').on('change', function () { Settings.toastLore = $(this).is(':checked'); safeSave(); });
+        $('#ds-toast-global-lore').on('change', function () { Settings.toastGlobalLore = $(this).is(':checked'); safeSave(); });
         $('#ds-toast-his').on('change', function () { Settings.toastHistory = $(this).is(':checked'); safeSave(); });
         $('#ds-toast-reset').on('change', function () { Settings.showResetPrompt = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-auto-accept').on('change', function () { Settings.autoAccept = $(this).is(':checked'); safeSave(); });
@@ -834,21 +825,17 @@ async function setupUI() {
         $('#ds-btn-clearlog').on('click', () => { $('#ds-cache-log-container').empty(); });
         $('#ds-btn-topo').on('click', showTopology);
 
-        // 備份與還原
         $('#ds-btn-export').on('click', exportData);
         $('#ds-btn-import').on('click', () => $('#ds-file-import').click());
         $('#ds-file-import').on('change', importData);
 
-        // 折疊面板
         $('#ds-toggle-chat').on('click', function() {
             $('#ds-chat-list-container').toggleClass('collapsed');
-            const isCollapsed = $('#ds-chat-list-container').hasClass('collapsed');
-            $(this).html(isCollapsed ? '<i class="fa-solid fa-chevron-down"></i> 展開' : '<i class="fa-solid fa-chevron-up"></i> 收摺');
+            $(this).html($('#ds-chat-list-container').hasClass('collapsed') ? '<i class="fa-solid fa-chevron-down"></i> 展開' : '<i class="fa-solid fa-chevron-up"></i> 收摺');
         });
         $('#ds-toggle-log').on('click', function() {
             $('#ds-cache-log-container').toggleClass('collapsed');
-            const isCollapsed = $('#ds-cache-log-container').hasClass('collapsed');
-            $(this).html(isCollapsed ? '<i class="fa-solid fa-chevron-down"></i> 展開' : '<i class="fa-solid fa-chevron-up"></i> 收摺');
+            $(this).html($('#ds-cache-log-container').hasClass('collapsed') ? '<i class="fa-solid fa-chevron-down"></i> 展開' : '<i class="fa-solid fa-chevron-up"></i> 收摺');
         });
         
         renderChatsUI();
@@ -860,30 +847,47 @@ jQuery(async () => {
         initSettings(); 
         await setupUI();
         
-        setTimeout(addTopMenuButton, 2000);
+        setTimeout(() => {
+            addTopMenuButton();
+            addBottomLeftMenuButton(); // 注入魔法棒擴充選單
+        }, 2000);
         
         if (eventSource) {
             eventSource.on(event_types.CHAT_CHANGED, () => {
                 addTopMenuButton();
+                addBottomLeftMenuButton();
                 renderChatsUI(); 
             });
 
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
                 eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             }
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningDebounced('歷史被刪除！準備原位補位', Settings.toastHistory));
-            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningDebounced('歷史被修改！準備原位更新', Settings.toastHistory));
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('his_del', '歷史對話被刪除！準備原位補位', Settings.toastHistory));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('his_edit', '歷史對話被修改！準備原位更新', Settings.toastHistory));
         }
 
+        // 1. 提示詞(內容)監聽
         $(document).on('change select2:select input focusout', '#chat_completion_preset, .preset_select, select[id*="preset"], #main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt', function() {
-            triggerWarningDebounced('提示詞變更！準備原位更新/附加', Settings.toastSys);
+            triggerWarning('sys_text', '提示詞內容變更！準備原位更新', Settings.toastSys);
         });
 
-        $(document).on('input change focusout', '.world_info_entry textarea, .world_info_entry input, #world_info_entries_list textarea, .lorebook_entry textarea, .drawer-content textarea', function() {
-            triggerWarningDebounced('世界書變更！準備原位更新/附加', Settings.toastLore);
+        // 2. 提示詞(開關)監聽 (包含任何名帶 prompt 的 checkbox)
+        $(document).on('change', 'input[type="checkbox"][id*="prompt"], input[type="checkbox"][id*="jailbreak"], input[type="checkbox"][id*="nsfw"], .prompt_toggle', function() {
+            triggerWarning('sys_toggle', '預設提示詞開關切換！準備原位更新', Settings.toastSysToggle);
         });
 
-        Logger.log('══════ v17.0 守護者版 (Aegis) 引擎上線 ══════', LogLevels.BASIC);
+        // 3. 世界書分離感知監聽 (文字區域與輸入框)
+        $(document).on('input change focusout', '.world_info_entry textarea, .world_info_entry input, .lorebook_entry textarea, .lorebook_entry input, #world_info_settings_panel textarea', function() {
+            // 利用 DOM 樹的父節點判斷是否為全局面板 (ST 的 W.I. Panel ID)
+            const isGlobal = $(this).closest('#world_info_panel, .world_info_manager').length > 0;
+            if (isGlobal) {
+                triggerWarning('lore_global', '全局世界書變更！準備原位附加', Settings.toastGlobalLore);
+            } else {
+                triggerWarning('lore_char', '角色專屬世界書變更！準備原位附加', Settings.toastLore);
+            }
+        });
+
+        Logger.log('══════ v18.0 完備感知版 (Omni-Sense) 引擎上線 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動失敗:', e);
     }
