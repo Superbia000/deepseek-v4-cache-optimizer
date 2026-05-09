@@ -2,228 +2,228 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 核心狀態與設定
+// 核心常數與全域狀態
 // ==========================================
+const PLUGIN_VERSION = 'v16.0 Ultimate Enterprise';
+const MAX_CACHED_CHATS = 50;
 let Settings = {};
-const PLUGIN_VERSION = 'v13.0 Ultimate';
 
-function initSettings() {
-    if (!extension_settings.ds_cache_v13) {
-        extension_settings.ds_cache_v13 = {
-            enabled: true,
-            toastSys: true,
-            toastLore: true,
-            toastHistory: true,
-            showResetPrompt: true,
-            logLevel: 3,
-            chats: {} 
-        };
-    }
-    Settings = extension_settings.ds_cache_v13;
-    if (!Settings.chats) Settings.chats = {}; 
-}
-
-function safeSave() {
-    try {
-        if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced();
-    } catch (e) {
-        console.warn("[DS Cache] 存檔失敗", e);
-    }
-}
-
-// ==========================================
-// 樣式注入 (CSS Injection)
-// ==========================================
-function injectCSS() {
-    if ($('#ds-cache-styles').length === 0) {
-        const css = `
-        <style id="ds-cache-styles">
-            .ds-panel-section { background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; padding: 10px; margin-bottom: 12px; }
-            .ds-panel-title { font-size: 0.9em; font-weight: bold; color: #aaa; margin-bottom: 8px; border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 4px; }
-            .ds-log-console { background: #0b0b0d; border: 1px solid #333; border-radius: 6px; height: 220px; overflow-y: auto; padding: 8px; font-family: 'Consolas', monospace; font-size: 11px; line-height: 1.4; }
-            .ds-log-line { margin-bottom: 4px; word-wrap: break-word; border-bottom: 1px solid rgba(255,255,255,0.03); padding-bottom: 2px; }
-            .ds-c-time { color: #666; }
-            .ds-c-info { color: #4CAF50; }
-            .ds-c-warn { color: #ffaa00; font-weight: bold; background: rgba(255,170,0,0.1); }
-            .ds-c-error{ color: #ff4444; font-weight: bold; }
-            .ds-c-map  { color: #00e5ff; }
-            .ds-c-debug{ color: #888; }
-            .ds-btn { background: #333; color: #fff; border: 1px solid #555; padding: 5px 10px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 0.85em; }
-            .ds-btn:hover { background: #444; }
-            .ds-btn-danger { background: rgba(244, 67, 54, 0.2); border-color: rgba(244, 67, 54, 0.5); color: #ff8888; }
-            .ds-btn-danger:hover { background: rgba(244, 67, 54, 0.4); }
-            .ds-chat-item { display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.05); padding: 6px 8px; margin-bottom: 4px; border-radius: 4px; }
-            
-            /* Modal Styles */
-            .ds-modal-overlay { position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); z-index:999999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
-            .ds-modal-box { background:#1e1e1e; border:1px solid #f44336; padding:25px; border-radius:12px; max-width:600px; width:90%; box-shadow: 0 15px 35px rgba(0,0,0,0.9); }
-            .ds-modal-map { background:#0a0a0a; border: 1px solid #333; padding:12px; border-radius:6px; font-family:monospace; font-size:12px; color:#00e5ff; margin:15px 0; overflow-x:auto; line-height:1.5; }
-        </style>`;
-        $('head').append(css);
-    }
-}
-
-// ==========================================
-// 富文本日誌系統 (Rich-Text Console)
-// ==========================================
-const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
-
-function logAt(level, type, msg) {
-    if (Settings.logLevel < level) return;
-    const now = new Date();
-    const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
-    
-    // Console output for F12
-    if (type === 'warn') console.warn(`[DS Cache] 🌪️ ${msg}`);
-    else if (type === 'error') console.error(`[DS Cache] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[DS Cache] 🗺️ ${msg}`, 'color: #00e5ff;');
-    else console.log(`[DS Cache] ✅ ${msg}`);
-    
-    // UI Console output
-    const consoleEl = $('#ds-cache-log-content');
-    if (consoleEl.length > 0) {
-        let cssClass = 'ds-c-info';
-        let icon = '✅';
-        if (type === 'warn') { cssClass = 'ds-c-warn'; icon = '🌪️'; }
-        else if (type === 'error') { cssClass = 'ds-c-error'; icon = '🔴'; }
-        else if (type === 'map') { cssClass = 'ds-c-map'; icon = '🗺️'; }
-        else if (level === LogLevels.DEBUG) { cssClass = 'ds-c-debug'; icon = '🔍'; }
-
-        const safeMsg = msg.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const line = $(`<div class="ds-log-line ${cssClass}"><span class="ds-c-time">[${time}]</span> ${icon} ${safeMsg}</div>`);
-        consoleEl.append(line);
-
-        // Keep only last 100 lines to prevent DOM bloat
-        if (consoleEl.children().length > 100) consoleEl.children().first().remove();
-        consoleEl.scrollTop(consoleEl[0].scrollHeight);
-    }
-}
-
-const Logger = {
-    log: (msg, level = LogLevels.DETAILED) => logAt(level, 'log', msg),
-    warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
-    map: (msg, level = LogLevels.BASIC) => logAt(level, 'map', msg),
-    error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
-    normalize: (text) => text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
-    getSeqString: (seq) => seq.map(m => `[${m.tag}]`).join(' ➔ ')
+const RuntimeCache = {
+    tokenMap: new Map(),
+    hashMap: new Map(),
+    sessionSavedTokens: 0,
+    sessionWastedTokens: 0
 };
 
 // ==========================================
-// 核心工具與效能優化算法
+// 初始化與資料庫遷移
+// ==========================================
+function initSettings() {
+    if (!extension_settings.ds_cache_v16) {
+        extension_settings.ds_cache_v16 = {
+            enabled: true,
+            sinkingMode: true,        // 動態下沉模式 (RAG 保全)
+            silentThreshold: 5,       // 靜默修復閾值 (%)
+            warnThreshold: 15,        // 彈窗警告閾值 (%)
+            costPerMillion: 0.014,    // 每百萬 Token 節省的美金 (DeepSeek V3 均價)
+            stats: {
+                totalSavedTokens: 0,
+                totalWastedTokens: 0,
+                totalRequests: 0,
+                totalBreaksPrevented: 0
+            },
+            logLevel: 2,
+            chats: {} 
+        };
+    }
+    Settings = extension_settings.ds_cache_v16;
+    if (!Settings.stats) Settings.stats = { totalSavedTokens: 0, totalWastedTokens: 0, totalRequests: 0, totalBreaksPrevented: 0 };
+    if (Settings.costPerMillion === undefined) Settings.costPerMillion = 0.014;
+    runGarbageCollection();
+}
+
+function safeSave() {
+    try { if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); } 
+    catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
+}
+
+function runGarbageCollection() {
+    const keys = Object.keys(Settings.chats);
+    if (keys.length <= MAX_CACHED_CHATS) return;
+    const sorted = keys.map(k => ({ key: k, ts: Settings.chats[k].lastUpdate || 0 })).sort((a, b) => b.ts - a.ts);
+    const toDelete = sorted.slice(MAX_CACHED_CHATS);
+    toDelete.forEach(item => delete Settings.chats[item.key]);
+    if (toDelete.length > 0) safeSave();
+}
+
+function yieldToMain() { return new Promise(resolve => setTimeout(resolve, 0)); }
+
+// ==========================================
+// 高精度哈希與經濟引擎
+// ==========================================
+function cyrb53(str, seed = 0) {
+    let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+    for (let i = 0, ch; i < str.length; i++) {
+        ch = str.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
+    return 4294967296 * (2097151 & h2) + (h1>>>0);
+}
+
+function getCompositeHash(str) {
+    if (RuntimeCache.hashMap.has(str)) return RuntimeCache.hashMap.get(str);
+    const compHash = `${cyrb53(str)}_${str.length}`;
+    RuntimeCache.hashMap.set(str, compHash);
+    return compHash;
+}
+
+function estimateTokens(text) {
+    if (!text) return 0;
+    const hash = getCompositeHash(text);
+    if (RuntimeCache.tokenMap.has(hash)) return RuntimeCache.tokenMap.get(hash);
+    
+    const cjk = (text.match(/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
+    const latin = (text.match(/[a-zA-Z0-9]/g) || []).length;
+    const punct = (text.match(/[.,!?;:()[\]{}"'<>]/g) || []).length;
+    const space = (text.match(/[\s\n]/g) || []).length;
+    const others = text.length - cjk - latin - punct - space;
+    
+    const count = Math.ceil((cjk * 1.5) + (latin * 0.3) + (punct * 0.5) + (space * 0.1) + (others * 1.0));
+    RuntimeCache.tokenMap.set(hash, count);
+    return count;
+}
+
+// 經濟結算
+function commitEconomics(saved, wasted) {
+    RuntimeCache.sessionSavedTokens += saved;
+    RuntimeCache.sessionWastedTokens += wasted;
+    Settings.stats.totalSavedTokens += saved;
+    Settings.stats.totalWastedTokens += wasted;
+    Settings.stats.totalRequests += 1;
+    safeSave();
+    updateDashboardUI();
+}
+
+// ==========================================
+// 系統日誌與差異分析引擎
+// ==========================================
+const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
+const Logger = {
+    log: (msg, level = LogLevels.DETAILED) => logAt(level, 'log', msg),
+    warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
+    error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err.message||err}` : msg),
+    map: (msg, level = LogLevels.BASIC) => logAt(level, 'map', msg),
+    debug: (msg) => logAt(LogLevels.DEBUG, 'debug', msg),
+    normalize: (text) => text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
+    getSeqString: (seq) => seq.map(m => `[${m.tag}]`).join('➔')
+};
+
+let logQueue = [], isLogging = false;
+async function processLogQueue() {
+    if (isLogging || logQueue.length === 0) return;
+    isLogging = true;
+    const consoleEl = $('#ds-cache-log-content');
+    if (consoleEl.length > 0) {
+        const frag = document.createDocumentFragment();
+        while (logQueue.length > 0) {
+            const { time, css, icon, safeMsg } = logQueue.shift();
+            const div = document.createElement('div');
+            div.className = `ds-log-line ${css}`;
+            div.innerHTML = `<span class="ds-c-time">[${time}]</span> ${icon} ${safeMsg}`;
+            frag.appendChild(div);
+        }
+        consoleEl.append(frag);
+        while (consoleEl.children().length > 150) consoleEl.children().first().remove();
+        requestAnimationFrame(() => consoleEl.scrollTop(consoleEl[0].scrollHeight));
+    } else logQueue = [];
+    isLogging = false;
+}
+
+function logAt(level, type, msg) {
+    if (Settings.logLevel < level) return;
+    const now = new Date(), time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
+    let css = 'ds-c-info', icon = '✅';
+    if (type === 'warn') { css = 'ds-c-warn'; icon = '⚠️'; console.warn(`[DS Cache] ${msg}`); }
+    else if (type === 'error') { css = 'ds-c-error'; icon = '🔴'; console.error(`[DS Cache] ${msg}`); }
+    else if (type === 'map') { css = 'ds-c-map'; icon = '🗺️'; }
+    else if (type === 'debug') { css = 'ds-c-debug'; icon = '🔍'; }
+    else console.log(`[DS Cache] ${msg}`);
+
+    logQueue.push({ time, css, icon, safeMsg: msg.replace(/</g, "&lt;").replace(/>/g, "&gt;") });
+    processLogQueue();
+}
+
+// ==========================================
+// 核心資料模型
 // ==========================================
 function createMsg(msg, tag) {
     const content = msg.content || '';
-    return { role: msg.role, content: content, norm: Logger.normalize(content), len: content.length, tag: tag };
+    const norm = Logger.normalize(content);
+    return { role: msg.role, content: content, norm: norm, hash: getCompositeHash(norm), tag: tag };
 }
 
-// 智能 Token 估算器 (考慮 CJK 字元)
-function estimateTokens(text) {
-    if (!text) return 0;
-    const cjkMatches = text.match(/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g) || [];
-    const latinMatches = text.match(/[a-zA-Z0-9]/g) || [];
-    const spaceMatches = text.match(/[\s\n]/g) || [];
-    const others = text.length - cjkMatches.length - latinMatches.length - spaceMatches.length;
-    // DeepSeek BPE 估算：中文約 1.5 token, 英文約 0.3 token, 其他符號 1 token
-    return (cjkMatches.length * 1.5) + (latinMatches.length * 0.3) + (spaceMatches.length * 0.1) + (others * 1.0);
-}
-
-// 多級效能優化版相似度對比
-function getSimilarity(str1, str2) {
-    if (str1 === str2) return 1;
+function getSimilarity(item1, item2) {
+    if (item1.hash === item2.hash) return 1;
+    const len1 = item1.norm.length, len2 = item2.norm.length;
+    if (len1 === 0 || len2 === 0 || Math.abs(len1 - len2) > Math.max(len1, len2) * 0.4 || (len1 < 15 || len2 < 15)) return 0;
     
-    const len1 = str1.length;
-    const len2 = str2.length;
-    if (len1 === 0 || len2 === 0) return 0;
-
-    // 1. 長度過濾 (Length Prefiltering)
-    if (Math.abs(len1 - len2) > Math.max(len1, len2) * 0.4) return 0;
-
-    // 2. 短字串守衛 (Short-string Guard)
-    if (len1 < 15 || len2 < 15) return 0; // 短字串必須完全一致 (上面已處理)
-
-    // 3. Bigram 對比
-    const s1 = len1 < len2 ? str1 : str2;
-    const s2 = len1 < len2 ? str2 : str1;
+    const s1 = len1 < len2 ? item1.norm : item2.norm, s2 = len1 < len2 ? item2.norm : item1.norm;
     const bigrams = new Set();
     for (let i = 0; i < s1.length - 1; i++) bigrams.add(s1.substring(i, i+2));
     
     let matchCount = 0;
-    for (let i = 0; i < s2.length - 1; i++) {
-        if (bigrams.has(s2.substring(i, i+2))) matchCount++;
-    }
-    
+    for (let i = 0; i < s2.length - 1; i++) if (bigrams.has(s2.substring(i, i+2))) matchCount++;
     const union = (s1.length - 1) + (s2.length - 1) - matchCount;
     return union <= 0 ? 1 : matchCount / union;
 }
 
-function stripPrefillFromAssistant(assistantObj, prefills) {
+function stripPrefill(assistantObj, prefills) {
     if (!assistantObj || !prefills || prefills.length === 0) return assistantObj;
-    let content = assistantObj.content || '';
-    let modified = false;
+    let content = assistantObj.content || '', modified = false;
     for (const p of prefills) {
-        const pContent = p.content || '';
-        if (content.startsWith(pContent)) { content = content.substring(pContent.length); modified = true; }
+        if (content.startsWith(p.content)) { content = content.substring(p.content.length); modified = true; }
     }
-    if (modified) {
-        content = content.replace(/^[\s\n]+/, ''); 
-        return { ...assistantObj, content: content, norm: Logger.normalize(content), len: content.length };
-    }
-    return assistantObj;
+    return modified ? createMsg({ ...assistantObj, content: content.replace(/^[\s\n]+/, '') }, assistantObj.tag) : assistantObj;
 }
 
-// ==========================================
-// 數據流解析與狀態獲取
-// ==========================================
 function getChatKey() {
-    const context = getContext();
-    let charName = "Unknown";
-    if (context.characterId !== undefined && context.characters && context.characters[context.characterId]) {
-        charName = context.characters[context.characterId].name || context.characterId;
-    } else if (context.name2) charName = context.name2;
-    let chatId = context.chatId || "default_chat";
-    let groupId = context.groupId;
-    if (groupId) return { key: `group_${groupId}_${chatId}`, label: `群組: ${chatId}` };
-    return { key: `char_${context.characterId}_${chatId}`, label: `角色: ${charName} | 存檔: ${chatId}` };
+    const ctx = getContext();
+    const charName = (ctx.characterId !== undefined && ctx.characters && ctx.characters[ctx.characterId]) ? ctx.characters[ctx.characterId].name : (ctx.name2 || "Unknown");
+    const chatId = ctx.chatId || "default_chat";
+    return ctx.groupId ? { key: `group_${ctx.groupId}_${chatId}`, label: `群組: ${chatId}` } : { key: `char_${ctx.characterId}_${chatId}`, label: `角色: ${charName} | 存檔: ${chatId}` };
 }
 
 function getChatState(chatKeyInfo) {
     if (!Settings.chats[chatKeyInfo.key]) {
-        Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, frozenSequence: [], lastSentSequence: [], lastPrefills: [] };
-        safeSave(); renderChatsUI();
+        Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, frozenSequence: [], lastSentSequence: [], lastPrefills: [], lastUpdate: Date.now() };
     }
+    Settings.chats[chatKeyInfo.key].lastUpdate = Date.now();
     return Settings.chats[chatKeyInfo.key];
 }
 
 function parseSTStream(stream) {
-    const sysMsgs = [];
-    const chatMsgs = [];
+    const sysMsgs = [], chatMsgs = [];
     for (const msg of stream) {
-        const isSys = (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant'));
-        if (isSys) sysMsgs.push(createMsg(msg, 'SYS'));
+        if (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant')) sysMsgs.push(createMsg(msg, 'SYS'));
         else chatMsgs.push(createMsg(msg, msg.role === 'user' ? 'USER' : 'AI'));
     }
-
     let lastUserIdx = -1;
     for (let i = chatMsgs.length - 1; i >= 0; i--) { if (chatMsgs[i].tag === 'USER') { lastUserIdx = i; break; } }
 
-    let historyTurns = [];
-    let currentTurn = { user: null, prefills: [] };
-
-    if (lastUserIdx === -1) {
-        currentTurn.prefills = chatMsgs.filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
-    } else {
-        const hMsgs = chatMsgs.slice(0, lastUserIdx);
-        const cMsgs = chatMsgs.slice(lastUserIdx);
+    let historyTurns = [], currentTurn = { user: null, prefills: [] };
+    if (lastUserIdx === -1) currentTurn.prefills = chatMsgs.filter(m => m.tag === 'AI').map(m => createMsg(m, 'PREFILL'));
+    else {
+        const hMsgs = chatMsgs.slice(0, lastUserIdx), cMsgs = chatMsgs.slice(lastUserIdx);
         currentTurn.user = cMsgs[0];
-        currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
+        currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => createMsg(m, 'PREFILL'));
 
-        let curUser = null;
-        let curAiContents = [];
+        let curUser = null, curAiContents = [];
         for (const msg of hMsgs) {
             if (msg.tag === 'USER') {
                 if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
-                curUser = msg;
-                curAiContents = [];
+                curUser = msg; curAiContents = [];
             } else if (msg.tag === 'AI') curAiContents.push(msg.content);
         }
         if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
@@ -232,41 +232,53 @@ function parseSTStream(stream) {
 }
 
 // ==========================================
-// 優化版 UI 攔截器 (玻璃擬態設計)
+// UI 經濟彈窗與分析視圖
 // ==========================================
-function askUserForResetAsync(dropPercent, mapInfo) {
+function askUserForResetAsync(stats, lNode, pNode) {
     return new Promise(resolve => {
-        const overlay = $(`<div class="ds-modal-overlay"></div>`);
+        const overlay = $(`<div class="ds-modal-bg"></div>`);
+        const moneyLost = ((stats.wastedTokens / 1000000) * Settings.costPerMillion).toFixed(5);
+        
+        let diffHtml = `
+            <div style="display:flex; flex-direction:column; gap:8px;">
+                <div style="background:rgba(229,115,115,0.1); border-left:3px solid #e57373; padding:8px; border-radius:4px;">
+                    <span style="color:#e57373; font-weight:bold; font-size:11px;">[原緩存節點]</span><br>
+                    <span style="color:#aaa;">${lNode ? lNode.content.substring(0,80).replace(/</g,'&lt;') + '...' : 'EOF'}</span>
+                </div>
+                <div style="background:rgba(129,199,132,0.1); border-left:3px solid #81c784; padding:8px; border-radius:4px;">
+                    <span style="color:#81c784; font-weight:bold; font-size:11px;">[闖入的修改]</span><br>
+                    <span style="color:#eee;">${pNode ? pNode.content.substring(0,80).replace(/</g,'&lt;') + '...' : 'EOF'}</span>
+                </div>
+            </div>`;
+
         const box = $(`
         <div class="ds-modal-box">
-            <h2 style="color:#f44336; margin-top:0; font-size: 1.5em; display:flex; align-items:center; gap:10px;">
-                <span class="fa-solid fa-triangle-exclamation"></span> 緩存斷裂預警 (原位同步中)
+            <h2 style="color:#ef5350; margin-top:0; font-size: 1.4em; display:flex; align-items:center; gap:8px;">
+                <span class="fa-solid fa-money-bill-wave"></span> 緩存擊穿警告
             </h2>
-            <p style="text-align:left; line-height:1.6; font-size:14px; color:#ddd;">
-                檢測到陣列前排發生了變更。這將導致 KV 緩存鏈條斷裂，預計 <b>${dropPercent}%</b> 的歷史運算量將流失。<br><br>
-                <b style="color:#4CAF50;">✅ 插件已自動完成時序陣列的「原位更新」與「自動補位」。</b>請問要接受本次修改嗎？
+            <p style="text-align:left; line-height:1.6; font-size:14px; color:#cfd8dc;">
+                發生了嚴重拓撲斷裂 <b>(流失率: ${stats.dropPercentStr}%)</b>。<br>
+                將有 <b style="color:#ef5350;">${stats.wastedTokens.toLocaleString()}</b> Tokens 被迫重算，估計浪費 <b>$${moneyLost} USD</b>。
             </p>
-            <div class="ds-modal-map"><b>斷裂詳情：</b><br>${mapInfo}</div>
-            <div style="margin-top:25px; display:flex; justify-content:space-between; gap:12px;">
-                <button id="ds-btn-accept" style="flex:1; background:#4CAF50; color:white; padding:12px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; font-size:14px; transition:0.2s;">
-                    🔄 確認同步<br><span style="font-size:11px; font-weight:normal; opacity:0.8;">(接受原位修改並發送)</span>
+            <div class="ds-modal-map">${diffHtml}</div>
+            <div style="margin-top:20px; display:flex; gap:15px;">
+                <button id="ds-m-accept" style="flex:1; background:#43a047; color:white; padding:12px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; transition:0.2s;">
+                    🔄 認賠發送 (重建緩存)
                 </button>
-                <button id="ds-btn-abort" style="flex:1; background:#f44336; color:white; padding:12px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; font-size:14px; transition:0.2s;">
-                    🛑 攔截發送<br><span style="font-size:11px; font-weight:normal; opacity:0.8;">(中止生成去復原)</span>
+                <button id="ds-m-abort" style="flex:1; background:#e53935; color:white; padding:12px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; transition:0.2s;">
+                    🛑 攔截請求 (我去修復)
                 </button>
             </div>
         </div>`);
 
-        overlay.append(box);
-        $('body').append(overlay);
-
-        $('#ds-btn-accept').hover(function(){$(this).css('opacity','0.8')}, function(){$(this).css('opacity','1')}).click(() => { overlay.remove(); resolve('reset'); });
-        $('#ds-btn-abort').hover(function(){$(this).css('opacity','0.8')}, function(){$(this).css('opacity','1')}).click(() => { overlay.remove(); resolve('abort'); });
+        overlay.append(box); $('body').append(overlay);
+        $('#ds-m-accept').hover(function(){$(this).css('filter','brightness(1.2)')}, function(){$(this).css('filter','none')}).click(() => { overlay.remove(); resolve('reset'); });
+        $('#ds-m-abort').hover(function(){$(this).css('filter','brightness(1.2)')}, function(){$(this).css('filter','none')}).click(() => { overlay.remove(); resolve('abort'); });
     });
 }
 
 // ==========================================
-// 核心處理器 (v13 企業級時序映射引擎)
+// 核心引擎：v16 經濟管家與動態下沉
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -277,78 +289,65 @@ async function interceptAndRestructurePrompt(data) {
         if (!data?.chat?.length) return;
         const stream = data.chat;
 
+        Logger.log(`================ 引擎啟動 ================`, LogLevels.BASIC);
         const { sysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
-        Logger.log(`=================================================`, LogLevels.BASIC);
+        await yieldToMain();
 
-        // 建立 ST 當前的扁平歷史池
         const flatHistoryPool = [];
         for(let t of historyTurns) {
             flatHistoryPool.push(t.user);
-            if(t.assistant) flatHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
+            if(t.assistant) flatHistoryPool.push(stripPrefill(t.assistant, state.lastPrefills));
         }
 
         let rawFrozenSequence = [];
         const sysMsgsPool = [...sysMsgs];
         const remainingHistory = [...flatHistoryPool];
         
-        // ---------------------------------------------------------
-        // 第一階段：遍歷凍結陣列，進行原位同步
-        // ---------------------------------------------------------
+        // --- 階段 1：原位映射 ---
         for (let i = 0; i < state.frozenSequence.length; i++) {
+            if (i % 15 === 0) await yieldToMain();
             const item = state.frozenSequence[i];
+            const targetPool = item.tag === 'SYS' ? sysMsgsPool : remainingHistory;
             
-            if (item.tag === 'SYS') {
-                let bestIdx = -1, bestScore = 0;
-                for (let j = 0; j < sysMsgsPool.length; j++) {
-                    const score = getSimilarity(item.norm, sysMsgsPool[j].norm);
+            let bestIdx = targetPool.findIndex(p => p.hash === item.hash && p.tag === item.tag);
+            let bestScore = bestIdx !== -1 ? 1 : 0;
+            
+            if (bestIdx === -1) {
+                for (let j = 0; j < targetPool.length; j++) {
+                    if (item.tag !== 'SYS' && item.tag !== targetPool[j].tag) continue;
+                    const score = getSimilarity(item, targetPool[j]);
                     if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
-                if (bestScore === 1) { 
-                    rawFrozenSequence.push(sysMsgsPool[bestIdx]); 
-                    sysMsgsPool.splice(bestIdx, 1); 
-                } else if (bestScore > 0.2) { 
-                    const matchedItem = sysMsgsPool[bestIdx];
-                    rawFrozenSequence.push(matchedItem); 
-                    sysMsgsPool.splice(bestIdx, 1);
-                    Logger.warn(`[SYS 原位更新] 索引 ${i} ➔ ${matchedItem.content.substring(0,15).replace(/\n/g, '')}...`, LogLevels.DEBUG);
-                } else {
-                    Logger.warn(`[SYS 原位刪除] 遺失索引 ${i}，觸發自動上移補位。`, LogLevels.DEBUG);
-                }
-            } 
-            else if (item.tag === 'USER' || item.tag === 'AI') {
-                let bestIdx = -1, bestScore = 0;
-                for (let j = 0; j < remainingHistory.length; j++) {
-                    if (item.tag !== remainingHistory[j].tag) continue;
-                    const score = getSimilarity(item.norm, remainingHistory[j].norm);
-                    if (score > bestScore) { bestScore = score; bestIdx = j; }
-                }
-                if (bestScore > 0.3) {
-                    rawFrozenSequence.push(remainingHistory[bestIdx]);
-                    remainingHistory.splice(bestIdx, 1);
-                } else {
-                    Logger.warn(`[歷史原位刪除] 歷史訊息遺失，觸發自動上移補位。`, LogLevels.DEBUG);
-                }
+            }
+
+            if (bestScore === 1) { 
+                rawFrozenSequence.push(targetPool[bestIdx]); 
+                targetPool.splice(bestIdx, 1); 
+            } else if (bestScore > 0.3) { 
+                rawFrozenSequence.push(targetPool[bestIdx]); 
+                Logger.debug(`[熱修復] ${item.tag} 相似度 ${(bestScore*100).toFixed(0)}%`);
+                targetPool.splice(bestIdx, 1);
             }
         }
 
-        // ---------------------------------------------------------
-        // 第二階段：附加新生代數據 (保持交錯排序)
-        // ---------------------------------------------------------
+        // --- 階段 2：新生節點處理 (動態下沉技術) ---
         for (let h of remainingHistory) rawFrozenSequence.push(h);
-
-        for (let sys of sysMsgsPool) {
-            rawFrozenSequence.push(sys);
-            Logger.log(`[SYS 新增附加] 插入歷史尾部: ${sys.content.substring(0,15).replace(/\n/g, '')}...`, LogLevels.DEBUG);
+        
+        if (Settings.sinkingMode) {
+            // 🧲 動態下沉：所有新闖入的系統提示詞 (通常是 RAG 或世界書) 強制掛載在最後方，保全前排數萬字 Cache
+            for (let sys of sysMsgsPool) {
+                rawFrozenSequence.push(sys);
+                Logger.log(`[動態下沉] 已將新插入的設定推至陣列尾端，完美保全緩存。`, LogLevels.BASIC);
+            }
+        } else {
+            // 靜態錨定：插入前端 (極易破壞緩存)
+            for (let sys of sysMsgsPool) rawFrozenSequence.splice(1, 0, sys);
         }
 
-        // 去重
         let dedupedSequence = [];
-        const seenSysNorms = new Set();
+        const seenHash = new Set();
         for (const item of rawFrozenSequence) {
-            if (item.tag === 'SYS') {
-                if (seenSysNorms.has(item.norm)) continue;
-                seenSysNorms.add(item.norm);
-            }
+            if (item.tag === 'SYS') { if (seenHash.has(item.hash)) continue; seenHash.add(item.hash); }
             dedupedSequence.push(item);
         }
 
@@ -356,76 +355,66 @@ async function interceptAndRestructurePrompt(data) {
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
-        Logger.map(`當前時序拓撲圖: \n${Logger.getSeqString(proposedStream)}`, LogLevels.BASIC);
+        Logger.map(`拓撲預覽: ${Logger.getSeqString(proposedStream)}`, LogLevels.BASIC);
 
-        // ---------------------------------------------------------
-        // 第三階段：智能緩存斷裂計算與邊緣豁免 (Edge-Case Immunity)
-        // ---------------------------------------------------------
-        let requireResetConfirm = false;
-        let dropPercentStr = "0.0";
-        let mapInfoText = "無變更";
+        // --- 階段 3：經濟結算與滑動對齊 ---
+        let L = state.lastSentSequence || [];
+        let P = proposedStream;
+        
+        let slideOffset = 0;
+        for(let i = 0; i < Math.min(L.length, 15); i++) {
+            if(P.length > 0 && P[0].hash === L[i].hash) { slideOffset = i; break; }
+        }
+        if (slideOffset > 0) {
+            Logger.debug(`[滑動對齊] 補償 ${slideOffset} 個歷史擠出`);
+            L = L.slice(slideOffset);
+        }
 
-        if (state.lastSentSequence && state.lastSentSequence.length > 0) {
-            const L = state.lastSentSequence;
-            const P = proposedStream;
+        let breakIdx = -1;
+        for (let i = 0; i < Math.min(L.length, P.length); i++) {
+            if (L[i].role !== P[i].role || L[i].hash !== P[i].hash) { breakIdx = i; break; }
+        }
+        if (breakIdx === -1) breakIdx = P.length;
 
-            let breakIndex = -1;
-            for (let i = 0; i < Math.min(L.length, P.length); i++) {
-                if (L[i].role !== P[i].role || L[i].norm !== P[i].norm) { breakIndex = i; break; }
-            }
-            if (breakIndex === -1) breakIndex = P.length;
-
-            let wastedTokensCount = 0;
-            let totalTokensCount = 0;
-
-            for (let i = 0; i < P.length; i++) {
-                const tCount = estimateTokens(P[i].content);
-                totalTokensCount += tCount;
-                
-                if (i >= breakIndex) {
-                    // 【豁免 A】尾部重骰 (Swipe Regenerate) 豁免
-                    if (i === P.length - 1 && P[i].tag === 'AI') {
-                        Logger.log(`[智能豁免] 偵測到末尾 AI 重新生成 (Swipe)，免除流失懲罰。`, LogLevels.DEBUG);
-                        continue;
-                    }
-
-                    let foundInL = L.some(oldM => oldM.role === P[i].role && oldM.norm === P[i].norm);
-                    if (foundInL) wastedTokensCount += tCount;
-                }
-            }
-
-            // 【豁免 B】時光倒流與分支切換 (Branch Switching)
-            if (P.length < L.length - 2) {
-                Logger.warn(`[智能豁免] 偵測到歷史大幅倒退(讀檔/刪除)，自動重置基準線，免除彈窗。`, LogLevels.BASIC);
-                wastedTokensCount = 0; 
-            }
-
-            let dropRatio = totalTokensCount === 0 ? 0 : (wastedTokensCount / totalTokensCount);
-            
-            if (dropRatio > 0.10 && Settings.showResetPrompt) {
-                requireResetConfirm = true;
-                dropPercentStr = (dropRatio * 100).toFixed(1);
-                mapInfoText = `斷裂點位於索引 [${breakIndex}] (${P[breakIndex]?.tag})\n原文: ${L[breakIndex]?.content?.substring(0,25).replace(/\n/g, ' ')}\n現狀: ${P[breakIndex]?.content?.substring(0,25).replace(/\n/g, ' ')}`;
-                Logger.warn(`檢測到緩存流失 ${dropPercentStr}%，準備攔截...`, LogLevels.BASIC);
+        let prefixTokens = 0, newTokens = 0;
+        for (let i = 0; i < P.length; i++) {
+            const tCount = estimateTokens(P[i].content);
+            if (i < breakIdx) prefixTokens += tCount;
+            else {
+                // Swipe 豁免
+                if (i === P.length - 1 && P[i].tag === 'AI') continue;
+                newTokens += tCount;
             }
         }
 
-        // ---------------------------------------------------------
-        // 第四階段：決策與覆蓋
-        // ---------------------------------------------------------
+        const totalTokens = prefixTokens + newTokens;
+        const dropRatio = totalTokens === 0 ? 0 : (newTokens / totalTokens);
+        const dropPercent = (dropRatio * 100).toFixed(1);
+        
+        Logger.log(`💰 經濟探測: 總量 ${totalTokens.toLocaleString()} T | 保全 ${prefixTokens.toLocaleString()} T | 流失 ${newTokens.toLocaleString()} T (${dropPercent}%)`, LogLevels.BASIC);
+
+        // --- 階段 4：雙軌閘門決策 ---
         let decision = 'ignore';
-        if (requireResetConfirm) decision = await askUserForResetAsync(dropPercentStr, mapInfoText);
+        
+        if (dropRatio * 100 > Settings.warnThreshold) {
+            const stats = { wastedTokens: newTokens, dropPercentStr: dropPercent };
+            decision = await askUserForResetAsync(stats, L[breakIdx], P[breakIdx]);
+        } else if (dropRatio * 100 > Settings.silentThreshold) {
+            Logger.warn(`觸發靜默修復閾值 (${dropPercent}%)，自動放行並重建拓撲。`);
+            decision = 'reset';
+        }
 
         if (decision === 'abort') {
-            Logger.error('[攔截生效] 已清空流數據以強制中止生成', null, LogLevels.BASIC);
-            if (typeof toastr !== 'undefined') toastr.error("已強制攔截本次請求！請復原提示詞。", "緩存防護");
+            Settings.stats.totalBreaksPrevented += 1;
+            safeSave(); updateDashboardUI();
+            Logger.error('[攔截生效] 守護了你的錢包', null, LogLevels.BASIC);
+            if (typeof toastr !== 'undefined') toastr.error(`已攔截！避免了 ${newTokens} Tokens 的浪費。`, "守財奴系統");
             stream.splice(0, stream.length); 
             return;
         }
 
-        if (decision === 'reset') {
-            Logger.warn('[確認同步] 用戶接受緩存流失，已寫入最新時序排序。', LogLevels.BASIC);
-        }
+        // 發送授權
+        commitEconomics(prefixTokens, newTokens);
 
         state.frozenSequence = dedupedSequence;
         state.lastPrefills = currentTurn.prefills;
@@ -435,126 +424,146 @@ async function interceptAndRestructurePrompt(data) {
         for (const p of currentTurn.prefills) finalStream.push(p);
 
         state.lastSentSequence = finalStream;
-        safeSave();
+        safeSave(); renderChatsUI();
 
         stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-        Logger.log('✅ 數據排序整理完成，授權發送。', LogLevels.BASIC);
+        Logger.log(`✅ 通關放行 (命中率: ${(totalTokens===0?0:(prefixTokens/totalTokens)*100).toFixed(1)}%)`, LogLevels.BASIC);
 
     } catch (err) {
-        Logger.error('攔截器發生錯誤', err.message);
+        Logger.error('經濟引擎崩潰', err);
         throw err;
     }
 }
 
 // ==========================================
-// ST 頂部擴充選單集成
+// 企業級 UI 注入與 CSS
 // ==========================================
-function addTopMenuButton() {
-    if ($('#ds-top-reset-btn').length === 0) {
-        const btn = $(`<li id="ds-top-reset-btn" class="menu_button interactable" title="清空當前聊天的 DeepSeek 快取排序，還原為 ST 預設"><span class="fa-solid fa-rotate-right"></span> 清空 DS 緩存</li>`);
-        btn.on('click', () => {
-            if(!confirm("確定要完全清空當前聊天的緩存排序狀態嗎？\n這將使所有提示詞回到 ST 預設的頂部排序！")) return;
-            const key = getChatKey().key;
-            delete Settings.chats[key];
-            safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success("當前聊天的緩存排序已清空！", "DS Cache");
-            Logger.warn(`[手動清空] 用戶清空了當前存檔狀態: ${key}`);
-        });
-        if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
-        else if ($('#right-nav-extensions').length > 0) $('#right-nav-extensions').append(btn);
+function injectCSS() {
+    if ($('#ds-v16-styles').length === 0) {
+        const css = `
+        <style id="ds-v16-styles">
+            .ds-dash { background: linear-gradient(145deg, #1e3c72 0%, #2a5298 100%); border-radius: 8px; padding: 15px; margin-bottom: 12px; color: white; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+            .ds-dash-title { font-size: 1.1em; font-weight: 800; margin-bottom: 10px; text-shadow: 1px 1px 2px rgba(0,0,0,0.5); display:flex; justify-content:space-between;}
+            .ds-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+            .ds-stat-box { background: rgba(0,0,0,0.25); padding: 10px; border-radius: 6px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }
+            .ds-stat-val { font-size: 1.4em; font-weight: bold; color: #4dd0e1; margin-top: 4px; font-family: monospace;}
+            .ds-stat-val.money { color: #81c784; }
+            .ds-panel { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+            .ds-title { font-size: 0.9em; font-weight: bold; color: #b0bec5; margin-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 5px; display:flex; justify-content:space-between; align-items:center;}
+            .ds-console { background: #08080a; border: 1px inset #222; border-radius: 6px; height: 160px; overflow-y: auto; padding: 8px; font-family: 'Consolas', monospace; font-size: 11px; line-height: 1.5; }
+            .ds-log-line { border-bottom: 1px dashed rgba(255,255,255,0.02); padding: 3px 0; word-break: break-all; }
+            .ds-c-time { color: #555; } .ds-c-info { color: #81c784; } .ds-c-warn { color: #ffb74d; } .ds-c-error{ color: #e57373; font-weight: bold; } .ds-c-map { color: #4dd0e1; } .ds-c-debug{ color: #78909c; }
+            .ds-btn { background: #263238; color: #fff; border: 1px solid #37474f; padding: 6px 12px; border-radius: 4px; cursor: pointer; transition: 0.2s; font-size: 0.85em; }
+            .ds-btn:hover { background: #37474f; }
+            .ds-btn-danger { background: rgba(229, 115, 115, 0.15); border-color: rgba(229, 115, 115, 0.4); color: #e57373; }
+            .ds-btn-danger:hover { background: rgba(229, 115, 115, 0.3); }
+            .ds-modal-bg { position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.85); z-index:999999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(5px); }
+            .ds-modal-box { background:#121212; border:1px solid #ef5350; padding:25px; border-radius:12px; max-width:650px; width:90%; box-shadow: 0 20px 40px rgba(0,0,0,0.8); }
+            .ds-modal-map { background:#0a0a0a; border: 1px inset #222; padding:12px; border-radius:6px; font-family:monospace; font-size:12px; margin:15px 0; max-height: 200px; overflow-y:auto;}
+        </style>`;
+        $('head').append(css);
     }
 }
 
-// ==========================================
-// 企業級 UI 面板構建
-// ==========================================
-let warningTimeout = null;
-function triggerWarning(msg, toggle) {
-    if (!Settings.enabled || !toggle) return;
-    if (warningTimeout) clearTimeout(warningTimeout);
-    warningTimeout = setTimeout(() => {
-        if (typeof toastr !== 'undefined') toastr.warning(msg, '⚠️ 提示詞狀態變更', { timeOut: 3000 });
-    }, 300); 
+function formatNumber(num) {
+    if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return num.toString();
+}
+
+function updateDashboardUI() {
+    $('#ds-val-tokens').text(formatNumber(Settings.stats.totalSavedTokens));
+    const usd = ((Settings.stats.totalSavedTokens / 1000000) * Settings.costPerMillion).toFixed(3);
+    $('#ds-val-usd').text('$' + usd);
+    $('#ds-val-reqs').text(Settings.stats.totalRequests);
+    $('#ds-val-blocks').text(Settings.stats.totalBreaksPrevented);
 }
 
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
     if (container.length === 0) return;
     container.empty();
-    
-    const keys = Object.keys(Settings.chats);
-    if (keys.length === 0) {
-        container.append('<div style="opacity:0.5; font-size:12px; padding:10px; text-align:center;">尚無接管的存檔數據</div>');
-        return;
-    }
+    const keys = Object.keys(Settings.chats).sort((a,b) => (Settings.chats[b].lastUpdate || 0) - (Settings.chats[a].lastUpdate || 0));
+    $('#ds-cache-mem-usage').text(`${keys.length}/${MAX_CACHED_CHATS}`);
 
+    if (keys.length === 0) { container.append('<div style="opacity:0.4; font-size:12px; padding:15px; text-align:center;">無資料</div>'); return; }
     keys.forEach(key => {
-        const chat = Settings.chats[key];
-        const html = `
-            <div class="ds-chat-item">
-                <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:70%;" title="${chat.label}">${chat.label}</span>
-                <button class="ds-btn ds-reset-btn" data-key="${key}">清除</button>
+        container.append(`
+            <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:6px 8px; margin-bottom:4px; border-radius:4px;">
+                <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:75%;">${Settings.chats[key].label}</span>
+                <button class="ds-btn ds-reset-btn" style="padding:2px 6px; font-size:0.8em;" data-key="${key}">清除</button>
             </div>
-        `;
-        container.append(html);
+        `);
     });
+    container.find('.ds-reset-btn').on('click', function() { delete Settings.chats[$(this).data('key')]; safeSave(); renderChatsUI(); });
+}
 
-    container.find('.ds-reset-btn').on('click', function() {
-        const key = $(this).data('key');
-        delete Settings.chats[key];
-        safeSave(); renderChatsUI();
-        if (typeof toastr !== 'undefined') toastr.success("已清空該存檔排序");
-    });
+function exportTelemetry() {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(Settings, null, 2));
+    const dlAnchorElem = document.createElement('a');
+    dlAnchorElem.setAttribute("href", dataStr);
+    dlAnchorElem.setAttribute("download", `ds_cache_telemetry_${Date.now()}.json`);
+    dlAnchorElem.click();
 }
 
 async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v13-opt-drawer">
+        <div class="inline-drawer" id="ds-v16-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 快取防護 (${PLUGIN_VERSION})</b>
+                <b>Deepseek 經濟管家 (${PLUGIN_VERSION})</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
                 
-                <!-- 核心控制區 -->
-                <div class="ds-panel-section">
-                    <div class="ds-panel-title">🛡️ 核心控制引擎</div>
-                    <label class="checkbox_label" title="開啟後將強制接管發送陣列，實現原位更新與時序凍結"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用絕對時序映射引擎</label>
-                    <label class="checkbox_label" title="當檢測到超過 10% 的 Tokens 發生流失斷裂時，彈出攔截視窗"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 啟用 10% 緩存斷裂防護閘 (異步攔截)</label>
-                </div>
-                
-                <!-- 監聽器觸發區 -->
-                <div class="ds-panel-section">
-                    <div class="ds-panel-title">🔔 編輯監聽器彈窗 (Toast)</div>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px;">
-                        <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 系統/預設修改</label>
-                        <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 世界書變更</label>
-                        <label class="checkbox_label" style="font-size:0.85em; grid-column: 1 / span 2;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 歷史對話編輯/刪除</label>
+                <!-- 經濟看板 -->
+                <div class="ds-dash">
+                    <div class="ds-dash-title"><span>💰 企業經濟看板 (ROI)</span><span style="font-size:0.8em; font-weight:normal; opacity:0.8;">費率: $${Settings.costPerMillion}/1M</span></div>
+                    <div class="ds-stat-grid">
+                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">白嫖 Token 總量</div><div class="ds-stat-val" id="ds-val-tokens">0</div></div>
+                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">為您節省 (USD)</div><div class="ds-stat-val money" id="ds-val-usd">$0.00</div></div>
+                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">總發送次數</div><div class="ds-stat-val" style="color:#fff;" id="ds-val-reqs">0</div></div>
+                        <div class="ds-stat-box"><div style="font-size:11px; color:#cfd8dc;">攔截斷裂次數</div><div class="ds-stat-val" style="color:#ef5350;" id="ds-val-blocks">0</div></div>
                     </div>
-                </div>
-                
-                <!-- 存檔管理區 -->
-                <div class="ds-panel-section">
-                    <div class="ds-panel-title">📂 存檔狀態緩存池</div>
-                    <div id="ds-chat-list-container" style="max-height:140px; overflow-y:auto; background:rgba(0,0,0,0.3); border-radius:4px; padding:4px;"></div>
-                    <button id="ds-cache-factory-reset" class="ds-btn ds-btn-danger" style="width:100%; margin-top:8px;" title="清除所有聊天室的時序紀錄">⚠️ 清空所有存檔數據 (重置基準線)</button>
                 </div>
 
-                <!-- 日誌終端區 -->
-                <div class="ds-panel-section">
-                    <div class="ds-panel-title" style="display:flex; justify-content:space-between; align-items:center;">
-                        <span>💻 視覺化終端機</span>
-                        <select id="ds-cache-loglevel" class="text_pole" style="width:auto; padding:2px; height:auto; font-size:11px;">
-                            <option value="0" ${Settings.logLevel===0?'selected':''}>0 - 關閉</option>
-                            <option value="1" ${Settings.logLevel===1?'selected':''}>1 - 簡要</option>
-                            <option value="2" ${Settings.logLevel===2?'selected':''}>2 - 詳細</option>
-                            <option value="3" ${Settings.logLevel===3?'selected':''}>3 - 極限除錯</option>
+                <div class="ds-panel">
+                    <div class="ds-title">⚙️ 智能陣列防護核心</div>
+                    <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用時序凍結接管</label>
+                    <label class="checkbox_label" title="將 RAG/世界書 等臨時設定強制推至最末端，保全 99% 的頂部緩存"><input type="checkbox" id="ds-cache-sinking" ${Settings.sinkingMode ? 'checked' : ''}> 🧲 開啟「動態上下文下沉」(強烈建議)</label>
+                    
+                    <div style="margin-top:10px; background:rgba(0,0,0,0.3); padding:8px; border-radius:4px;">
+                        <div style="font-size:11px; color:#aaa; margin-bottom:5px;">雙軌容忍閘門設定：</div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+                            <span style="font-size:12px;">靜默放行閾值 (%)</span>
+                            <input type="number" id="ds-cfg-silent" value="${Settings.silentThreshold}" style="width:50px; background:#222; color:#fff; border:1px solid #444; text-align:center;">
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:12px;">嚴重彈窗閾值 (%)</span>
+                            <input type="number" id="ds-cfg-warn" value="${Settings.warnThreshold}" style="width:50px; background:#222; color:#fff; border:1px solid #444; text-align:center;">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="ds-panel">
+                    <div class="ds-title"><span>📂 LRU 記憶體池</span><span style="font-size:0.9em; font-weight:normal;" id="ds-cache-mem-usage"></span></div>
+                    <div id="ds-chat-list-container" style="max-height:100px; overflow-y:auto; background:rgba(0,0,0,0.3); border-radius:4px; padding:4px;"></div>
+                </div>
+
+                <div class="ds-panel">
+                    <div class="ds-title" style="margin-bottom:5px;">
+                        <span>💻 遙測與除錯終端</span>
+                        <select id="ds-cache-loglevel" class="text_pole" style="width:auto; padding:2px; font-size:11px;">
+                            <option value="0" ${Settings.logLevel===0?'selected':''}>0 - 關閉</option><option value="1" ${Settings.logLevel===1?'selected':''}>1 - 簡要</option>
+                            <option value="2" ${Settings.logLevel===2?'selected':''}>2 - 詳細</option><option value="3" ${Settings.logLevel===3?'selected':''}>3 - 除錯</option>
                         </select>
                     </div>
-                    <div id="ds-cache-log-content" class="ds-log-console"></div>
-                    <button id="ds-cache-clearlog" class="ds-btn" style="width:100%; margin-top:8px;">🗑️ 清空終端機畫面</button>
+                    <div id="ds-cache-log-content" class="ds-console"></div>
+                    <div style="display:flex; gap:5px; margin-top:8px;">
+                        <button id="ds-cache-clearlog" class="ds-btn" style="flex:1;">🗑️ 清空</button>
+                        <button id="ds-cache-export" class="ds-btn" style="flex:1; background:#1976d2;">📥 匯出遙測</button>
+                    </div>
                 </div>
                 
             </div>
@@ -563,49 +572,24 @@ async function setupUI() {
         $('#extensions_settings').append(html);
 
         $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); });
-        $('#ds-toast-sys').on('change', function () { Settings.toastSys = $(this).is(':checked'); safeSave(); });
-        $('#ds-toast-lore').on('change', function () { Settings.toastLore = $(this).is(':checked'); safeSave(); });
-        $('#ds-toast-his').on('change', function () { Settings.toastHistory = $(this).is(':checked'); safeSave(); });
-        $('#ds-toast-reset').on('change', function () { Settings.showResetPrompt = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-sinking').on('change', function () { Settings.sinkingMode = $(this).is(':checked'); safeSave(); });
+        $('#ds-cfg-silent').on('change', function () { Settings.silentThreshold = parseFloat($(this).val())||0; safeSave(); });
+        $('#ds-cfg-warn').on('change', function () { Settings.warnThreshold = parseFloat($(this).val())||0; safeSave(); });
         $('#ds-cache-loglevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
         
-        $('#ds-cache-factory-reset').on('click', () => {
-            if (confirm("這將使所有聊天室的提示詞回到 ST 預設的頂部排序！\n確定要清除全域快取狀態嗎？")) { 
-                Settings.chats = {}; safeSave(); renderChatsUI(); 
-            }
-        });
-        $('#ds-cache-clearlog').on('click', () => { $('#ds-cache-log-content').empty(); });
+        $('#ds-cache-clearlog').on('click', () => $('#ds-cache-log-content').empty());
+        $('#ds-cache-export').on('click', exportTelemetry);
         
-        renderChatsUI();
-    } catch (e) { console.error('[DS Cache] UI初始化失敗', e); }
+        updateDashboardUI(); renderChatsUI();
+    } catch (e) { console.error('[DS Cache] UI初始化崩潰', e); }
 }
 
 jQuery(async () => {
     try {
-        initSettings(); 
-        await setupUI();
-        
-        setTimeout(addTopMenuButton, 2000);
-        if (eventSource) eventSource.on(event_types.CHAT_CHANGED, addTopMenuButton);
-
-        if (eventSource) {
-            if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
-                eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-            }
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('歷史對話被刪除！將在發送時原位補位。', Settings.toastHistory));
-            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('歷史對話已修改！將在發送時原位更新。', Settings.toastHistory));
+        initSettings(); await setupUI();
+        if (eventSource && event_types.CHAT_COMPLETION_PROMPT_READY) {
+            eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         }
-
-        $(document).on('change select2:select input focusout', '#chat_completion_preset, .preset_select, select[id*="preset"], #main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt', function() {
-            triggerWarning('系統提示詞變更！將在發送時原位熱更新。', Settings.toastSys);
-        });
-
-        $(document).on('input change focusout', '.world_info_entry textarea, .world_info_entry input, #world_info_entries_list textarea, .lorebook_entry textarea, .drawer-content textarea', function() {
-            triggerWarning('世界書已變更！將在發送時原位熱更新或附加。', Settings.toastLore);
-        });
-
-        Logger.log(`══════ ${PLUGIN_VERSION} 引擎就緒 ══════`, LogLevels.BASIC);
-    } catch (e) {
-        console.error('[DS Cache] 插件啟動崩潰:', e);
-    }
+        Logger.log(`[系統啟動] ${PLUGIN_VERSION} 經濟管家就緒。動態下沉引擎已啟動。`, LogLevels.BASIC);
+    } catch (e) { console.error('[DS Cache] 啟動失敗:', e); }
 });
