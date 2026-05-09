@@ -2,58 +2,39 @@ import { extension_settings, getContext, saveSettingsDebounced } from '../../../
 import { eventSource, event_types } from '../../../../script.js';
 
 // ==========================================
-// 全局設置與持久化存儲 (Profiles)
+// 默認設定與持久化存儲 (v8.0)
 // ==========================================
-const SETTINGS_KEY = 'dsCacheOpt_v8';
-if (!extension_settings[SETTINGS_KEY]) {
-    extension_settings[SETTINGS_KEY] = {
-        enabled: true,
-        toastSys: true, toastLore: true, toastHistory: true, showResetPrompt: true,
-        logLevel: 3,
-        profiles: {} // 記錄所有角色卡的獨立聊天檔案
-    };
-}
-const settings = extension_settings[SETTINGS_KEY];
-function saveSettings() { if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); }
+const defaultSettings = {
+    enabled: true,
+    toastSys: true,
+    toastLore: true,
+    toastHistory: true,
+    showResetPrompt: true,
+    logLevel: 3,
+    chats: {} // 存放所有角色卡與存檔的獨立狀態
+};
 
-// 獲取當前獨立的聊天檔案 (Chat Profile)
-function getCurrentProfile() {
-    const ctx = getContext();
-    const chatId = ctx.chatId || 'default_chat_id';
-    
-    if (!settings.profiles[chatId]) {
-        let charName = "未知角色";
-        if (ctx.characters && ctx.characters.length > 0) charName = ctx.characters[0].name;
-        else if (ctx.name2) charName = ctx.name2;
-
-        settings.profiles[chatId] = {
-            charName: charName,
-            chatId: chatId,
-            frozenSequence: [],   
-            lastSentSequence: [], 
-            lastPrefills: []      
-        };
-        saveSettings();
-    }
-    return settings.profiles[chatId];
+if (!extension_settings.ds_cache_v8) {
+    extension_settings.ds_cache_v8 = defaultSettings;
 }
+const Settings = extension_settings.ds_cache_v8;
 
 // ==========================================
-// 日誌系統 (深度強化版)
+// 日誌系統 (神級標籤強化)
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
 function logAt(level, type, msg) {
-    if (settings.logLevel < level) return;
+    if (Settings.logLevel < level) return;
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
-    const ctx = getContext();
-    const chatInfo = ctx.chatId ? `[${ctx.chatId.substring(0,8)}] ` : '';
-    const fullMsg = `[${time}] ${chatInfo}${msg}`;
-    
-    if (type === 'warn') console.warn(`%c[DS Cache v8.0] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    else if (type === 'error') console.error(`[DS Cache v8.0] 🔴 ${msg}`);
-    else console.log(`%c[DS Cache v8.0] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
-    
+    const fullMsg = `[${time}] ${msg}`;
+    if (type === 'warn') {
+        console.warn(`%c[DS Cache v8.0] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    } else if (type === 'error') {
+        console.error(`[DS Cache v8.0] 🔴 ${msg}`);
+    } else {
+        console.log(`%c[DS Cache v8.0] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+    }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
         Logger._uiTextarea.scrollTop = Logger._uiTextarea.scrollHeight;
@@ -69,32 +50,67 @@ const Logger = {
 };
 
 // ==========================================
-// 工具：相似度與消息分類
+// 狀態管理：精確識別存檔
 // ==========================================
+function getChatKey() {
+    const context = getContext();
+    let charName = "Unknown";
+    if (context.characterId !== undefined && context.characters && context.characters[context.characterId]) {
+        charName = context.characters[context.characterId].name;
+    }
+    let chatId = context.chatId || "default_chat";
+    let groupId = context.groupId;
+    
+    if (groupId) {
+        return { key: `group_${groupId}_${chatId}`, label: `群組: ${chatId}` };
+    }
+    return { key: `char_${context.characterId}_${chatId}`, label: `角色: ${charName} | 存檔: ${chatId}` };
+}
+
+function getChatState(chatKeyInfo) {
+    if (!Settings.chats[chatKeyInfo.key]) {
+        Settings.chats[chatKeyInfo.key] = {
+            label: chatKeyInfo.label,
+            frozenSequence: [],
+            lastSentSequence: [],
+            lastPrefills: []
+        };
+        saveSettingsDebounced();
+        renderChatsUI();
+    }
+    return Settings.chats[chatKeyInfo.key];
+}
+
+// ==========================================
+// 核心工具：分類與相似度
+// ==========================================
+function createMsg(msg, tag) {
+    const content = msg.content || '';
+    return {
+        role: msg.role,
+        content: content,
+        norm: Logger.normalize(content),
+        len: content.length,
+        tag: tag // 'SYS', 'USER', 'AI', 'PREFILL'
+    };
+}
+
 function getSimilarity(str1, str2) {
     if (str1 === str2) return 1;
     if (Math.abs(str1.length - str2.length) > Math.max(str1.length, str2.length) * 0.5) return 0;
     const s1 = str1.length < str2.length ? str1 : str2;
     const s2 = str1.length < str2.length ? str2 : str1;
     if (s1.length === 0) return 0;
+    
     const bigrams = new Set();
     for (let i = 0; i < s1.length - 1; i++) bigrams.add(s1.substring(i, i+2));
+    
     let matchCount = 0;
-    for (let i = 0; i < s2.length - 1; i++) if (bigrams.has(s2.substring(i, i+2))) matchCount++;
+    for (let i = 0; i < s2.length - 1; i++) {
+        if (bigrams.has(s2.substring(i, i+2))) matchCount++;
+    }
     const union = (s1.length - 1) + (s2.length - 1) - matchCount;
     return union <= 0 ? 1 : matchCount / union;
-}
-
-function classifyMsgLog(msg, type) {
-    if (settings.logLevel < LogLevels.DEBUG) return;
-    const labels = { 'sys': '📋系統/設定', 'user': '👤真實用戶', 'ai': '🤖真實AI' };
-    let snippet = msg.content.replace(/\n/g, ' ');
-    if (snippet.length > 40) snippet = snippet.substring(0, 40) + '...';
-    Logger.log(`[解析] ${labels[type]} | ${snippet}`, LogLevels.DEBUG);
-}
-
-function createMsg(msg, type) {
-    return { role: msg.role, content: msg.content, norm: Logger.normalize(msg.content), type: type };
 }
 
 function stripPrefillFromAssistant(assistantObj, prefills) {
@@ -102,133 +118,134 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
     let content = assistantObj.content || '';
     let modified = false;
     for (const p of prefills) {
-        if (content.startsWith(p.content)) { content = content.substring(p.content.length); modified = true; }
+        const pContent = p.content || '';
+        if (content.startsWith(pContent)) {
+            content = content.substring(pContent.length);
+            modified = true;
+        }
     }
     if (modified) {
         content = content.replace(/^[\s\n]+/, ''); 
-        return { ...assistantObj, content: content, norm: Logger.normalize(content) };
+        return { ...assistantObj, content: content, norm: Logger.normalize(content), len: content.length };
     }
     return assistantObj;
 }
 
 // ==========================================
-// 核心演算法：解析、去重與生成新序列
+// 解析 ST 數據流 (嚴格分類打標)
 // ==========================================
 function parseSTStream(stream) {
     const sysMsgs = [];
     const chatMsgs = [];
-    const seenSysNorms = new Set();
 
-    Logger.log(`[流程] 開始嚴格解析與分類數據流...`, LogLevels.DEBUG);
+    // 第一階段：粗分類
     for (const msg of stream) {
         const isSys = (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant'));
-        if (isSys) {
-            const norm = Logger.normalize(msg.content);
-            // 嚴格限制系統提示詞/世界書不能重複
-            if (!seenSysNorms.has(norm)) {
-                seenSysNorms.add(norm);
-                sysMsgs.push(createMsg(msg, 'sys'));
-                classifyMsgLog(msg, 'sys');
-            }
-        } else {
-            const type = msg.role === 'user' ? 'user' : 'ai';
-            chatMsgs.push(createMsg(msg, type));
-            classifyMsgLog(msg, type);
-        }
+        if (isSys) sysMsgs.push(createMsg(msg, 'SYS'));
+        else chatMsgs.push(createMsg(msg, msg.role === 'user' ? 'USER' : 'AI'));
     }
 
-    // 嚴格準確分類：歷史用戶、歷史AI、當前用戶、預填充
+    // 尋找當前對話分界點
     let lastUserIdx = -1;
     for (let i = chatMsgs.length - 1; i >= 0; i--) {
-        if (chatMsgs[i].type === 'user') { lastUserIdx = i; break; }
+        if (chatMsgs[i].tag === 'USER') { lastUserIdx = i; break; }
     }
 
-    let stHistoryTurns = [];
-    let stCurrentTurn = { user: null, prefills: [] };
+    let historyTurns = [];
+    let currentTurn = { user: null, prefills: [] };
 
+    // 區分歷史與當前
     if (lastUserIdx === -1) {
-        stCurrentTurn.prefills = chatMsgs.filter(m => m.type === 'ai');
+        currentTurn.prefills = chatMsgs.filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
     } else {
-        const historyMsgs = chatMsgs.slice(0, lastUserIdx);
-        const currentMsgs = chatMsgs.slice(lastUserIdx);
+        const hMsgs = chatMsgs.slice(0, lastUserIdx);
+        const cMsgs = chatMsgs.slice(lastUserIdx);
 
-        stCurrentTurn.user = currentMsgs[0];
-        stCurrentTurn.prefills = currentMsgs.slice(1).filter(m => m.type === 'ai');
+        currentTurn.user = cMsgs[0]; // USER
+        currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
 
-        let curUser = null; let curAiContents = [];
-        for (const msg of historyMsgs) {
-            if (msg.type === 'user') {
-                if (curUser) stHistoryTurns.push({ user: curUser, assistant: curAiContents.length ? { role: 'assistant', content: curAiContents.join('\n') } : null });
-                curUser = msg; curAiContents = [];
-            } else if (msg.type === 'ai') {
+        let curUser = null;
+        let curAiContents = [];
+        for (const msg of hMsgs) {
+            if (msg.tag === 'USER') {
+                if (curUser) {
+                    historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
+                }
+                curUser = msg;
+                curAiContents = [];
+            } else if (msg.tag === 'AI') {
                 curAiContents.push(msg.content);
             }
         }
-        if (curUser) stHistoryTurns.push({ user: curUser, assistant: curAiContents.length ? { role: 'assistant', content: curAiContents.join('\n') } : null });
+        if (curUser) {
+            historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
+        }
     }
-    return { sysMsgs, stHistoryTurns, stCurrentTurn };
+    return { sysMsgs, historyTurns, currentTurn };
 }
 
-function buildIntendedSequence(profile, sysMsgs, stHistoryTurns, stCurrentTurn) {
+// ==========================================
+// 核心：平鋪同步演算法
+// ==========================================
+function buildSequence(state, sysMsgs, historyTurns, currentTurn) {
     const sysMsgsPool = [...sysMsgs];
     const newFrozen = [];
-    const globalSeenSys = new Set(); // 用於全局嚴格去重系統提示詞
 
-    // 1. 原位更新或移除已凍結的訊息
-    for (let i = 0; i < profile.frozenSequence.length; i++) {
-        const item = profile.frozenSequence[i];
+    // 1. 原位更新或移除已凍結的 SYS 與保留歷史
+    for (let i = 0; i < state.frozenSequence.length; i++) {
+        const item = state.frozenSequence[i];
         
-        if (item.type === 'sys') {
-            let bestIdx = -1; let bestScore = 0;
+        if (item.tag === 'SYS') {
+            let bestIdx = -1;
+            let bestScore = 0;
             for (let j = 0; j < sysMsgsPool.length; j++) {
                 const score = getSimilarity(item.norm, sysMsgsPool[j].norm);
                 if (score > bestScore) { bestScore = score; bestIdx = j; }
             }
             if (bestScore === 1) {
-                if (!globalSeenSys.has(item.norm)) {
-                    newFrozen.push(item);
-                    globalSeenSys.add(item.norm);
-                }
+                newFrozen.push(item);
                 sysMsgsPool.splice(bestIdx, 1);
-            } else if (bestScore > 0.6) {
+                Logger.log(`[SYS-不變] 原位保留: ${item.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DEBUG);
+            } else if (bestScore > 0.6) { 
                 const matchedItem = sysMsgsPool[bestIdx];
-                if (!globalSeenSys.has(matchedItem.norm)) {
-                    newFrozen.push(matchedItem);
-                    globalSeenSys.add(matchedItem.norm);
-                    Logger.log(`[修改] 提示詞內容原位更新 (相近度 ${(bestScore*100).toFixed(1)}%)`, LogLevels.DETAILED);
-                }
+                newFrozen.push(matchedItem);
                 sysMsgsPool.splice(bestIdx, 1);
+                Logger.log(`[SYS-修改] 原位更新 (相似度 ${(bestScore*100).toFixed(1)}%): ${matchedItem.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
             } else {
-                Logger.log(`[刪除] 檢測到提示詞被刪除，自動抽出補位`, LogLevels.DETAILED);
+                Logger.log(`[SYS-刪除] 檢測到提示詞被刪除，抽出上移: ${item.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
             }
         } else {
-            // 用戶與 AI 可以無限重複，不參與 globalSeenSys 去重
+            // 保留歷史
             newFrozen.push(item);
         }
     }
 
-    // 2. 處理歷史對話追加
+    // 2. 處理歷史對話追加與 AI 補全
     let lastFrozenUserNorm = null;
     for (let i = newFrozen.length - 1; i >= 0; i--) {
-        if (newFrozen[i].type === 'user') { lastFrozenUserNorm = newFrozen[i].norm; break; }
+        if (newFrozen[i].tag === 'USER') { lastFrozenUserNorm = newFrozen[i].norm; break; }
     }
 
     let startIdx = 0;
     if (lastFrozenUserNorm) {
-        for (let i = 0; i < stHistoryTurns.length; i++) {
-            if (stHistoryTurns[i].user.norm === lastFrozenUserNorm) {
+        for (let i = 0; i < historyTurns.length; i++) {
+            if (historyTurns[i].user.norm === lastFrozenUserNorm) {
                 startIdx = i + 1;
-                if (stHistoryTurns[i].assistant) {
-                    const cleanAssistant = stripPrefillFromAssistant(stHistoryTurns[i].assistant, profile.lastPrefills || []);
+                // 補全 AI
+                if (historyTurns[i].assistant) {
+                    const cleanAssistant = stripPrefillFromAssistant(historyTurns[i].assistant, state.lastPrefills || []);
                     let aiUpdated = false;
                     for (let k = newFrozen.length - 1; k >= 0; k--) {
-                        if (newFrozen[k].type === 'sys') break;
-                        if (newFrozen[k].type === 'user') {
-                            if (!aiUpdated) newFrozen.splice(k + 1, 0, createMsg(cleanAssistant, 'ai'));
+                        if (newFrozen[k].tag === 'SYS') break;
+                        if (newFrozen[k].tag === 'USER') {
+                            if (!aiUpdated) {
+                                newFrozen.splice(k + 1, 0, cleanAssistant);
+                                Logger.log(`[歷史-AI] AI回覆已徹底凍結: ${cleanAssistant.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DEBUG);
+                            }
                             break;
                         }
-                        if (newFrozen[k].type === 'ai') {
-                            newFrozen[k] = createMsg(cleanAssistant, 'ai');
+                        if (newFrozen[k].tag === 'AI') {
+                            newFrozen[k] = cleanAssistant;
                             aiUpdated = true;
                             break;
                         }
@@ -239,120 +256,150 @@ function buildIntendedSequence(profile, sysMsgs, stHistoryTurns, stCurrentTurn) 
         }
     }
 
-    for (let i = startIdx; i < stHistoryTurns.length; i++) {
-        const turn = stHistoryTurns[i];
-        newFrozen.push(createMsg(turn.user, 'user'));
+    // 追加新一輪歷史
+    for (let i = startIdx; i < historyTurns.length; i++) {
+        const turn = historyTurns[i];
+        newFrozen.push(turn.user);
+        Logger.log(`[歷史-USER] 新歷史凍結: ${turn.user.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DEBUG);
         if (turn.assistant) {
-            const cleanAssistant = stripPrefillFromAssistant(turn.assistant, profile.lastPrefills || []);
-            newFrozen.push(createMsg(cleanAssistant, 'ai'));
+            const cleanAssistant = stripPrefillFromAssistant(turn.assistant, state.lastPrefills || []);
+            newFrozen.push(cleanAssistant);
+            Logger.log(`[歷史-AI] 新歷史凍結: ${cleanAssistant.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DEBUG);
         }
     }
 
-    // 3. 追加全新提示詞 (嚴格去重)
-    for (const sys of sysMsgsPool) {
-        if (!globalSeenSys.has(sys.norm)) {
-            newFrozen.push(sys);
-            globalSeenSys.add(sys.norm);
-            Logger.log(`[新增] 全新提示詞已附加於序列尾部`, LogLevels.DEBUG);
-        }
+    // 3. 新增的提示詞 (世界書/預設) 嚴格附加於尾部
+    for (let sys of sysMsgsPool) {
+        newFrozen.push(sys);
+        Logger.log(`[SYS-追加] 全新提示詞已附加於尾部: ${sys.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
     }
 
-    // 4. 組合最終發送序列
-    const finalSequence = [...newFrozen];
-    if (stCurrentTurn.user) finalSequence.push(createMsg(stCurrentTurn.user, 'user'));
-    for (const p of stCurrentTurn.prefills) finalSequence.push(createMsg(p, 'ai'));
-
-    return { newFrozen, finalSequence };
-}
-
-// 計算前綴命中率 (核心雷達)
-function calculateCacheHitRate(lastSent, currentFinal) {
-    if (!lastSent || lastSent.length === 0) return 1.0;
-    let matchedLen = 0;
-    let lastSentTotalLen = lastSent.reduce((sum, item) => sum + item.content.length, 0);
-    if (lastSentTotalLen === 0) return 1.0;
-
-    for (let i = 0; i < Math.min(lastSent.length, currentFinal.length); i++) {
-        if (lastSent[i].norm === currentFinal[i].norm) {
-            matchedLen += lastSent[i].content.length;
-        } else {
-            break; // 前綴斷裂
-        }
-    }
-    return matchedLen / lastSentTotalLen;
+    return newFrozen;
 }
 
 // ==========================================
-// 攔截主入口
+// 攔截器：10%檢測、嚴格去重、輸出發送
 // ==========================================
-let isResetting = false; 
-
 function interceptAndRestructurePrompt(data) {
-    if (!settings.enabled || data.dryRun) return;
+    if (!Settings.enabled || data.dryRun) return;
 
     try {
-        const profile = getCurrentProfile();
+        const chatKeyInfo = getChatKey();
+        let state = getChatState(chatKeyInfo);
+
         Logger.log(`==============================`);
-        Logger.log(`[請求] 開始處理檔案: [${profile.chatId}] (${profile.charName})`, LogLevels.BASIC);
+        Logger.log(`[請求] 開始構建緩存前綴 | ${chatKeyInfo.label}`);
 
         if (!data?.chat?.length) return;
         const stream = data.chat;
 
-        const { sysMsgs, stHistoryTurns, stCurrentTurn } = parseSTStream(stream);
-        const { newFrozen, finalSequence } = buildIntendedSequence(profile, sysMsgs, stHistoryTurns, stCurrentTurn);
+        const { sysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
 
-        // 10% 緩存丟失自適應雷達
-        const hitRate = calculateCacheHitRate(profile.lastSentSequence, finalSequence);
-        const wastePercent = ((1 - hitRate) * 100).toFixed(1);
+        // 構建平鋪序列
+        let rawFrozenSequence = buildSequence(state, sysMsgs, historyTurns, currentTurn);
 
-        if (hitRate < 0.90 && settings.showResetPrompt && !isResetting && profile.lastSentSequence.length > 0) {
-            Logger.warn(`[雷達警報] 檢測到前綴斷裂，將導致 ${wastePercent}% 的緩存失效！`, LogLevels.BASIC);
-            const msg = `🚨 [Deepseek 緩存優化 雷達] 🚨\n\n檢測到您的修改將導致 ${wastePercent}% 的緩存失效 (命中率低於 90%)。\n\n▶ 點擊【確定】：重置前綴緩存，並保留所有對話重新構建。\n▶ 點擊【取消】：忍受本次斷裂，強行發送。`;
-            const ok = confirm(msg);
+        // =======================================
+        // 嚴格去重邏輯 (僅限 SYS，容忍 USER/AI/PREFILL)
+        // =======================================
+        let dedupedSequence = [];
+        const seenSysNorms = new Set();
+        
+        for (const item of rawFrozenSequence) {
+            if (item.tag === 'SYS') {
+                if (seenSysNorms.has(item.norm)) {
+                    Logger.log(`[SYS-去重] 成功攔截並剔除重複提示詞: ${item.content.substring(0, 30).replace(/\n/g, '')}...`, LogLevels.DETAILED);
+                    continue; 
+                }
+                seenSysNorms.add(item.norm);
+            }
+            dedupedSequence.push(item);
+        }
+
+        // =======================================
+        // 10% 緩存丟失檢測 (保留歷史重置)
+        // =======================================
+        let requireResetConfirm = false;
+        let similarityRatio = 1.0;
+
+        if (state.lastSentSequence && state.lastSentSequence.length > 0) {
+            let oldTotalLen = 0;
+            let matchedLen = 0;
+            const newNorms = new Set(dedupedSequence.map(m => m.norm));
             
-            if (ok) {
-                isResetting = true;
-                Logger.warn(`[緩存重置] 用戶同意，正在保留歷史並重構檔案 [${profile.chatId}]...`, LogLevels.BASIC);
-                profile.frozenSequence = [];
-                profile.lastSentSequence = [];
-                profile.lastPrefills = [];
-                saveSettings();
-                
-                // 遞迴呼叫：利用已保留的 ST 完整上下文重新構建
-                const result = interceptAndRestructurePrompt(data);
-                isResetting = false;
-                return result;
-            } else {
-                Logger.warn(`[忽略重置] 用戶選擇強行發送，容忍 ${wastePercent}% 損失。`, LogLevels.BASIC);
+            for (const oldM of state.lastSentSequence) {
+                oldTotalLen += oldM.len;
+                if (newNorms.has(oldM.norm)) matchedLen += oldM.len;
+            }
+            similarityRatio = oldTotalLen === 0 ? 1 : (matchedLen / oldTotalLen);
+
+            if (similarityRatio < 0.90 && Settings.showResetPrompt) {
+                requireResetConfirm = true;
             }
         }
 
-        Logger.log(`[驗證] 本次預估前綴命中率: ${(hitRate*100).toFixed(1)}%`, LogLevels.BASIC);
+        if (requireResetConfirm) {
+            const dropPercent = ((1 - similarityRatio) * 100).toFixed(1);
+            const msg = `🚨 [Deepseek 緩存阻斷器] 🚨\n\n檢測到預設提示詞或世界書被大幅度修改/刪除！\n這將導致緩存命中率暴跌 ${dropPercent}%。\n\n▶ 點擊【確定】：重置系統提示詞排列 (完美保留所有歷史對話！強烈推薦)。\n▶ 點擊【取消】：強行發送 (容忍本次緩存碎片化)。`;
+            const ok = confirm(msg);
+            
+            if (ok) {
+                Logger.warn(`[用戶選擇重置] 緩存降級 ${dropPercent}%，清空凍結陣列並保留歷史重構...`, LogLevels.BASIC);
+                // 核心：清空 frozenSequence，重新運行 buildSequence，這樣所有的歷史會被當作新的追加進去，完美保留！
+                state.frozenSequence = [];
+                rawFrozenSequence = buildSequence(state, sysMsgs, historyTurns, currentTurn);
+                
+                dedupedSequence = [];
+                seenSysNorms.clear();
+                for (const item of rawFrozenSequence) {
+                    if (item.tag === 'SYS') {
+                        if (seenSysNorms.has(item.norm)) continue;
+                        seenSysNorms.add(item.norm);
+                    }
+                    dedupedSequence.push(item);
+                }
+            } else {
+                Logger.warn('[用戶選擇取消] 拒絕重置，以殘缺狀態強行發送', LogLevels.BASIC);
+            }
+        }
 
-        // 更新持久化狀態
-        profile.frozenSequence = newFrozen;
-        profile.lastSentSequence = finalSequence;
-        profile.lastPrefills = stCurrentTurn.prefills;
-        saveSettings();
-        renderProfilesList(); 
+        // =======================================
+        // 最終保存與覆蓋 ST 數據流
+        // =======================================
+        state.frozenSequence = dedupedSequence;
+        state.lastPrefills = currentTurn.prefills;
 
-        // 輸出至 ST
-        const finalOutput = finalSequence.map(item => ({ role: item.role, content: item.content }));
-        stream.splice(0, stream.length, ...finalOutput);
+        const finalStream = [];
+        for (const item of state.frozenSequence) finalStream.push({ role: item.role, content: item.content });
+        
+        if (currentTurn.user) {
+            finalStream.push({ role: currentTurn.user.role, content: currentTurn.user.content });
+            Logger.log(`[當前-USER] ${currentTurn.user.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DEBUG);
+        }
+        for (const p of currentTurn.prefills) {
+            finalStream.push({ role: p.role, content: p.content });
+            Logger.log(`[當前-預填充] ${p.content.substring(0,30).replace(/\n/g, '')}...`, LogLevels.DEBUG);
+        }
+
+        state.lastSentSequence = dedupedSequence.concat(
+            currentTurn.user ? [currentTurn.user] : [],
+            currentTurn.prefills
+        );
+        saveSettingsDebounced();
+
+        stream.splice(0, stream.length, ...finalStream);
 
     } catch (err) {
         Logger.error('攔截器發生錯誤', err);
-        isResetting = false;
         throw err;
     }
 }
 
 // ==========================================
-// 即時修改提醒機制 (DOM 深度監聽)
+// 即時修改提醒機制 (Debounce + 增強 DOM Delegation)
 // ==========================================
 let warningTimeout = null;
 function triggerWarning(msg, toggle) {
-    if (!settings.enabled || !toggle) return;
+    if (!Settings.enabled || !toggle) return;
     if (warningTimeout) clearTimeout(warningTimeout);
     warningTimeout = setTimeout(() => {
         if (typeof toastr !== 'undefined') toastr.warning(msg, '⚠️ 緩存狀態變更', { timeOut: 3000 });
@@ -360,32 +407,40 @@ function triggerWarning(msg, toggle) {
 }
 
 // ==========================================
-// UI 與 初始化
+// 輔助 UI 與 初始化
 // ==========================================
-function renderProfilesList() {
-    const container = $('#ds-profiles-list');
-    if (!container.length) return;
+function renderChatsUI() {
+    const container = $('#ds-chat-list-container');
+    if (container.length === 0) return;
     container.empty();
-    const entries = Object.entries(settings.profiles);
-    if (entries.length === 0) {
-        container.append(`<div style="color:#888; text-align:center;">暫無已緩存的檔案</div>`);
+    
+    const keys = Object.keys(Settings.chats);
+    if (keys.length === 0) {
+        container.append('<p style="font-size:0.85em; opacity:0.6;">尚無接管的存檔數據。</p>');
         return;
     }
-    for (const [chatId, prof] of entries) {
-        const row = $(`<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; padding:3px; background:#222; border-radius:4px;">
-            <span style="font-size:0.85em; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:75%;" title="${chatId}">
-                👤 ${prof.charName} <br><span style="color:#888;font-size:0.8em;">${chatId}</span>
-            </span>
-            <button class="menu_button" style="padding:2px 8px; font-size:0.8em; min-width:40px;" data-id="${chatId}">重置</button>
-        </div>`);
-        row.find('button').on('click', function() {
-            const id = $(this).data('id');
-            settings.profiles[id] = { charName: prof.charName, chatId: id, frozenSequence: [], lastPrefills: [], lastSentSequence: [] };
-            saveSettings();
-            toastr.success(`已重置檔案: ${prof.charName}`);
-        });
-        container.append(row);
-    }
+
+    keys.forEach(key => {
+        const chat = Settings.chats[key];
+        const html = `
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#222; padding:5px; margin-bottom:5px; border-radius:4px;">
+                <span style="font-size:0.85em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:75%;" title="${chat.label}">
+                    ${chat.label}
+                </span>
+                <button class="menu_button interactable" data-key="${key}" style="font-size:0.8em; padding:2px 5px;">重置此檔</button>
+            </div>
+        `;
+        container.append(html);
+    });
+
+    container.find('button').on('click', function() {
+        const key = $(this).data('key');
+        delete Settings.chats[key];
+        saveSettingsDebounced();
+        renderChatsUI();
+        if (typeof toastr !== 'undefined') toastr.success("已重置該存檔的緩存狀態");
+        Logger.warn(`[管理] 手動清空存檔狀態: ${key}`, LogLevels.BASIC);
+    });
 }
 
 async function setupUI() {
@@ -393,62 +448,80 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v4-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b>Deepseek 缓存优化 (v8.0 多檔案隔離版)</b>
+                <b>Deepseek 缓存优化 (v8.0 多檔沙盒版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">嚴格去重，10% 雷達，多檔案完全隔離並持久化保存。</p>
-                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" ${settings.enabled ? 'checked' : ''}> 啟用插件總開關</label>
+                <p style="font-size:0.85em;opacity:0.8;">嚴格 SYS 去重，10% 防丟失阻斷，多角色存檔互不干涉。</p>
+                
+                <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用插件總開關</label>
+                
                 <div style="margin:5px 0 10px 15px; border-left: 2px solid #555; padding-left: 10px;">
-                    <label class="checkbox_label" style="font-size:0.9em;"><input type="checkbox" id="ds-toast-sys" ${settings.toastSys ? 'checked' : ''}> 預設/提示詞修改即時彈窗</label>
-                    <label class="checkbox_label" style="font-size:0.9em;"><input type="checkbox" id="ds-toast-lore" ${settings.toastLore ? 'checked' : ''}> 世界書修改即時彈窗</label>
-                    <label class="checkbox_label" style="font-size:0.9em;"><input type="checkbox" id="ds-toast-his" ${settings.toastHistory ? 'checked' : ''}> 歷史對話修改即時彈窗</label>
-                    <label class="checkbox_label" style="font-size:0.9em;"><input type="checkbox" id="ds-toast-reset" ${settings.showResetPrompt ? 'checked' : ''}> 啟用 10% 緩存丟失阻斷確認彈窗</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> Presets/提示詞修改彈窗</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 世界書修改彈窗</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 歷史修改彈窗</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 10% 命中丟失阻斷確認窗</label>
                 </div>
                 
                 <div style="margin:8px 0; display:flex; align-items:center;">
-                    <span style="font-size:0.9em; margin-right:5px;">日誌等級:</span>
+                    <span style="font-size:0.85em; margin-right:5px;">日誌等級:</span>
                     <select id="ds-cache-loglevel" class="text_pole" style="width:auto;">
-                        <option value="0" ${settings.logLevel === 0 ? 'selected' : ''}>關閉</option>
-                        <option value="1" ${settings.logLevel === 1 ? 'selected' : ''}>簡要</option>
-                        <option value="2" ${settings.logLevel === 2 ? 'selected' : ''}>詳細</option>
-                        <option value="3" ${settings.logLevel === 3 ? 'selected' : ''}>深度(推薦)</option>
+                        <option value="0" ${Settings.logLevel===0?'selected':''}>關閉</option>
+                        <option value="1" ${Settings.logLevel===1?'selected':''}>簡要</option>
+                        <option value="2" ${Settings.logLevel===2?'selected':''}>詳細</option>
+                        <option value="3" ${Settings.logLevel===3?'selected':''}>深度標籤解析</option>
                     </select>
                 </div>
-                
-                <div style="margin:10px 0; padding:5px; border:1px solid #444; border-radius:5px;">
-                    <div style="font-size:0.9em; margin-bottom:5px; color:#aaa;">📂 獨立檔案管理 (Profiles)</div>
-                    <div id="ds-profiles-list" style="max-height:120px; overflow-y:auto; margin-bottom:5px;"></div>
-                    <button id="ds-reset-all" class="menu_button" style="width:100%; background:#833;">⚠️ 徹底清空所有檔案狀態</button>
-                </div>
 
+                <hr style="border-color:#444; margin:10px 0;">
+                <b style="font-size:0.9em;">📂 存檔緩存管理區：</b>
+                <div id="ds-chat-list-container" style="max-height:150px; overflow-y:auto; margin:5px 0; border:1px solid #444; padding:5px;"></div>
+                
+                <button id="ds-cache-factory-reset" class="menu_button" style="width:100%;margin:5px 0;background:#722;">⚠️ 廠級重置 (清空所有存檔數據)</button>
                 <button id="ds-cache-clearlog" class="menu_button" style="width:100%;margin:5px 0;">🗑️ 清空日誌面板</button>
-                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:250px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:11px;white-space:pre-wrap;"></textarea>
+                <textarea id="ds-cache-log" class="text_pole" readonly style="width:100%;height:250px;background:#121212;color:#4af626;font-family:Consolas,monospace;font-size:10px;white-space:pre-wrap;"></textarea>
             </div>
         </div>`;
         $('#extensions_settings').append(html);
         Logger._uiTextarea = document.getElementById('ds-cache-log');
 
-        $('#ds-cache-enable').on('change', function () { settings.enabled = $(this).is(':checked'); saveSettings(); });
-        $('#ds-toast-sys').on('change', function () { settings.toastSys = $(this).is(':checked'); saveSettings(); });
-        $('#ds-toast-lore').on('change', function () { settings.toastLore = $(this).is(':checked'); saveSettings(); });
-        $('#ds-toast-his').on('change', function () { settings.toastHistory = $(this).is(':checked'); saveSettings(); });
-        $('#ds-toast-reset').on('change', function () { settings.showResetPrompt = $(this).is(':checked'); saveSettings(); });
-        $('#ds-cache-loglevel').on('change', function () { settings.logLevel = parseInt($(this).val()); saveSettings(); });
+        $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); saveSettingsDebounced(); });
+        $('#ds-toast-sys').on('change', function () { Settings.toastSys = $(this).is(':checked'); saveSettingsDebounced(); });
+        $('#ds-toast-lore').on('change', function () { Settings.toastLore = $(this).is(':checked'); saveSettingsDebounced(); });
+        $('#ds-toast-his').on('change', function () { Settings.toastHistory = $(this).is(':checked'); saveSettingsDebounced(); });
+        $('#ds-toast-reset').on('change', function () { Settings.showResetPrompt = $(this).is(':checked'); saveSettingsDebounced(); });
+        $('#ds-cache-loglevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); saveSettingsDebounced(); });
         
-        $('#ds-reset-all').on('click', () => { 
-            if(confirm('確定要清空「所有角色卡」及「所有聊天檔案」的插件狀態嗎？')) {
-                settings.profiles = {}; 
-                saveSettings(); 
-                renderProfilesList();
-                toastr.success("已清空所有緩存檔案狀態");
+        $('#ds-cache-factory-reset').on('click', () => {
+            if (confirm("這將會清除所有角色卡與聊天存檔的 Deepseek 緩存狀態！確定嗎？")) {
+                Settings.chats = {};
+                saveSettingsDebounced();
+                renderChatsUI();
+                if (typeof toastr !== 'undefined') toastr.success("已完成廠級重置！");
+                Logger.warn('[廠級重置] 所有存檔狀態已清空', LogLevels.BASIC);
             }
         });
         $('#ds-cache-clearlog').on('click', () => { if (Logger._uiTextarea) Logger._uiTextarea.value = ''; });
         
-        renderProfilesList();
+        renderChatsUI();
     } catch (e) {
         Logger.error('UI初始化失敗', e);
+    }
+}
+
+function registerMenuItems() {
+    const wandMenu = $('#extensionsMenu');
+    if (wandMenu.length > 0 && $('#wand-ds-cache-reset').length === 0) {
+        const menuItem = $('<div id="wand-ds-cache-reset" class="list-group-item extensionsMenu-item" style="cursor:pointer;"><i class="fa-solid fa-rotate-right"></i> 重置當前存檔 DS 緩存</div>');
+        menuItem.on('click', () => {
+            const key = getChatKey().key;
+            delete Settings.chats[key];
+            saveSettingsDebounced();
+            renderChatsUI();
+            if (typeof toastr !== 'undefined') toastr.success("已重置當前存檔的緩存狀態");
+            $('#extensionsMenu').slideUp(100);
+        });
+        wandMenu.append(menuItem);
     }
 }
 
@@ -457,20 +530,27 @@ async function setupUI() {
 // ==========================================
 jQuery(async () => {
     await setupUI();
+    setTimeout(registerMenuItems, 2000); 
 
     if (eventSource) {
-        if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-        if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('刪除歷史對話將引發緩存陣列重組！', settings.toastHistory));
-        if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('修改歷史對話將引發緩存陣列重組！', settings.toastHistory));
-        if (event_types?.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, () => triggerWarning('切換歷史對話將引發緩存陣列重組！', settings.toastHistory));
+        if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
+            eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
+        }
+        if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarning('刪除歷史對話將引發緩存重組！', Settings.toastHistory));
+        if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarning('修改歷史對話將引發緩存重組！', Settings.toastHistory));
+        if (event_types?.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, () => triggerWarning('切換歷史對話將引發緩存重組！', Settings.toastHistory));
     }
 
-    // 擴大監聽範圍覆蓋 Chat Completion Presets 與 API
-    const sysSelectors = '#main_prompt_textarea, #nsfw_prompt_textarea, #rm_ch_sys_prompt, #author_note_textarea, #chat_completion_system, textarea[id*="prompt"], textarea[id*="jailbreak"], .preset_textarea';
-    const loreSelectors = '.world_info_entry textarea, .world_info_entry input';
+    // 全局深度監聽：涵蓋 Chat Completion Presets 與其他提示詞
+    const sysSelectors = '#chat_completion_preset, select[id*="preset"], #main_prompt_textarea, #nsfw_prompt_textarea, #jailbreak_prompt_textarea, #rm_ch_sys_prompt, #author_note_textarea, #story_string_textarea';
+    $(document).on('input change', sysSelectors, function() {
+        triggerWarning('修改 Presets 或提示詞將更新對應的凍結位置！', Settings.toastSys);
+    });
 
-    $(document).on('input', sysSelectors, function() { triggerWarning('修改系統預設將觸發 10% 緩存雷達偵測！', settings.toastSys); });
-    $(document).on('input', loreSelectors, function() { triggerWarning('修改世界書將觸發 10% 緩存雷達偵測！', settings.toastLore); });
+    const loreSelectors = '.world_info_entry textarea, .world_info_entry input, #world_info_entries_list textarea, #world_info_entries_list input';
+    $(document).on('input change', loreSelectors, function() {
+        triggerWarning('修改世界書將更新對應的凍結位置！', Settings.toastLore);
+    });
     
-    Logger.log('══════ v8.0 就緒，多檔案持久化與 10% 雷達已啟用 ══════', LogLevels.BASIC);
+    Logger.log('══════ v8.0 多檔沙盒版 就緒 ══════', LogLevels.BASIC);
 });
