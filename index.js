@@ -12,11 +12,11 @@ function logAt(level, type, msg) {
     const time = new Date().toISOString().split('T')[1].slice(0, -1);
     const fullMsg = `[${time}] ${msg}`;
     if (type === 'warn') {
-        console.warn(`%c[DS Cache v6.6] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+        console.warn(`%c[DS Cache v6.7] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
     } else if (type === 'error') {
-        console.error(`[DS Cache v6.6] 🔴 ${msg}`);
+        console.error(`[DS Cache v6.7] 🔴 ${msg}`);
     } else {
-        console.log(`%c[DS Cache v6.6] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
+        console.log(`%c[DS Cache v6.7] ✅ ${msg}`, 'color: #00ff00; font-weight: bold;');
     }
     if (Logger._uiTextarea) {
         Logger._uiTextarea.value += fullMsg + '\n';
@@ -65,7 +65,7 @@ const CacheState = {
 };
 
 // ==========================================
-// 消息分类（强制基于 role）
+// 消息分类
 // ==========================================
 function classifyMessage(msg) {
     if (msg.role === 'system') {
@@ -93,41 +93,45 @@ function createMessageObj(msg, cls, uid, isPrefill = false) {
 }
 
 // ==========================================
-// 匹配原始对话消息以获取 isPrefill 标记
+// 匹配原始对话，基于 swipe_id 判断预填充
 // ==========================================
 function annotateWithOriginal(stream, originalChat) {
-    const annotated = [];
+    if (!originalChat || !originalChat.length) return;
     let origIndex = 0;
     for (let i = 0; i < stream.length; i++) {
         const s = stream[i];
-        let found = false;
-        // 在剩余原始消息中查找匹配（角色与内容完全一致）
+        let matched = false;
         for (let j = origIndex; j < originalChat.length; j++) {
             const o = originalChat[j];
-            if (o.role === s.role && o.content && s.content && o.content.trim() === s.content.trim()) {
-                s.isPrefill = !!(o.extra && o.extra.isPrefill);
+            // 使用标准化内容比对，降低空格/换行干扰
+            if (o.role === s.role && Logger.normalize(o.content) === Logger.normalize(s.content)) {
+                // 基于 swipe_id 判断：有 swipe_id 的 assistant 为真实 AI 回复，否则为预填充
+                if (s.role === 'assistant') {
+                    const hasSwipeId = o.swipe_id !== undefined && o.swipe_id !== null && o.swipe_id !== '';
+                    s.isPrefill = !hasSwipeId;
+                    if (logLevel >= LogLevels.DEBUG) {
+                        Logger.log(`[匹配] 助手消息 | swipe_id:${o.swipe_id || '无'} => ${s.isPrefill ? '预填充' : 'AI回复'} | ${s.content.substring(0,30)}...`, LogLevels.DEBUG);
+                    }
+                } else {
+                    s.isPrefill = false;
+                }
                 origIndex = j + 1;
-                found = true;
+                matched = true;
                 break;
             }
         }
-        if (!found) {
-            // 未找到匹配，可能被合并，保留未标记
+        if (!matched && s.role === 'assistant') {
+            // 未匹配到，保守视为非预填充（AI回复）
             s.isPrefill = false;
+            Logger.warn(`[匹配失败] 助手消息未在原始对话中找到: ${s.content.substring(0,30)}...`, LogLevels.DEBUG);
         }
-        annotated.push(s);
-    }
-    if (logLevel >= LogLevels.DEBUG) {
-        const prefills = stream.filter(m => m.isPrefill).length;
-        Logger.log(`[标记匹配] 原始消息匹配完成，识别到预填充: ${prefills} 条`, LogLevels.DEBUG);
     }
 }
 
 // ==========================================
-// 处理请求流（利用 isPrefill 标记分离背景、当前用户、预填充、AI回复）
+// 处理请求流
 // ==========================================
 function processStream(stream, originalChat) {
-    // 先标注 isPrefill
     annotateWithOriginal(stream, originalChat);
 
     const allMessages = stream.map(msg => {
@@ -143,7 +147,7 @@ function processStream(stream, originalChat) {
     }
 
     const backgroundCandidates = [];
-    const dialogueParts = [];  // 真实用户和 AI 消息
+    const dialogueParts = [];
 
     for (const obj of allMessages) {
         if (obj.isInstructional) {
@@ -153,7 +157,7 @@ function processStream(stream, originalChat) {
         }
     }
 
-    // 找到当前用户消息索引（最后一个真实 user）
+    // 当前用户消息索引
     let currentUserIndex = -1;
     for (let i = dialogueParts.length - 1; i >= 0; i--) {
         if (dialogueParts[i].isRealUser && dialogueParts[i].role === 'user') {
@@ -171,45 +175,36 @@ function processStream(stream, originalChat) {
     const afterUser = dialogueParts.slice(currentUserIndex + 1);
     const beforeUser = dialogueParts.slice(0, currentUserIndex);
 
-    // 利用 isPrefill 标记分离当前轮次的预填充和 AI 回复
+    // 分离当前预填充和 AI 回复（基于 isPrefill）
     let currentPrefills = [];
     let currentAssistant = null;
-
-    if (afterUser.length > 0) {
-        // 遍历当前用户之后的所有 assistant 消息
-        for (const msg of afterUser) {
-            if (!msg.isRealAI) continue; // 只处理 assistant
-            if (msg.isPrefill) {
-                currentPrefills.push(msg);
-                Logger.log(`[预填充识别] ${msg.content.substring(0,30)}...`, LogLevels.DEBUG);
+    for (const msg of afterUser) {
+        if (!msg.isRealAI) continue;
+        if (msg.isPrefill) {
+            currentPrefills.push(msg);
+            Logger.log(`[预填充识别] ${msg.content.substring(0,30)}...`, LogLevels.DEBUG);
+        } else {
+            if (!currentAssistant) {
+                currentAssistant = msg;
+                Logger.log(`[AI回复识别] ${msg.content.substring(0,30)}...`, LogLevels.DEBUG);
             } else {
-                // 第一个非预填充的 assistant 即为 AI 回复
-                if (!currentAssistant) {
-                    currentAssistant = msg;
-                    Logger.log(`[AI回复识别] ${msg.content.substring(0,30)}...`, LogLevels.DEBUG);
-                } else {
-                    Logger.warn(`[异常] 发现多个非预填充 assistant，忽略: ${msg.content.substring(0,30)}...`, LogLevels.DEBUG);
-                }
+                Logger.warn(`[异常] 发现多个非预填充 assistant，忽略: ${msg.content.substring(0,30)}...`, LogLevels.DEBUG);
             }
         }
-        // 如果没有非预填充 assistant，则无 AI 回复，全部为预填充
     }
 
     if (logLevel >= LogLevels.DEBUG) {
         Logger.log(`[当前用户消息] ${currentUserMsg.content.substring(0, 30)}...`, LogLevels.DEBUG);
         Logger.log(`[预填充数量] ${currentPrefills.length}`, LogLevels.DEBUG);
-        if (currentAssistant) {
-            Logger.log(`[AI回复] ${currentAssistant.content.substring(0, 30)}...`, LogLevels.DEBUG);
-        } else {
-            Logger.log(`[AI回复] 无`, LogLevels.DEBUG);
-        }
+        if (currentAssistant) Logger.log(`[AI回复] ${currentAssistant.content.substring(0, 30)}...`, LogLevels.DEBUG);
+        else Logger.log(`[AI回复] 无`, LogLevels.DEBUG);
     }
 
     return { dialogueParts: beforeUser, backgroundCandidates, currentUserMsg, currentPrefills, currentAssistant };
 }
 
 // ==========================================
-// 构建对话轮次（同样利用 isPrefill 标记，保留预填充）
+// 构建历史轮次（同样基于 isPrefill）
 // ==========================================
 function buildHistoryTurns(dialogueParts) {
     const turns = [];
@@ -217,11 +212,10 @@ function buildHistoryTurns(dialogueParts) {
 
     for (const obj of dialogueParts) {
         if (obj.isRealUser && obj.role === 'user') {
-            // 开始新轮次前，保存上一轮
             if (cur.user && cur.assistants.length > 0) {
                 const prefills = cur.assistants.filter(a => a.isPrefill);
                 const aiReplies = cur.assistants.filter(a => !a.isPrefill);
-                const assistant = aiReplies.length > 0 ? aiReplies[aiReplies.length - 1] : null; // 取最后一个非预填充
+                const assistant = aiReplies.length > 0 ? aiReplies[aiReplies.length - 1] : null;
                 turns.push({
                     user: cur.user,
                     prefills: prefills,
@@ -237,7 +231,6 @@ function buildHistoryTurns(dialogueParts) {
         }
     }
 
-    // 处理最后一轮（通常不会发生，因为当前用户已被移除）
     if (cur.user && cur.assistants.length > 0) {
         const prefills = cur.assistants.filter(a => a.isPrefill);
         const aiReplies = cur.assistants.filter(a => !a.isPrefill);
@@ -247,9 +240,6 @@ function buildHistoryTurns(dialogueParts) {
             prefills: prefills,
             assistant: assistant,
         });
-        if (logLevel >= LogLevels.DEBUG) {
-            Logger.log(`[构建轮次] 用户:${cur.user.content.substring(0,20)}... 预填充:${prefills.length} AI:${assistant?assistant.content.substring(0,20):'无'}`, LogLevels.DEBUG);
-        }
     }
 
     return turns;
@@ -286,7 +276,6 @@ function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 构建历史轮次（当前用户之前的所有对话，含预填充）
         const historyTurns = buildHistoryTurns(dialogueParts);
 
         // 初始化
@@ -299,7 +288,7 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        // --- 背景相似度 ---
+        // 背景相似度
         const frozenBgNorms = new Set(CacheState.frozenBackground.map(m => m.norm));
         const currentBgNorms = new Set(dedupBg.map(m => m.norm));
         const bgSimilarity = computeSetSimilarity(frozenBgNorms, currentBgNorms);
@@ -323,7 +312,7 @@ function interceptAndRestructurePrompt(data) {
             return;
         }
 
-        // --- 新增背景 ---
+        // 新增背景
         const newBg = dedupBg.filter(m => !frozenBgNorms.has(m.norm));
         for (const m of newBg) {
             if (!CacheState.extraBackground.some(ex => ex.norm === m.norm)) {
@@ -332,7 +321,7 @@ function interceptAndRestructurePrompt(data) {
         }
         if (newBg.length > 0) Logger.warn(`[新增背景] +${newBg.length} 条`, LogLevels.DETAILED);
 
-        // --- 对话轮次自適應更新（包含预填充） ---
+        // 对话轮次自适应更新
         const frozenTurnKeys = new Set(
             CacheState.frozenTurns.map(t => `${t.user.uid}|${t.assistant ? t.assistant.uid : ''}`)
         );
@@ -373,7 +362,6 @@ function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 加入新的历史轮次
         if (newHistoryTurns.length > 0) {
             Logger.warn(`[对话增量] +${newHistoryTurns.length} 轮（含预填充）`, LogLevels.DETAILED);
             CacheState.frozenTurns.push(...newHistoryTurns);
@@ -394,12 +382,10 @@ function interceptAndRestructurePrompt(data) {
 function applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssistant) {
     const final = [];
 
-    // 1. 冻结背景
     for (const bg of CacheState.frozenBackground) {
         final.push({ role: bg.role, content: bg.content });
     }
 
-    // 2. 冻结的对话轮次（user → prefills → assistant）
     for (const turn of CacheState.frozenTurns) {
         final.push({ role: turn.user.role, content: turn.user.content });
         if (turn.prefills && turn.prefills.length > 0) {
@@ -413,29 +399,25 @@ function applyFinalSequence(stream, currentUserMsg, currentPrefills, currentAssi
         }
     }
 
-    // 3. 新增背景（新提示词/世界书等）
     for (const extra of CacheState.extraBackground) {
         final.push({ role: extra.role, content: extra.content });
     }
 
-    // 4. 当前用户输入
     if (currentUserMsg) {
         final.push({ role: currentUserMsg.role, content: currentUserMsg.content });
     }
 
-    // 5. 当前预填充
     for (const p of currentPrefills) {
         final.push({ role: p.role, content: p.content });
         Logger.log(`[当前预填充] ${p.content.substring(0,30)}...`, LogLevels.DEBUG);
     }
 
-    // 6. 当前 AI 回复（如果有）
     if (currentAssistant) {
         final.push({ role: currentAssistant.role, content: currentAssistant.content });
     }
 
     if (logLevel >= LogLevels.DEBUG) {
-        Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结轮次:${CacheState.frozenTurns.length} 新增背景:${CacheState.extraBackground.length} 用户:1 预填充:${currentPrefills.length} 当前AI:${currentAssistant?1:0}`, LogLevels.DEBUG);
+        Logger.log(`[最终序列] 冻结背景:${CacheState.frozenBackground.length} 冻结轮次:${CacheState.frozenTurns.length} 新增背景:${CacheState.extraBackground.length} 用户:1 当前预填充:${currentPrefills.length} 当前AI:${currentAssistant?1:0}`, LogLevels.DEBUG);
         final.forEach((m, i) => Logger.log(`  ${i}: [${m.role}] ${m.content.substring(0, 40)}...`, LogLevels.DEBUG));
     }
 
@@ -491,7 +473,7 @@ function performReset() {
 }
 
 // ==========================================
-// UI 初始化 + ST菜单项
+// UI 初始化
 // ==========================================
 async function setupUI() {
     try {
@@ -502,7 +484,7 @@ async function setupUI() {
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:10px;">
-                <p style="font-size:0.9em;opacity:0.8;">基于 isPrefill 精准识别，预填充永久冻结，自适应增删轮次。</p>
+                <p style="font-size:0.9em;opacity:0.8;">基于 swipe_id 精准识别预填充，永久冻结，自适应增删。</p>
                 <div id="ds-cache-stats" style="margin-bottom:8px;"></div>
                 <label class="checkbox_label"><input type="checkbox" id="ds-cache-enable" checked> 启用</label>
                 <div style="margin:8px 0;">
@@ -571,5 +553,5 @@ jQuery(async () => {
     } else {
         Logger.error('无法挂载事件钩子');
     }
-    Logger.log('══════ v6.6 就绪，isPrefill 自适配 + 预填充永久冻结 ══════', LogLevels.BASIC);
+    Logger.log('══════ v6.7 就绪，swipe_id 自适配 + 预填充永久冻结 ══════', LogLevels.BASIC);
 });
