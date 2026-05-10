@@ -2,43 +2,54 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (適配原生變數與高階視覺優化)
+// 1. 樣式注入 (高階視覺、互動拓撲、濾波器)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
     const style = document.createElement('style');
     style.id = 'ds-cache-styles';
     style.innerHTML = `
+        /* 基礎 UI 框架 */
+        .ds-section-title { font-size: 0.9em; color: #e5c07b; margin: 10px 0 5px 0; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 3px; }
+        .ds-panel-box { background: rgba(255,255,255,0.02); padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 6px; border: 1px solid rgba(255,255,255,0.05); margin-bottom: 10px; }
+        
+        /* 終端機日誌與濾波器 */
+        .ds-log-toolbar { display: flex; gap: 5px; margin-bottom: 5px; }
+        .ds-log-filter { cursor: pointer; padding: 2px 8px; border-radius: 12px; font-size: 10px; background: rgba(255,255,255,0.1); color: #abb2bf; transition: 0.2s; }
+        .ds-log-filter.active { background: #56b6c2; color: #121212; font-weight: bold; }
+        .ds-log-filter:hover:not(.active) { background: rgba(255,255,255,0.2); }
         .ds-log-terminal { background: var(--black50a, #0d0d0d); color: var(--SmartThemeBody-color, #a9b7c6); font-family: Consolas, monospace; font-size: 11px; height: 180px; overflow-y: auto; border-radius: 6px; padding: 8px; border: 1px solid var(--SmartThemeBorder-color, #333); box-shadow: inset 0 0 10px rgba(0,0,0,0.5); scroll-behavior: smooth; transition: height 0.3s; }
         .ds-log-terminal.collapsed { height: 0; padding: 0; border: none; overflow: hidden; }
         .ds-log-line { margin-bottom: 3px; line-height: 1.3; word-wrap: break-word; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 2px; }
+        .ds-log-line.hide { display: none; }
         .ds-log-time { color: #5c6370; margin-right: 5px; }
         .ds-log-info { color: #98c379; }
         .ds-log-warn { color: #e5c07b; font-weight: bold; }
         .ds-log-error { color: #e06c75; font-weight: bold; }
         .ds-log-map { color: #56b6c2; }
         
+        /* 標籤與快取列表 */
         .ds-tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; background: rgba(255,255,255,0.05); }
         .ds-tag-SYS { color: #61afef; border-left: 2px solid #61afef; }
         .ds-tag-USER { color: #98c379; border-left: 2px solid #98c379; }
         .ds-tag-AI { color: #e5c07b; border-left: 2px solid #e5c07b; }
         .ds-tag-PREFILL { color: #c678dd; border-left: 2px solid #c678dd; }
 
-        .ds-chat-container { max-height:220px; overflow-y:auto; margin:8px 0; border:1px solid rgba(255,255,255,0.1); padding:5px; border-radius:6px; background:var(--black50a, #121212); transition: max-height 0.3s; }
+        .ds-chat-container { max-height:220px; overflow-y:auto; margin:4px 0; border:1px solid rgba(255,255,255,0.1); padding:5px; border-radius:6px; background:var(--black50a, #121212); transition: max-height 0.3s; }
         .ds-chat-container.collapsed { max-height: 0; padding: 0; border: none; overflow: hidden; margin: 0; }
         .ds-chat-item { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px; margin-bottom:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.05); transition: 0.2s; }
         .ds-chat-item:hover { background:rgba(255,255,255,0.08); }
         .ds-chat-item.active-chat { background:rgba(0, 229, 255, 0.08); border:1px solid #00e5ff; box-shadow: inset 0 0 10px rgba(0,229,255,0.15); }
         .ds-action-group { display: flex; gap: 5px; }
         
+        /* 攔截器彈窗 & 差異顯示 */
         .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; }
         .ds-modal { background: var(--SmartThemeBlurTintColor, #1e1e24); border: 1px solid #e06c75; padding: 30px; border-radius: 12px; max-width: 650px; width: 90%; color: var(--SmartThemeBody-color, #fff); font-family: sans-serif; box-shadow: 0 25px 50px rgba(0,0,0,0.9); position: relative; overflow: hidden; animation: dsSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
         .ds-modal-title { color: #e06c75; margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px; font-size: 20px; }
-        .ds-modal-text { font-size: 14px; line-height: 1.6; color: var(--SmartThemeBody-color, #abb2bf); opacity: 0.9; }
         .ds-progress-container { background: rgba(0,0,0,0.5); border-radius: 6px; height: 10px; margin: 15px 0; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
         .ds-progress-bar { height: 100%; width: 0%; transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s; }
         
-        .ds-map-box { background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px; font-family: Consolas, monospace; font-size: 12px; color: #abb2bf; margin: 15px 0; border: 1px solid rgba(255,255,255,0.1); max-height: 200px; overflow-y: auto; }
+        .ds-map-box { background: rgba(0,0,0,0.4); padding: 12px; border-radius: 8px; font-family: Consolas, monospace; font-size: 12px; color: #abb2bf; margin: 15px 0; border: 1px solid rgba(255,255,255,0.1); max-height: 250px; overflow-y: auto; }
         .ds-diff-del { background: rgba(224, 108, 117, 0.15); border-left: 3px solid #e06c75; padding: 6px 10px; margin-bottom: 4px; border-radius: 0 4px 4px 0; color: #e06c75; word-wrap: break-word; }
         .ds-diff-add { background: rgba(152, 195, 121, 0.15); border-left: 3px solid #98c379; padding: 6px 10px; border-radius: 0 4px 4px 0; color: #98c379; word-wrap: break-word; }
         
@@ -48,34 +59,41 @@ const injectCSS = () => {
         .ds-btn:active { transform: translateY(0); }
         .ds-btn-accept { background: #98c379; color: #121212; }
         .ds-btn-abort { background: #e06c75; color: #fff; }
-        .ds-btn-sub { font-size: 10px; font-weight: normal; opacity: 0.8; }
-        .ds-key-hint { position: absolute; right: 8px; top: 8px; font-size: 10px; opacity: 0.6; background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 4px; }
-
-        .ds-timeline-container { max-height: 400px; overflow-y: auto; padding-right: 5px; }
-        .ds-timeline-item { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .ds-timeline-content { flex: 1; color: #abb2bf; font-size: 12px; line-height: 1.4; word-wrap: break-word; }
-        .ds-timeline-index { width: 25px; text-align: right; color: #5c6370; font-size: 10px; padding-top: 3px; }
+        
+        /* 互動式拓撲圖 2.0 */
+        .ds-timeline-container { max-height: 450px; overflow-y: auto; padding-right: 5px; }
+        .ds-timeline-item { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); cursor: pointer; transition: 0.2s; border-radius: 6px; padding: 5px; }
+        .ds-timeline-item:hover { background: rgba(255,255,255,0.05); }
+        .ds-timeline-content-wrapper { flex: 1; display: flex; flex-direction: column; }
+        .ds-timeline-preview { color: #abb2bf; font-size: 12px; line-height: 1.4; word-wrap: break-word; }
+        .ds-timeline-full { display: none; margin-top: 8px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 6px; color: #d7dae0; font-size: 11px; white-space: pre-wrap; border-left: 2px solid #56b6c2; }
+        .ds-timeline-item.expanded .ds-timeline-full { display: block; animation: dsFadeIn 0.2s ease-out; }
+        .ds-timeline-item.expanded .ds-timeline-preview { color: #56b6c2; font-weight: bold; }
+        .ds-timeline-index { width: 30px; text-align: right; color: #5c6370; font-size: 10px; padding-top: 3px; font-family: monospace; }
 
         .ds-mini-btn { cursor:pointer; opacity:0.7; transition:0.2s; font-size:12px; }
         .ds-mini-btn:hover { opacity:1; transform:scale(1.1); }
         .ds-badge { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 0.8em; font-family: monospace; color: #56b6c2; }
+        .ds-zen-icon { color: #c678dd; animation: dsPulse 2s infinite; }
         
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes dsPulse { 0% { opacity: 0.6; } 50% { opacity: 1; text-shadow: 0 0 5px #c678dd; } 100% { opacity: 0.6; } }
     `;
     document.head.appendChild(style);
 };
 
 // ==========================================
-// 2. 狀態設定、防抖與系統擴充機制
+// 2. 狀態設定、防抖與自動快照引擎 (v20)
 // ==========================================
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v18 || extension_settings.ds_cache_v17 || {};
-    if (!extension_settings.ds_cache_v19) {
-        extension_settings.ds_cache_v19 = {
+    const oldSettings = extension_settings.ds_cache_v19 || extension_settings.ds_cache_v18 || {};
+    if (!extension_settings.ds_cache_v20) {
+        extension_settings.ds_cache_v20 = {
             enabled: oldSettings.enabled ?? true,
+            zenMode: oldSettings.zenMode ?? false, // 新增: 禪模式
             toastSys: oldSettings.toastSys ?? true,
             toastSysToggle: oldSettings.toastSysToggle ?? true,
             toastLore: oldSettings.toastLore ?? true,
@@ -86,20 +104,27 @@ function initSettings() {
             logLevel: oldSettings.logLevel ?? 3,
             tolerance: oldSettings.tolerance ?? 1,
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
-            hotkeysEnabled: oldSettings.hotkeysEnabled ?? true, // 新增: 全域快捷鍵
-            autoPinThreshold: oldSettings.autoPinThreshold ?? 0, // 新增: 智能自動釘選
+            hotkeysEnabled: oldSettings.hotkeysEnabled ?? true,
+            autoPinThreshold: oldSettings.autoPinThreshold ?? 0,
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v19;
+    Settings = extension_settings.ds_cache_v20;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
 
 function safeSave() {
-    try { if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); } 
-    catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
+    try { 
+        if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
+        
+        // 雙重異地備份 (Auto-Snapshot)
+        if (Math.random() < 0.1) { // 隨機約 10% 機率存快照，避免頻繁寫入 I/O
+            localStorage.setItem('ds_cache_v20_snapshot', JSON.stringify(Settings));
+        }
+    } 
+    catch (e) { console.warn("[DS Cache] 存檔或快照失敗", e); }
 }
 
 function getTolerance() {
@@ -121,7 +146,11 @@ function triggerWarning(key, msg, toggle) {
     if (!Settings.enabled || !toggle) return;
     if (!triggerDebouncers[key]) {
         triggerDebouncers[key] = debounce(() => {
-            if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DS 狀態變更', { timeOut: 2000 });
+            if (Settings.zenMode) {
+                Logger.log(`[禪模式靜默攔截] 狀態變更: ${msg}`, LogLevels.BASIC);
+            } else {
+                if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DS 狀態變更', { timeOut: 2000 });
+            }
         }, 1200);
     }
     triggerDebouncers[key]();
@@ -131,10 +160,26 @@ function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-function calculateStorageFootprint() {
+// 高精準度記憶體佔用分析 (UTF-16 遞迴演算法)
+function calculateExactStorage(object) {
     try {
-        const sizeBytes = new Blob([JSON.stringify(Settings.chats)]).size;
-        return sizeBytes > 1048576 ? (sizeBytes / 1048576).toFixed(2) + ' MB' : (sizeBytes / 1024).toFixed(1) + ' KB';
+        let bytes = 0;
+        const stack = [object];
+        const seen = new Set();
+        while (stack.length) {
+            const value = stack.pop();
+            if (typeof value === 'boolean') bytes += 4;
+            else if (typeof value === 'string') bytes += value.length * 2;
+            else if (typeof value === 'number') bytes += 8;
+            else if (typeof value === 'object' && value !== null && !seen.has(value)) {
+                seen.add(value);
+                for (const key in value) {
+                    bytes += key.length * 2;
+                    stack.push(value[key]);
+                }
+            }
+        }
+        return bytes > 1048576 ? (bytes / 1048576).toFixed(2) + ' MB' : (bytes / 1024).toFixed(1) + ' KB';
     } catch(e) { return 'Unknown'; }
 }
 
@@ -150,7 +195,7 @@ function performGarbageCollection() {
 }
 
 // ==========================================
-// 3. 核心日誌與狀態指示燈
+// 3. 核心日誌、濾波器與狀態指示燈
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
@@ -160,9 +205,15 @@ function updateTopBarState() {
     if (!Settings.enabled) {
         dot.css('color', '#5c6370');
         $('#ds-top-reset-btn').attr('title', 'DS Cache: 已停用 (左鍵切換 / 右鍵清空)');
+        dot.html('<i class="fa-solid fa-circle"></i>');
+    } else if (Settings.zenMode) {
+        dot.css('color', '#c678dd');
+        $('#ds-top-reset-btn').attr('title', 'DS Cache: 運作中 [禪模式] (左鍵切換 / 右鍵清空)');
+        dot.html('<i class="fa-solid fa-yin-yang ds-zen-icon"></i>');
     } else {
         dot.css('color', '#00ff00');
         $('#ds-top-reset-btn').attr('title', 'DS Cache: 運作中 (左鍵切換 / 右鍵清空)');
+        dot.html('<i class="fa-solid fa-circle"></i>');
     }
 }
 
@@ -170,7 +221,10 @@ function setTopBarStatus(color, title) {
     if (!Settings.enabled) return;
     const dot = $('#ds-top-status-dot');
     if (dot.length) {
-        dot.css('color', color);
+        if (!Settings.zenMode || color === '#e06c75') { // 錯誤狀態強行覆蓋禪模式
+            dot.css('color', color);
+            if(color === '#00ff00') dot.html('<i class="fa-solid fa-circle"></i>');
+        }
         $('#ds-top-reset-btn').attr('title', title + ' (左鍵切換 / 右鍵清空)');
     }
 }
@@ -179,18 +233,27 @@ function logAt(level, type, msg) {
     if (Settings.logLevel < level) return;
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
-    if (type === 'warn') console.warn(`%c[DS v19] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
-    else if (type === 'error') console.error(`[DS v19] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[DS v19] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
-    else console.log(`%c[DS v19] ✅ ${msg}`, 'color: #00ff00;');
+    if (type === 'warn') console.warn(`%c[DS v20] 🌪️ ${msg}`, 'color: #ffaa00; font-weight: bold;');
+    else if (type === 'error') console.error(`[DS v20] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[DS v20] 🗺️ ${msg}`, 'color: #00e5ff; font-weight: bold;');
+    else console.log(`%c[DS v20] ✅ ${msg}`, 'color: #00ff00;');
     
     const container = document.getElementById('ds-cache-log-container');
     if (container) {
         const line = document.createElement('div');
+        // 加入 type 屬性供濾波器使用
         line.className = 'ds-log-line';
+        line.setAttribute('data-type', type);
         line.innerHTML = `<span class="ds-log-time">[${time}]</span> <span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
         container.appendChild(line);
-        while (container.childNodes.length > 200) container.removeChild(container.firstChild);
+        
+        // 套用當前濾波狀態
+        const activeFilter = $('.ds-log-filter.active').data('filter') || 'all';
+        if (activeFilter !== 'all' && activeFilter !== type) {
+            line.classList.add('hide');
+        }
+
+        while (container.childNodes.length > 300) container.removeChild(container.firstChild);
         container.scrollTop = container.scrollHeight;
     }
 }
@@ -205,7 +268,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理、擴充選單與全域快捷鍵
+// 4. 狀態管理與擴充介面
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -235,7 +298,7 @@ function ensureTopMenuButton() {
         const btn = $(`
             <li id="ds-top-reset-btn" class="menu_button interactable" title="DS Cache">
                 <span class="fa-solid fa-microchip"></span>
-                <span id="ds-top-status-dot" style="font-size:0.7em; margin-left:2px; vertical-align:top;"><i class="fa-solid fa-circle"></i></span>
+                <span id="ds-top-status-dot" style="font-size:0.7em; margin-left:2px; vertical-align:top;"></span>
             </li>
         `);
         btn.on('click', (e) => {
@@ -243,19 +306,15 @@ function ensureTopMenuButton() {
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
             safeSave(); updateTopBarState();
-            if (typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "時序引擎已啟動" : "時序引擎已關閉", "DS Cache");
+            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "時序引擎已啟動" : "時序引擎已關閉", "DS Cache");
         });
-        btn.on('contextmenu', (e) => {
-            e.preventDefault();
-            resetCurrentCache();
-        });
+        btn.on('contextmenu', (e) => { e.preventDefault(); resetCurrentCache(); });
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
         else if ($('#right-nav-extensions').length > 0) $('#right-nav-extensions').append(btn);
     }
     updateTopBarState();
 }
 
-// 魯棒性: 使用 MutationObserver 或定期檢查確保選單存在
 function ensureBottomLeftMenuButton() {
     if ($('#extensions_menu').length > 0 && $('#ds-bottom-reset-btn').length === 0) {
         const btn = $(`
@@ -263,10 +322,7 @@ function ensureBottomLeftMenuButton() {
                 <span class="fa-solid fa-microchip"></span> 重置 DS 快取
             </li>
         `);
-        btn.on('click', () => {
-            resetCurrentCache();
-            if ($('#extensions_menu').hasClass('open')) $('#extensions_menu').removeClass('open').hide();
-        });
+        btn.on('click', () => { resetCurrentCache(); if ($('#extensions_menu').hasClass('open')) $('#extensions_menu').removeClass('open').hide(); });
         $('#extensions_menu').append(btn);
     }
 }
@@ -284,7 +340,6 @@ function resetCurrentCache() {
 function setupGlobalHotkeys() {
     document.addEventListener('keydown', (e) => {
         if (!Settings.hotkeysEnabled) return;
-        // 避免在輸入框觸發
         const tag = e.target.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
         
@@ -294,26 +349,21 @@ function setupGlobalHotkeys() {
                 Settings.enabled = !Settings.enabled;
                 $('#ds-cache-enable').prop('checked', Settings.enabled);
                 safeSave(); updateTopBarState();
-                if (typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "引擎已啟動" : "引擎已關閉", "DS Cache 快捷鍵");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "引擎已啟動" : "引擎已關閉", "DS 快捷鍵");
             }
-            if (e.key.toLowerCase() === 'r') {
-                e.preventDefault();
-                resetCurrentCache();
+            if (e.key.toLowerCase() === 'r') { e.preventDefault(); resetCurrentCache(); }
+            if (e.key.toLowerCase() === 'z') { 
+                e.preventDefault(); 
+                Settings.zenMode = !Settings.zenMode; 
+                $('#ds-cache-zen').prop('checked', Settings.zenMode);
+                safeSave(); updateTopBarState(); 
+                if(typeof toastr !== 'undefined') toastr.info(Settings.zenMode ? "已進入禪模式 (靜音攔截)" : "已關閉禪模式", "DS 快捷鍵");
             }
         }
     });
 }
 
-function exportData() {
-    const dataStr = JSON.stringify(Settings, null, 2);
-    const blob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = `DS_Cache_Backup_v19_${new Date().getTime()}.json`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    if (typeof toastr !== 'undefined') toastr.success("備份檔案已匯出！");
-}
-
+// 智慧快取合併匯入技術
 function importData(event) {
     const file = event.target.files[0];
     if (!file) return;
@@ -322,11 +372,33 @@ function importData(event) {
         try {
             const imported = JSON.parse(e.target.result);
             if (imported && typeof imported === 'object') {
-                Object.assign(Settings, imported);
+                
+                const doMerge = confirm("是否要保留現有的對話快取並進行「智慧合併」？\n(選擇「取消」將會完全覆蓋並清除當前未備份的快取)");
+                
+                if (doMerge && imported.chats) {
+                    // 合併邏輯: 若存在同名 key，取 lastAccessed 較新的一方
+                    for (const key in imported.chats) {
+                        if (!Settings.chats[key] || (imported.chats[key].lastAccessed > (Settings.chats[key].lastAccessed || 0))) {
+                            Settings.chats[key] = imported.chats[key];
+                        }
+                    }
+                    if (imported.pinnedChats) Object.assign(Settings.pinnedChats, imported.pinnedChats);
+                    
+                    // 其他設定檔覆蓋
+                    ['enabled','zenMode','tolerance','maxCacheSize','autoPinThreshold'].forEach(k => {
+                        if(imported[k] !== undefined) Settings[k] = imported[k];
+                    });
+                    Logger.log("已成功完成智慧合併。");
+                } else {
+                    Object.assign(Settings, imported);
+                    Logger.warn("已完全覆蓋現有設定與快取池。");
+                }
+
                 safeSave(); renderChatsUI();
                 $('#ds-cache-enable').prop('checked', Settings.enabled);
+                $('#ds-cache-zen').prop('checked', Settings.zenMode);
                 updateTopBarState();
-                if (typeof toastr !== 'undefined') toastr.success("資料還原成功！");
+                if (typeof toastr !== 'undefined') toastr.success("資料還原/合併成功！");
             }
         } catch (err) {
             Logger.error("匯入失敗", err);
@@ -337,8 +409,22 @@ function importData(event) {
     reader.readAsText(file);
 }
 
+function restoreFromLocalSnapshot() {
+    try {
+        const snap = localStorage.getItem('ds_cache_v20_snapshot');
+        if (!snap) { alert("尚未找到有效的本地快照。"); return; }
+        if (confirm("即將從本地 localStorage 快照庫還原資料。這將覆蓋當前狀態。確定嗎？")) {
+            Object.assign(Settings, JSON.parse(snap));
+            safeSave(); renderChatsUI();
+            if (typeof toastr !== 'undefined') toastr.success("本地快照還原成功！");
+            Logger.log("從 localStorage 快照還原系統狀態。");
+            updateTopBarState();
+        }
+    } catch(e) { alert("快照損毀或無法讀取。"); }
+}
+
 // ==========================================
-// 5. 核心邏輯工具 (絕對不變)
+// 5. 核心邏輯工具 (不變之核心)
 // ==========================================
 function createMsg(msg, tag) {
     const content = msg.content || '';
@@ -461,7 +547,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
 }
 
 // ==========================================
-// 7. 核心時序處理器 (結合自動釘選機制)
+// 7. 核心時序處理器
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -611,7 +697,7 @@ async function interceptAndRestructurePrompt(data) {
             setTopBarStatus('#ffaa00', `DS Cache: 阻斷中`);
             if (Settings.autoAccept) {
                 Logger.warn(`[靜默重組] 自動放行重組，流失 ${dropPercentStr}%`);
-                if (typeof toastr !== 'undefined') toastr.info(`已在背景自動重組時序 (流失 ${dropPercentStr}%)`, "DS Cache");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已在背景自動重組時序 (流失 ${dropPercentStr}%)`, "DS Cache");
                 decision = 'reset';
             } else {
                 decision = await askUserForResetAsync(dropPercentStr, mapInfoText);
@@ -642,7 +728,7 @@ async function interceptAndRestructurePrompt(data) {
         state.lastSentSequence = finalStream;
         safeSave();
 
-        // [新增] 智能自動釘選機制
+        // 智能自動釘選
         if (Settings.autoPinThreshold > 0 && finalStream.length >= Settings.autoPinThreshold) {
             if (!Settings.pinnedChats[chatKeyInfo.key]) {
                 Settings.pinnedChats[chatKeyInfo.key] = true;
@@ -662,15 +748,15 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 8. 介面面板與事件綁定 (深度功能整合)
+// 8. 介面面板與事件綁定 (模組化設計)
 // ==========================================
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
     if (container.length === 0) return;
     container.empty();
     
-    // 更新記憶體標籤
-    $('#ds-storage-badge').text(calculateStorageFootprint());
+    // 更新精確記憶體標籤
+    $('#ds-storage-badge').text(calculateExactStorage(Settings.chats));
 
     const keys = Object.keys(Settings.chats);
     if (keys.length === 0) {
@@ -731,7 +817,6 @@ function renderChatsUI() {
         delete Settings.chats[key];
         delete Settings.pinnedChats[key];
         safeSave(); renderChatsUI();
-        if (typeof toastr !== 'undefined') toastr.success("已刪除該存檔");
     });
     container.find('.ds-pin-btn').on('click', function() {
         const key = $(this).data('key');
@@ -741,6 +826,7 @@ function renderChatsUI() {
     });
 }
 
+// 互動式全息拓撲圖 2.0
 function showTopology() {
     const chatKeyInfo = getChatKey();
     const state = Settings.chats[chatKeyInfo.key];
@@ -750,20 +836,24 @@ function showTopology() {
     }
     let timelineHtml = '';
     state.frozenSequence.forEach((m, idx) => {
-        const preview = escapeHtml(m.content || '').substring(0, 100).replace(/\n/g, ' ↵ ');
+        const fullText = escapeHtml(m.content || '');
+        const preview = fullText.substring(0, 80).replace(/\n/g, ' ↵ ');
         timelineHtml += `
-            <div class="ds-timeline-item">
+            <div class="ds-timeline-item" onclick="this.classList.toggle('expanded')">
                 <div class="ds-timeline-index">[${idx}]</div>
                 <div><span class="ds-tag ds-tag-${m.tag}">${m.tag}</span></div>
-                <div class="ds-timeline-content">${preview}...</div>
+                <div class="ds-timeline-content-wrapper">
+                    <div class="ds-timeline-preview">${preview}${fullText.length > 80 ? '...' : ''}</div>
+                    <div class="ds-timeline-full">${fullText}</div>
+                </div>
             </div>
         `;
     });
 
     const html = `
         <div class="ds-overlay" id="ds-topo-wrapper">
-            <div class="ds-modal" style="max-width: 550px; padding: 25px;">
-                <h2 class="ds-modal-title" style="color:#56b6c2; font-size:18px;"><span class="fa-solid fa-list-ol"></span> 凍結拓撲結構 (垂直時間軸)</h2>
+            <div class="ds-modal" style="max-width: 600px; padding: 25px;">
+                <h2 class="ds-modal-title" style="color:#56b6c2; font-size:18px;"><span class="fa-solid fa-list-ol"></span> 互動式全息拓撲圖 (點擊展開節點)</h2>
                 <div class="ds-map-box ds-timeline-container">${timelineHtml}</div>
                 <button class="ds-btn ds-btn-accept" style="width:100%; margin-top:15px;" id="ds-btn-close-topo">關閉預覽 (Esc/Enter)</button>
             </div>
@@ -776,20 +866,16 @@ function showTopology() {
     document.addEventListener('keydown', topoKeyHandler, true);
 }
 
-// 深度清理邏輯
 function performDeepClean() {
-    if(!confirm("這將會清除所有「未被釘選」且「節點數為 0」或「超過 30 天未活躍」的快取。確定執行嗎？")) return;
+    if(!confirm("這將清除所有「未被釘選」且「節點數為 0」或「超過 30 天未活躍」的快取。確定執行嗎？")) return;
     let count = 0;
     const now = Date.now();
     for (let k in Settings.chats) {
         if (Settings.pinnedChats[k]) continue;
         const chat = Settings.chats[k];
         const isEmpty = !chat.frozenSequence || chat.frozenSequence.length === 0;
-        const isOld = chat.lastAccessed && (now - chat.lastAccessed > 30 * 24 * 60 * 60 * 1000); // 30天
-        if (isEmpty || isOld) {
-            delete Settings.chats[k];
-            count++;
-        }
+        const isOld = chat.lastAccessed && (now - chat.lastAccessed > 30 * 24 * 60 * 60 * 1000);
+        if (isEmpty || isOld) { delete Settings.chats[k]; count++; }
     }
     safeSave(); renderChatsUI();
     if (typeof toastr !== 'undefined') toastr.success(`深度清理完成，共移除 ${count} 個無效/過期存檔。`);
@@ -799,31 +885,40 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v19-opt-drawer">
+        <div class="inline-drawer" id="ds-v20-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b><span class="fa-solid fa-satellite-dish"></span> Deepseek Cache (v19 終極穹頂版)</b>
+                <b><span class="fa-solid fa-atom"></span> Deepseek Cache (v20 奇異點版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:15px; background: rgba(0,0,0,0.1);">
                 
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <label class="checkbox_label" style="font-weight:bold; color:#00e5ff;"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用時序守護引擎</label>
-                    <button id="ds-btn-topo" class="menu_button interactable" style="font-size:0.8em; padding:3px 8px; background:rgba(86,182,194,0.1); color:#56b6c2; border:1px solid #56b6c2;"><span class="fa-solid fa-eye"></span> 檢視拓撲</button>
+                <!-- 核心控制區 -->
+                <div class="ds-panel-box">
+                    <div class="ds-section-title"><span class="fa-solid fa-sliders"></span> 核心控制</div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <label class="checkbox_label" style="font-weight:bold; color:#00e5ff;"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 啟用時序守護引擎</label>
+                        <button id="ds-btn-topo" class="menu_button interactable" style="font-size:0.8em; padding:3px 8px; background:rgba(86,182,194,0.1); color:#56b6c2; border:1px solid #56b6c2;"><span class="fa-solid fa-eye"></span> 互動拓撲圖</button>
+                    </div>
+                    <label class="checkbox_label" style="color:#c678dd;" title="開啟後將隱藏所有非致命的 Toast 彈窗，只顯示狀態燈"><input type="checkbox" id="ds-cache-zen" ${Settings.zenMode ? 'checked' : ''}> 🧘 禪模式 (防擾靜默攔截)</label>
+                    <label class="checkbox_label" style="color:#e5c07b;" title="遇到斷裂時，自動在背景放行重組，不彈視窗"><input type="checkbox" id="ds-cache-auto-accept" ${Settings.autoAccept ? 'checked' : ''}> ⚡ 啟用靜默自動修復 (Auto-Accept)</label>
+                    <label class="checkbox_label" style="color:#98c379;"><input type="checkbox" id="ds-cache-hotkeys" ${Settings.hotkeysEnabled ? 'checked' : ''}> ⌨️ 全域快捷鍵 (Ctrl+Alt+C / R / Z)</label>
                 </div>
-                
-                <div style="margin:5px 0 15px 15px; border-left: 3px solid #00e5ff; padding-left: 12px; display:flex; flex-direction:column; gap:4px;">
-                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 📝 提示詞 (內容) 變更通知</label>
-                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys-toggle" ${Settings.toastSysToggle ? 'checked' : ''}> 🎚️ 提示詞 (開關) 切換通知</label>
+
+                <!-- 通知與感測區 -->
+                <div class="ds-panel-box">
+                    <div class="ds-section-title"><span class="fa-solid fa-satellite-dish"></span> 感知與通知 (禪模式下會強制靜音)</div>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 📝 提示詞內容變更通知</label>
+                    <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-sys-toggle" ${Settings.toastSysToggle ? 'checked' : ''}> 🎚️ 提示詞開關切換通知</label>
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 📖 角色世界書變更通知</label>
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-global-lore" ${Settings.toastGlobalLore ? 'checked' : ''}> 🌍 全局世界書變更通知</label>
                     <label class="checkbox_label" style="font-size:0.85em;"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 💬 歷史對話編輯/刪除通知</label>
-                    <hr style="border: 0; border-top: 1px dashed rgba(255,255,255,0.1); margin: 4px 0;">
-                    <label class="checkbox_label" style="font-size:0.85em; color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 🛑 啟用視覺化攔截阻斷器</label>
-                    <label class="checkbox_label" style="font-size:0.85em; color:#e5c07b;" title="遇到斷裂時，自動在背景放行重組，不彈視窗"><input type="checkbox" id="ds-cache-auto-accept" ${Settings.autoAccept ? 'checked' : ''}> ⚡ 啟用靜默自動修復 (Auto-Accept)</label>
-                    <label class="checkbox_label" style="font-size:0.85em; color:#98c379;" title="允許使用 Ctrl+Alt+C/R 進行操作"><input type="checkbox" id="ds-cache-hotkeys" ${Settings.hotkeysEnabled ? 'checked' : ''}> ⌨️ 啟用全域快捷鍵 (Ctrl+Alt+C/R)</label>
+                    <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); margin:4px 0;">
+                    <label class="checkbox_label" style="font-size:0.85em; color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 🛑 啟用視覺化攔截阻斷器彈窗</label>
                 </div>
                 
-                <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:15px; background:rgba(255,255,255,0.02); padding:10px; border-radius:6px;">
+                <!-- 參數與備份區 -->
+                <div class="ds-panel-box">
+                    <div class="ds-section-title"><span class="fa-solid fa-gears"></span> 參數與維護</div>
                     <div style="display:flex; justify-content:space-between; align-items:center;">
                         <span style="font-size:0.85em; color:#abb2bf;">判定容錯率:</span>
                         <select id="ds-cache-tolerance" class="text_pole" style="width:120px; font-size:0.8em; padding:2px;">
@@ -836,41 +931,54 @@ async function setupUI() {
                         <span style="font-size:0.85em; color:#abb2bf;">GC 最大快取數:</span>
                         <input type="number" id="ds-cache-maxsize" class="text_pole" value="${Settings.maxCacheSize}" min="5" max="100" style="width:120px; font-size:0.8em; padding:2px; text-align:center;">
                     </div>
-                    <div style="display:flex; justify-content:space-between; align-items:center;" title="當某對話節點數達標時，自動將其釘選保護。設為0即關閉。">
-                        <span style="font-size:0.85em; color:#abb2bf;">📌 智能自動釘選閾值:</span>
+                    <div style="display:flex; justify-content:space-between; align-items:center;" title="0為關閉。大於0時，對話節點數達標即自動釘選保護。">
+                        <span style="font-size:0.85em; color:#abb2bf;">📌 自動釘選閾值:</span>
                         <input type="number" id="ds-cache-autopin" class="text_pole" value="${Settings.autoPinThreshold}" min="0" max="999" style="width:120px; font-size:0.8em; padding:2px; text-align:center;">
                     </div>
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-top:5px;">
-                        <button id="ds-btn-export" class="menu_button interactable" style="flex:1; margin-right:5px; font-size:0.8em; padding:4px;"><span class="fa-solid fa-download"></span> 備份</button>
-                        <button id="ds-btn-import" class="menu_button interactable" style="flex:1; margin-left:5px; font-size:0.8em; padding:4px;"><span class="fa-solid fa-upload"></span> 還原</button>
+                        <button id="ds-btn-export" class="menu_button interactable" style="flex:1; margin-right:5px; font-size:0.8em; padding:4px;"><span class="fa-solid fa-download"></span> 匯出</button>
+                        <button id="ds-btn-import" class="menu_button interactable" style="flex:1; margin-left:5px; margin-right:5px; font-size:0.8em; padding:4px;"><span class="fa-solid fa-upload"></span> 匯入</button>
+                        <button id="ds-btn-restore-snap" class="menu_button interactable" style="flex:1; margin-left:5px; font-size:0.8em; padding:4px; color:#56b6c2; border:1px solid #56b6c2;" title="從 localStorage 隱藏快照庫還原"><span class="fa-solid fa-clock-rotate-left"></span> 挽救</button>
                         <input type="file" id="ds-file-import" style="display:none;" accept=".json">
                     </div>
                 </div>
 
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-                    <b style="font-size:0.85em; color:#e5c07b;"><span class="fa-solid fa-database"></span> 快取池 <span id="ds-storage-badge" class="ds-badge">計算中</span></b>
-                    <span id="ds-toggle-chat" class="ds-mini-btn" style="color:#abb2bf;"><i class="fa-solid fa-chevron-up"></i> 收摺</span>
+                <!-- 快取管理列表 -->
+                <div class="ds-section-title" style="margin-top:15px; cursor:pointer;" id="ds-toggle-chat">
+                    <span><span class="fa-solid fa-database"></span> 快取池 <span id="ds-storage-badge" class="ds-badge">計算中</span></span>
+                    <i class="fa-solid fa-chevron-up"></i>
                 </div>
                 <div id="ds-chat-list-container" class="ds-chat-container"></div>
                 <div style="display:flex; gap:8px; margin-bottom:15px;">
-                    <button id="ds-btn-deep-clean" class="menu_button" style="flex:1; font-size:0.85em; background:rgba(229, 192, 123, 0.1); color:#e5c07b; border:1px solid #e5c07b;"><span class="fa-solid fa-broom"></span> 智能深度清理</button>
-                    <button id="ds-cache-factory-reset" class="menu_button" style="flex:1; font-size:0.85em; background:rgba(224, 108, 117, 0.1); color:#e06c75; border:1px solid #e06c75;"><span class="fa-solid fa-skull"></span> 格式化所有</button>
+                    <button id="ds-btn-deep-clean" class="menu_button" style="flex:1; font-size:0.85em; background:rgba(229, 192, 123, 0.1); color:#e5c07b; border:1px solid #e5c07b;"><span class="fa-solid fa-broom"></span> 深度清理</button>
+                    <button id="ds-cache-factory-reset" class="menu_button" style="flex:1; font-size:0.85em; background:rgba(224, 108, 117, 0.1); color:#e06c75; border:1px solid #e06c75;"><span class="fa-solid fa-skull"></span> 格式化</button>
                 </div>
                 
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
-                    <b style="font-size:0.85em; color:#98c379;"><span class="fa-solid fa-terminal"></span> 執行緒終端機：</b>
-                    <div style="display:flex; gap:10px;">
-                        <span id="ds-btn-clearlog" class="ds-mini-btn" title="清空日誌" style="color:#e06c75;"><span class="fa-solid fa-trash"></span></span>
-                        <span id="ds-toggle-log" class="ds-mini-btn" style="color:#abb2bf;"><i class="fa-solid fa-chevron-up"></i> 收摺</span>
-                    </div>
+                <!-- 終端機日誌 -->
+                <div class="ds-section-title" style="cursor:pointer;" id="ds-toggle-log">
+                    <span><span class="fa-solid fa-terminal"></span> 執行緒終端機</span>
+                    <i class="fa-solid fa-chevron-up"></i>
                 </div>
-                <div id="ds-cache-log-container" class="ds-log-terminal"></div>
+                <div id="ds-log-wrapper">
+                    <div class="ds-log-toolbar">
+                        <span class="ds-log-filter active" data-filter="all">全部</span>
+                        <span class="ds-log-filter" data-filter="info">資訊</span>
+                        <span class="ds-log-filter" data-filter="warn">警告</span>
+                        <span class="ds-log-filter" data-filter="map">圖譜</span>
+                        <span class="ds-log-filter" data-filter="error">錯誤</span>
+                        <div style="flex:1;"></div>
+                        <span id="ds-btn-clearlog" class="ds-mini-btn" title="清空日誌" style="color:#e06c75;"><span class="fa-solid fa-trash"></span></span>
+                    </div>
+                    <div id="ds-cache-log-container" class="ds-log-terminal"></div>
+                </div>
             </div>
         </div>`;
         
         $('#extensions_settings').append(html);
 
+        // 事件綁定
         $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); updateTopBarState(); });
+        $('#ds-cache-zen').on('change', function () { Settings.zenMode = $(this).is(':checked'); safeSave(); updateTopBarState(); });
         $('#ds-toast-sys').on('change', function () { Settings.toastSys = $(this).is(':checked'); safeSave(); });
         $('#ds-toast-sys-toggle').on('change', function () { Settings.toastSysToggle = $(this).is(':checked'); safeSave(); });
         $('#ds-toast-lore').on('change', function () { Settings.toastLore = $(this).is(':checked'); safeSave(); });
@@ -888,20 +996,39 @@ async function setupUI() {
         });
         $('#ds-btn-deep-clean').on('click', performDeepClean);
         
+        // 濾波器邏輯
+        $('.ds-log-filter').on('click', function() {
+            $('.ds-log-filter').removeClass('active');
+            $(this).addClass('active');
+            const f = $(this).data('filter');
+            $('#ds-cache-log-container .ds-log-line').each(function() {
+                if (f === 'all' || $(this).data('type') === f) $(this).removeClass('hide');
+                else $(this).addClass('hide');
+            });
+        });
+        
         $('#ds-btn-clearlog').on('click', () => { $('#ds-cache-log-container').empty(); });
         $('#ds-btn-topo').on('click', showTopology);
 
-        $('#ds-btn-export').on('click', exportData);
+        $('#ds-btn-export').on('click', () => {
+            const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url; a.download = `DS_Cache_Backup_v20_${new Date().getTime()}.json`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            if (typeof toastr !== 'undefined') toastr.success("備份檔案已匯出！");
+        });
         $('#ds-btn-import').on('click', () => $('#ds-file-import').click());
         $('#ds-file-import').on('change', importData);
+        $('#ds-btn-restore-snap').on('click', restoreFromLocalSnapshot);
 
         $('#ds-toggle-chat').on('click', function() {
             $('#ds-chat-list-container').toggleClass('collapsed');
-            $(this).html($('#ds-chat-list-container').hasClass('collapsed') ? '<i class="fa-solid fa-chevron-down"></i> 展開' : '<i class="fa-solid fa-chevron-up"></i> 收摺');
+            $(this).find('i').toggleClass('fa-chevron-up fa-chevron-down');
         });
         $('#ds-toggle-log').on('click', function() {
-            $('#ds-cache-log-container').toggleClass('collapsed');
-            $(this).html($('#ds-cache-log-container').hasClass('collapsed') ? '<i class="fa-solid fa-chevron-down"></i> 展開' : '<i class="fa-solid fa-chevron-up"></i> 收摺');
+            $('#ds-log-wrapper').toggle();
+            $(this).find('i').toggleClass('fa-chevron-up fa-chevron-down');
         });
         
         renderChatsUI();
@@ -912,18 +1039,12 @@ jQuery(async () => {
     try {
         initSettings(); 
         await setupUI();
-        setupGlobalHotkeys(); // 註冊全域快捷鍵
+        setupGlobalHotkeys(); 
         
-        setTimeout(() => {
-            ensureTopMenuButton();
-            ensureBottomLeftMenuButton();
-        }, 2000);
+        setTimeout(() => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); }, 2000);
         
-        // 觀察者：確保魔法棒選單打開時，我們的按鈕依然存活
-        const observer = new MutationObserver((mutations) => {
-            if ($('#extensions_menu').is(':visible') && $('#ds-bottom-reset-btn').length === 0) {
-                ensureBottomLeftMenuButton();
-            }
+        const observer = new MutationObserver(() => {
+            if ($('#extensions_menu').is(':visible') && $('#ds-bottom-reset-btn').length === 0) ensureBottomLeftMenuButton();
         });
         if (document.getElementById('extensions_menu')) {
             observer.observe(document.getElementById('extensions_menu'), { childList: true, subtree: true });
@@ -931,9 +1052,7 @@ jQuery(async () => {
         
         if (eventSource) {
             eventSource.on(event_types.CHAT_CHANGED, () => {
-                ensureTopMenuButton();
-                ensureBottomLeftMenuButton();
-                renderChatsUI(); 
+                ensureTopMenuButton(); ensureBottomLeftMenuButton(); renderChatsUI(); 
             });
 
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
@@ -960,7 +1079,7 @@ jQuery(async () => {
             }
         });
 
-        Logger.log('══════ v19.0 終極穹頂版 (Ultimate Aegis) 引擎上線 ══════', LogLevels.BASIC);
+        Logger.log('══════ v20.0 奇異點版 (Singularity) 引擎上線 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動失敗:', e);
     }
