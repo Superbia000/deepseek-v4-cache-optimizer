@@ -1,5 +1,5 @@
 {
-  "display_name": "deepseek-v4-cache-optimizer",
+  "display_name": "DeepSeek 优化缓存命中",
   "loading_order": 200,
   "requires": [],
   "optional": [],
