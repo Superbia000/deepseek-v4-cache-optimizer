@@ -131,7 +131,7 @@ const injectCSS = () => {
         .ds-health-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.3s, background 0.3s; }
 
-        /* Omni-Vision UI Styles (v49 Enhanced) */
+        /* Omni-Vision UI Styles (v50 Enhanced) */
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
         .ds-omni-body { display: flex; gap: 15px; flex: 1; min-height: 0; position: relative; }
@@ -188,9 +188,9 @@ let sessionSnoozeReset = false;
 let backupVault = []; 
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v48 || extension_settings.ds_cache_v47 || {};
-    if (!extension_settings.ds_cache_v49) {
-        extension_settings.ds_cache_v49 = {
+    const oldSettings = extension_settings.ds_cache_v49 || extension_settings.ds_cache_v48 || {};
+    if (!extension_settings.ds_cache_v50) {
+        extension_settings.ds_cache_v50 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -232,13 +232,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v49;
+    Settings = extension_settings.ds_cache_v50;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v49_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v50_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -252,7 +252,7 @@ function flushSaveSync() {
     if (pendingSave) {
         try { 
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-            localStorage.setItem('ds_cache_v49_snapshot', JSON.stringify(Settings));
+            localStorage.setItem('ds_cache_v50_snapshot', JSON.stringify(Settings));
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -277,7 +277,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v49_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v50_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -638,7 +638,7 @@ function cyrb53(str, seed = 0) {
 // 🚀 Req 8, 9: Zero-GC 滑動視窗比對，徹底消滅 Set 物件分配
 function getSimilarityFast(s1, s2) {
     if (s1 === s2) return 1;
-    if (s1.length < 2 || s2.length < 2) return 0;
+    if (!s1 || !s2 || s1.length < 2 || s2.length < 2) return 0;
     
     let matches = 0;
     const shortStr = s1.length < s2.length ? s1 : s2;
@@ -672,30 +672,20 @@ function createMsg(msg, tag) {
     };
 }
 
+// 🚀 核心修復：防止 cleanStr 丟失導致的 length 崩潰
 function getSimilarity(msg1, msg2) {
     if (msg1.hash === msg2.hash) return 1;
     if (msg1.fuzzyHash === msg2.fuzzyHash) return 0.99; 
     
-    if (Math.abs(msg1.cleanLen - msg2.cleanLen) > Math.max(msg1.cleanLen, msg2.cleanLen) * 0.5) return 0;
-    if (msg1.cleanLen === 0 || msg2.cleanLen === 0) return 0;
+    const c1 = msg1.cleanStr !== undefined ? msg1.cleanStr : stripHtml(msg1.norm || msg1.content || '');
+    const c2 = msg2.cleanStr !== undefined ? msg2.cleanStr : stripHtml(msg2.norm || msg2.content || '');
+    const l1 = msg1.cleanLen !== undefined ? msg1.cleanLen : c1.length;
+    const l2 = msg2.cleanLen !== undefined ? msg2.cleanLen : c2.length;
 
-    return getSimilarityFast(msg1.cleanStr, msg2.cleanStr);
-}
+    if (Math.abs(l1 - l2) > Math.max(l1, l2) * 0.5) return 0;
+    if (l1 === 0 || l2 === 0) return 0;
 
-function extractAddedText(oldStr, newStr) {
-    const cleanOld = stripHtml(oldStr); const cleanNew = stripHtml(newStr);
-    if (cleanNew.length < cleanOld.length) return null; 
-    if (cleanNew.length - cleanOld.length > 300) return null; 
-    
-    const oldSentences = cleanOld.split(/([。！？.!?\n]+)/);
-    const newSentences = cleanNew.split(/([。！？.!?\n]+)/);
-    const oldSet = new Set(oldSentences.map(s => s.trim()).filter(s => s.length > 2));
-    let added = [];
-    for (let s of newSentences) {
-        let t = s.trim();
-        if (t.length > 2 && !oldSet.has(t)) added.push(t);
-    }
-    return added.length > 0 ? added.join(' ') : null;
+    return getSimilarityFast(c1, c2);
 }
 
 function simpleDiffHighlight(oldStr, newStr) {
@@ -718,7 +708,7 @@ function simpleDiffHighlight(oldStr, newStr) {
 }
 
 function stripPrefillFromAssistant(assistantObj, prefills) {
-    if (!assistantObj || !prefills || prefills.length === 0) return assistantObj;
+    if (!assistantObj || !prefills || !Array.isArray(prefills) || prefills.length === 0) return assistantObj;
     let content = assistantObj.content || '';
     let modified = false;
     for (const p of prefills) {
@@ -737,51 +727,9 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
     return assistantObj;
 }
 
-// 🚀 Req 12: 嚴格解析，不再區分 top/bottom，完全尊重 ST 原始順序，為 Append-Only 做準備
-function parseSTStreamStrict(stream) {
-    const sysMsgs = []; 
-    const chatMsgs = [];
-    
-    for (const msg of stream) {
-        if (!msg.content) continue;
-        if (Settings.warpDriveFilter && msg.content.replace(/[\s\*\.\-]/g, '').length === 0) continue;
-        
-        const isSys = (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant'));
-        if (isSys) {
-            sysMsgs.push(createMsg(msg, 'SYS'));
-        } else {
-            chatMsgs.push(createMsg(msg, msg.role === 'user' ? 'USER' : 'AI'));
-        }
-    }
-
-    let lastUserIdx = -1;
-    for (let i = chatMsgs.length - 1; i >= 0; i--) { if (chatMsgs[i].tag === 'USER') { lastUserIdx = i; break; } }
-
-    let historyTurns = []; let currentTurn = { user: null, prefills: [] };
-
-    if (lastUserIdx === -1) {
-        currentTurn.prefills = chatMsgs.filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
-    } else {
-        const hMsgs = chatMsgs.slice(0, lastUserIdx);
-        const cMsgs = chatMsgs.slice(lastUserIdx);
-        currentTurn.user = cMsgs[0];
-        currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
-
-        let curUser = null; let curAiContents = [];
-        for (const msg of hMsgs) {
-            if (msg.tag === 'USER') {
-                if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
-                curUser = msg; curAiContents = [];
-            } else if (msg.tag === 'AI') curAiContents.push(msg.content);
-        }
-        if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
-    }
-    return { sysMsgs, historyTurns, currentTurn };
-}
-
 function isDynamicPrompt(msg) {
     const content = msg.content || '';
-    return /(summary|previously on|摘要|前情提要|总结|回顾|当前时间|当前日期|current time|current date|时间：|日期：|time:|date:)/i.test(content);
+    return /(summary|previously on|摘要|前情提要|总结|回顾|当前时间|当前日期|current time|current date)/i.test(content);
 }
 
 // ==========================================
@@ -1046,15 +994,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         let detectedAnomalies = [];
         const thresholds = getTolerance();
 
-        // 🚀 Req 1, 2: 解決 cleanStr undefined 導致的崩潰 (即時水合機制)
-        const baseSequence = (state.frozenSequence || []).map(item => {
-            const clone = { ...item };
-            if (clone.cleanStr === undefined) {
-                clone.cleanStr = stripHtml(clone.norm || Logger.normalize(clone.content || ''));
-                clone.cleanLen = clone.cleanStr.length;
-            }
-            return clone;
-        });
+        // 複製一份 frozenSequence 避免 DryRun 污染
+        const baseSequence = [...(state.frozenSequence || [])];
 
         for (let i = 0; i < baseSequence.length; i++) {
             const frozenItem = baseSequence[i];
@@ -1159,22 +1100,23 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         // 3. 處理 IncomingPool 中的剩餘物 (The "New" stuff)
+        // 這些是：上一回合的 AI 回覆、新插入的歷史、新觸發的世界書、動態提示詞的新版本
         let newHistory = [];
         let newSystems = [];
-        let newDynamicPrompts = [];
+        let dynamicSink = [];
 
         for (const item of incomingPool) {
-            if (Settings.warpDriveFilter && item.content.replace(/[\s\*\.\-]/g, '').length === 0) continue;
+            if (Settings.warpDriveFilter && item.content && item.content.replace(/[\s\*\.\-]/g, '').length === 0) continue;
 
             if (item.tag === 'SYS') {
                 const isSummary = Settings.summaryAnchor && /(summary|previously on|摘要|前情提要|总结|回顾)/i.test(item.content);
                 const isVector = Settings.vectorQuarantine && /(retrieved context|search results|vector database|相关记忆|检索到的内容|记忆库片段)/i.test(item.content);
-                const isTimeSkip = Settings.chronosProtocol && item.content.length < 150 && /(later|next day|第二天|几个小时后|一段时间后|meanwhile|之后|随后|时光飞逝|转眼间)/i.test(item.content);
+                const isTimeSkip = Settings.chronosProtocol && item.content && item.content.length < 150 && /(later|next day|第二天|几个小时后|一段时间后|meanwhile|之后|随后|时光飞逝|转眼间)/i.test(item.content);
                 
                 if (isTimeSkip) {
                     timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：叙事过渡。${item.content}]`}, 'SYS'));
-                } else if (isSummary || isVector || isDynamicPrompt(item)) {
-                    newDynamicPrompts.push(item);
+                } else if (isSummary || isVector || Settings.dynamicMode === 2 || Settings.dynamicMode === 1 || isDynamicPrompt(item)) {
+                    dynamicSink.push(item);
                 } else {
                     newSystems.push(item);
                 }
@@ -1183,31 +1125,20 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             }
         }
 
-        // 4. 🚀 Req 12: 嚴格附加 (Strict Append) 構建最終陣列
-        if (baseSequence.length === 0) {
-            // 對話 1 (首回合): 完全尊重 ST 的原始順序，建立最完美的基礎上下文
-            for (const item of incomingPool) {
-                newFrozenSequence.push(item);
-                if (!isDryRun) Logger.debug(`[初始化冻结] 写入基础节点: ${truncateLog(item.content)}`);
-            }
-        } else {
-            // 對話 2+ (後續回合): 嚴格的 Append-Only Event Sourcing
-            // 順序：Base -> New History -> New Systems -> Dynamic Prompts -> Patches
-            for (const h of newHistory) {
-                newFrozenSequence.push(h);
-                if (!isDryRun) Logger.debug(`[追加至尾部] 新历史节点: ${truncateLog(h.content)}`);
-            }
-            for (const s of newSystems) {
-                newFrozenSequence.push(s);
-                if (!isDryRun) Logger.debug(`[追加至尾部] 新设定/世界书: ${truncateLog(s.content)}`);
-            }
-            for (const d of newDynamicPrompts) {
-                newFrozenSequence.push(d);
-                if (!isDryRun) Logger.debug(`[追加至尾部] 动态/垫底提示词: ${truncateLog(d.content)}`);
-            }
+        // 4. 嚴格附加 (Strict Append) 構建最終陣列
+        // 順序：Base -> New History -> New Systems -> Dynamic Sink -> Patches
+        for (const h of newHistory) {
+            newFrozenSequence.push(h);
+            if (!isDryRun) Logger.debug(`[追加至尾部] 新历史节点: ${truncateLog(h.content)}`);
         }
-        
-        // 補丁永遠在最底層
+        for (const s of newSystems) {
+            newFrozenSequence.push(s);
+            if (!isDryRun) Logger.debug(`[追加至尾部] 新设定/世界书: ${truncateLog(s.content)}`);
+        }
+        for (const d of dynamicSink) {
+            newFrozenSequence.push(d);
+            if (!isDryRun) Logger.debug(`[追加至尾部] 动态/垫底提示词: ${truncateLog(d.content)}`);
+        }
         for (const p of timeSpacePatches) {
             newFrozenSequence.push(p);
             if (!isDryRun) Logger.debug(`[追加至尾部] 时空修正补丁: ${truncateLog(p.content)}`);
@@ -1269,7 +1200,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             }
 
             let totalLen = preservedLen + recomputeLen;
-            let recomputeRatio = totalLen === 0 ? 0 : (recomputeLen / totalLen);
+            let recomputeRatio = 0;
+            
+            if (breakIndex === L.length) {
+                recomputeRatio = 0; 
+            } else {
+                recomputeRatio = totalLen === 0 ? 0 : (recomputeLen / totalLen);
+            }
             
             preservedTokens = Math.floor(preservedLen / 3.5);
             recomputeTokens = Math.floor(recomputeLen / 3.5);
@@ -1383,14 +1320,14 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         if (decision === 'accept') {
-            // 🚀 Req 1, 2: 儲存時刪除 cleanStr 以節省 50% 記憶體，讀取時再即時水合
+            // 🚀 Req 12: 儲存新的 Base Sequence (不包含 Current User/Prefill)
+            // 這樣下一回合，Current User/Prefill 就會變成 "New History" 被 Append！
+            // 🚀 核心修復：絕對不能刪除 cleanStr 和 cleanLen，否則下一回合會崩潰！
             state.frozenSequence = dedupedSequence.map(n => {
                 const clean = {...n};
                 delete clean.isPhantom;
                 delete clean.isPatched;
                 delete clean.originalContent;
-                delete clean.cleanStr; 
-                delete clean.cleanLen;
                 return clean;
             });
             state.lastPrefills = currentTurn.prefills;
@@ -1430,7 +1367,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 4.0 (Req 10)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 5.0 (Req 10)
 // ==========================================
 let omniRenderTimeout = null;
 let isOmniCollapsed = false;
@@ -1448,7 +1385,7 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒 4.0</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒 5.0</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="$('#ds-omni-modal-wrapper').remove();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
@@ -1927,9 +1864,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v49-opt-drawer">
+        <div class="inline-drawer" id="ds-v50-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v49)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v50)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -2475,7 +2412,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v49_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v50_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2548,7 +2485,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v49 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v50 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
