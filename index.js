@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (全強制水平排版與小白友善模組化)
+// 1. 樣式注入 (全強制水平排版與動態彈窗樣式)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -48,7 +48,9 @@ const injectCSS = () => {
         
         .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; }
         .ds-modal { background: var(--SmartThemeBlurTintColor, #1e1e24); border: 1px solid #e06c75; padding: 30px; border-radius: 12px; max-width: 700px; width: 90%; color: var(--SmartThemeBody-color, #fff); font-family: sans-serif; box-shadow: 0 25px 50px rgba(0,0,0,0.9); position: relative; overflow: hidden; animation: dsSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .ds-modal.ds-modal-blue { border: 1px solid #56b6c2; }
         .ds-modal-title { color: #e06c75; margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px; font-size: 20px; }
+        .ds-modal-title.ds-blue { color: #56b6c2; }
         .ds-progress-container { background: rgba(0,0,0,0.5); border-radius: 6px; height: 10px; margin: 15px 0; overflow: hidden; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
         .ds-progress-bar { height: 100%; width: 0%; transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s; }
         
@@ -57,6 +59,7 @@ const injectCSS = () => {
         .ds-diff-add { background: rgba(152, 195, 121, 0.15); border-left: 3px solid #98c379; padding: 6px 10px; border-radius: 0 4px 4px 0; color: #98c379; word-wrap: break-word; }
         
         .ds-btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 25px; }
+        .ds-btn-col { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
         .ds-btn { padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; transition: all 0.2s; position: relative; overflow: hidden; display:flex; align-items:center; justify-content:center; gap:8px;}
         .ds-btn:hover { transform: translateY(-2px); filter: brightness(1.15); box-shadow: 0 5px 15px rgba(0,0,0,0.4); }
         .ds-btn:active { transform: translateY(0); }
@@ -64,6 +67,7 @@ const injectCSS = () => {
         .ds-btn-abort { background: #e06c75; color: #fff; }
         .ds-btn-bypass { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
         .ds-btn-reset { background: rgba(224, 108, 117, 0.1); color: #e06c75; border: 1px solid #e06c75; }
+        .ds-btn-blue { background: #56b6c2; color: #121212; }
 
         .ds-badge { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-size: 0.8em; font-family: monospace; color: #56b6c2; }
         .ds-zen-icon { color: #c678dd; animation: dsPulse 2s infinite; }
@@ -76,7 +80,7 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態設定
+// 2. 狀態設定 (新增動態提示詞模式)
 // ==========================================
 let Settings = {};
 
@@ -89,12 +93,12 @@ function initSettings() {
             toastHistory: oldSettings.toastHistory ?? true,
             showResetPrompt: oldSettings.showResetPrompt ?? true,
             autoAccept: oldSettings.autoAccept ?? false,
-            dynamicStrategy: oldSettings.dynamicStrategy ?? 0, // 0:詢問, 1:下沉, 2:原位, 3:忽略
             logLevel: oldSettings.logLevel ?? 2,
             tolerance: oldSettings.tolerance ?? 1,
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
             hotkeysEnabled: oldSettings.hotkeysEnabled ?? true,
             autoPinThreshold: oldSettings.autoPinThreshold ?? 0,
+            dynamicMode: oldSettings.dynamicMode ?? 0, // 0:询问, 1:沉底, 2:原位, 3:冻结, 4:删除
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
         };
@@ -404,37 +408,54 @@ function parseSTStream(stream) {
 // ==========================================
 // 6. 現代化攔截器 UI (動態提示詞專屬彈窗)
 // ==========================================
-function askDynamicStrategyAsync(oldItem, newItem) {
+function askDynamicPromptStrategyAsync(oldText, newText) {
     return new Promise(resolve => {
+        const oldContent = escapeHtml(oldText || '∅').substring(0, 150).replace(/\n/g, ' ↵ ');
+        const newContent = escapeHtml(newText || '∅').substring(0, 150).replace(/\n/g, ' ↵ ');
+
         const html = `
-            <div class="ds-overlay" id="ds-dyn-modal-wrapper">
-                <div class="ds-modal" style="border-color: #c678dd;">
-                    <h2 class="ds-modal-title" style="color: #c678dd;"><span class="fa-solid fa-bolt"></span> 发现动态提示词</h2>
+            <div class="ds-overlay" id="ds-modal-dynamic">
+                <div class="ds-modal ds-modal-blue">
+                    <h2 class="ds-modal-title ds-blue"><span class="fa-solid fa-wand-magic-sparkles"></span> 发现「动态提示词」</h2>
                     <p class="ds-modal-text" style="line-height: 1.5;">
-                        检测到您的提示词会随对话动态改变（例如包含了 {{user_input}} 宏）。<br>
-                        如果在原位更新它，会导致每次发送都破坏大模型缓存！<br>
-                        <b>请选择未来的自动处理方案（仅询问一次，可在设置中修改）：</b>
+                        系统检测到您的预设中包含<b>每次都会自动改变</b>的提示词（例如注入了最新对话或时间）。<br>
+                        如果放任它在中间改变，会<b>导致每次发送都破坏大量缓存</b>！<br>
+                        请选择一种修复方案（选择后将永久自动处理，不再弹窗）：
                     </p>
                     <div class="ds-map-box">
-                        <div style="color:#e5c07b; margin-bottom:5px;">[变动预览]</div>
-                        <div class="ds-diff-del"><i class="fa-solid fa-minus"></i> ${escapeHtml(oldItem.content).substring(0, 80)}...</div>
-                        <div class="ds-diff-add"><i class="fa-solid fa-plus"></i> ${escapeHtml(newItem.content).substring(0, 80)}...</div>
+                        <div class="ds-diff-del"><i class="fa-solid fa-minus"></i> 上次: ${oldContent}...</div>
+                        <div class="ds-diff-add"><i class="fa-solid fa-plus"></i> 这次: ${newContent}...</div>
                     </div>
-                    <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">
-                        <button class="ds-btn ds-btn-accept" id="ds-btn-dyn-1" style="background:#c678dd; color:#fff;"><i class="fa-solid fa-arrow-down"></i> 智能下沉 (推荐：移至底部，完美保护历史缓存)</button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-2"><i class="fa-solid fa-thumbtack"></i> 原位更新 (破坏缓存，但严格保持原位)</button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-3"><i class="fa-solid fa-snowflake"></i> 忽略修改 (强制冻结旧内容，最高缓存率)</button>
+                    
+                    <div class="ds-btn-col">
+                        <button class="ds-btn ds-btn-blue" id="ds-btn-dyn-1" style="justify-content:flex-start; text-align:left;">
+                            <i class="fa-solid fa-anchor"></i> <b>方案 A：沉底动态更新 (强烈推荐)</b><br>
+                            <span style="font-size:11px; font-weight:normal;">将其强制锁定在当前输入的前1位。本次会重算，但以后它的任何变化都不会再破坏上方的缓存！</span>
+                        </button>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-3" style="justify-content:flex-start; text-align:left;">
+                            <i class="fa-solid fa-snowflake"></i> <b>方案 B：原位强制冻结</b><br>
+                            <span style="font-size:11px; font-weight:normal;">无视它的变化，永远锁定第一次的内容。100%保持缓存，但动态功能会失效。</span>
+                        </button>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-2" style="justify-content:flex-start; text-align:left;">
+                            <i class="fa-solid fa-rotate"></i> <b>方案 C：原位同步更新</b><br>
+                            <span style="font-size:11px; font-weight:normal;">在原来的位置更新它。警告：这会导致每次发送都破坏缓存！</span>
+                        </button>
+                        <button class="ds-btn ds-btn-reset" id="ds-btn-dyn-4" style="justify-content:flex-start; text-align:left;">
+                            <i class="fa-solid fa-trash"></i> <b>方案 D：彻底删除</b><br>
+                            <span style="font-size:11px; font-weight:normal;">直接把这个烦人的提示词删掉。</span>
+                        </button>
                     </div>
                 </div>
             </div>
         `;
         $('body').append(html);
 
-        const cleanup = () => { $('#ds-dyn-modal-wrapper').remove(); };
+        const cleanup = () => { $('#ds-modal-dynamic').remove(); };
         
         $('#ds-btn-dyn-1').click(() => { cleanup(); resolve(1); });
         $('#ds-btn-dyn-2').click(() => { cleanup(); resolve(2); });
         $('#ds-btn-dyn-3').click(() => { cleanup(); resolve(3); });
+        $('#ds-btn-dyn-4').click(() => { cleanup(); resolve(4); });
     });
 }
 
@@ -447,7 +468,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
         const html = `
             <div class="ds-overlay" id="ds-modal-wrapper">
                 <div class="ds-modal">
-                    <h2 class="ds-modal-title"><span class="fa-solid fa-triangle-exclamation"></span> DeepSeek 缓存命中率警告</h2>
+                    <h2 class="ds-modal-title"><span class="fa-solid fa-triangle-exclamation"></span> 缓存命中率警告</h2>
                     <p class="ds-modal-text" style="line-height: 1.5;">
                         检测到您修改或删除了较早的文本内容。<br>
                         由于大模型的严格缓存机制，发生断点<b>之后的所有内容</b>（约 <b style="color:${progColor}">${dropPercent}%</b> 的文本）都必须重新消耗算力计算。<br>
@@ -483,7 +504,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
 }
 
 // ==========================================
-// 7. 完美時序凍結演算法 (Dynamic Chrono-Lock)
+// 7. 完美時序凍結演算法 (Chrono-Lock Algorithm)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -510,12 +531,46 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         let newFrozenSequence = [];
-        let sunkPrompts = []; // 存放下沉的動態提示詞
         const sysPool = [...sysMsgs];
         const remainingHistory = [...flatHistoryPool];
         const thresholds = getTolerance();
         
-        // 1. 原位更新與動態提示詞感知邏輯
+        // ---------------------------------------------------------
+        // 階段 1：動態提示詞偵測與詢問 (僅在模式 0 時觸發一次)
+        // ---------------------------------------------------------
+        let needsAsk = false;
+        let sampleOld = "", sampleNew = "";
+        if (Settings.dynamicMode === 0) {
+            for (let i = 0; i < state.frozenSequence.length; i++) {
+                const item = state.frozenSequence[i];
+                if (item.tag === 'SYS') {
+                    let bestIdx = -1, bestScore = 0;
+                    for (let j = 0; j < sysPool.length; j++) {
+                        const score = getSimilarity(item.norm, sysPool[j].norm);
+                        if (score > bestScore) { bestScore = score; bestIdx = j; }
+                    }
+                    if (bestScore > thresholds.sys && bestScore < 1) {
+                        needsAsk = true;
+                        sampleOld = item.content;
+                        sampleNew = sysPool[bestIdx].content;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (needsAsk) {
+            Settings.dynamicMode = await askDynamicPromptStrategyAsync(sampleOld, sampleNew);
+            safeSave();
+            $('#ds-cache-dynamic-mode').val(Settings.dynamicMode);
+            Logger.warn(`[动态提示词] 用户已选择处理模式: ${Settings.dynamicMode}`);
+        }
+
+        // ---------------------------------------------------------
+        // 階段 2：原位更新與同步邏輯
+        // ---------------------------------------------------------
+        let dynamicPromptsToSink = [];
+
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const item = state.frozenSequence[i];
             if (item.tag === 'SYS') {
@@ -529,50 +584,52 @@ async function interceptAndRestructurePrompt(data) {
                     Logger.debug(`[绝对冻结] 提示词: ${truncateLog(sysPool[bestIdx].content)}`);
                     sysPool.splice(bestIdx, 1); 
                 } else if (bestScore > thresholds.sys) {
-                    // 發現動態提示詞 (內容被修改但相似度極高)
-                    let strategy = Settings.dynamicStrategy;
-                    if (strategy === 0) {
-                        strategy = await askDynamicStrategyAsync(item, sysPool[bestIdx]);
-                        Settings.dynamicStrategy = strategy;
-                        safeSave();
-                        $('#ds-cache-dynamic-strategy').val(strategy);
-                    }
-
+                    // 發現動態提示詞！根據用戶選擇的模式處理
                     const matchedItem = sysPool[bestIdx];
-                    if (strategy === 1) {
-                        sunkPrompts.push(matchedItem);
-                        Logger.debug(`[动态下沉] 提示词移至底部 (相似度 ${(bestScore*100).toFixed(1)}%): -> ${truncateLog(matchedItem.content, 20)}`);
-                    } else if (strategy === 2) {
-                        newFrozenSequence.push(matchedItem);
-                        Logger.debug(`[原位更新] 动态提示词 (相似度 ${(bestScore*100).toFixed(1)}%): -> ${truncateLog(matchedItem.content, 20)}`);
-                    } else if (strategy === 3) {
-                        newFrozenSequence.push(item);
-                        Logger.debug(`[忽略修改] 冻结旧提示词: ${truncateLog(item.content, 20)}`);
-                    }
                     sysPool.splice(bestIdx, 1);
+
+                    if (Settings.dynamicMode === 1) { // 沉底更新
+                        dynamicPromptsToSink.push(matchedItem);
+                        Logger.debug(`[动态提示词-沉底锚定] 已抽离并准备移至尾部: ${truncateLog(matchedItem.content)}`);
+                    } else if (Settings.dynamicMode === 2) { // 原位更新
+                        newFrozenSequence.push(matchedItem);
+                        Logger.debug(`[动态提示词-原位更新] -> ${truncateLog(matchedItem.content)}`);
+                    } else if (Settings.dynamicMode === 3) { // 強制凍結
+                        newFrozenSequence.push(item); // 塞入舊的 item
+                        Logger.debug(`[动态提示词-强制冻结] 忽略新变化，保留旧版: ${truncateLog(item.content)}`);
+                    } else if (Settings.dynamicMode === 4) { // 徹底刪除
+                        Logger.debug(`[动态提示词-彻底删除] 已移除: ${truncateLog(item.content)}`);
+                    }
                 } else {
                     Logger.debug(`[原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
                 }
             } 
             else if (item.tag === 'USER' || item.tag === 'AI') {
+                // 歷史對話必須嚴格原位同步
                 let bestIdx = -1, bestScore = 0;
                 for (let j = 0; j < remainingHistory.length; j++) {
                     if (item.tag !== remainingHistory[j].tag) continue;
                     const score = getSimilarity(item.norm, remainingHistory[j].norm);
                     if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
-                if (bestScore > thresholds.his) {
+                if (bestScore === 1) {
                     newFrozenSequence.push(remainingHistory[bestIdx]);
-                    Logger.debug(`[原位同步] 历史对话: ${truncateLog(remainingHistory[bestIdx].content)}`);
+                    Logger.debug(`[绝对冻结] 历史对话: ${truncateLog(remainingHistory[bestIdx].content)}`);
                     remainingHistory.splice(bestIdx, 1);
+                } else if (bestScore > thresholds.his) {
+                    const matchedItem = remainingHistory[bestIdx];
+                    newFrozenSequence.push(matchedItem); // 原位更新
+                    remainingHistory.splice(bestIdx, 1);
+                    Logger.debug(`[历史记录-原位同步] -> ${truncateLog(matchedItem.content)}`);
                 } else {
                     Logger.debug(`[原位删除] 找不到旧对话，已移除: ${truncateLog(item.content)}`);
                 }
             }
         }
 
-        // 2. 嚴格排序邏輯：新增加的東西與下沉的動態提示詞，必須嚴格墊底！
-        // 順序：新歷史 -> 新世界書/提示詞 -> 下沉的動態提示詞
+        // ---------------------------------------------------------
+        // 階段 3：嚴格排序追加 (新歷史 -> 新提示詞 -> 動態提示詞)
+        // ---------------------------------------------------------
         for (let h of remainingHistory) {
             newFrozenSequence.push(h);
             Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
@@ -581,12 +638,14 @@ async function interceptAndRestructurePrompt(data) {
             newFrozenSequence.push(sys);
             Logger.debug(`[追加至尾部] 新增设定/世界书: ${truncateLog(sys.content)}`);
         }
-        for (let dp of sunkPrompts) {
+        for (let dp of dynamicPromptsToSink) {
             newFrozenSequence.push(dp);
-            Logger.debug(`[追加至尾部] 动态提示词(下沉): ${truncateLog(dp.content)}`);
+            Logger.debug(`[追加至尾部] 动态提示词锚定: ${truncateLog(dp.content)}`);
         }
 
-        // 3. 去重與組裝
+        // ---------------------------------------------------------
+        // 階段 4：去重與組裝
+        // ---------------------------------------------------------
         let dedupedSequence = [];
         const seenSysNorms = new Set();
         for (const item of newFrozenSequence) {
@@ -607,11 +666,12 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         // ==========================================
-        // 4. 精準流失率演算法 (True Prefix Penalty)
+        // 5. 精準流失率演算法 (True Prefix Penalty)
         // ==========================================
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
         let mapInfoText = "无变更";
+        let justSetDynamicMode = (needsAsk === true); // 如果剛剛才彈窗問過動態提示詞，這次就免除常規警告
 
         if (state.lastSentSequence && state.lastSentSequence.length > 0) {
             const L = state.lastSentSequence;
@@ -656,7 +716,7 @@ async function interceptAndRestructurePrompt(data) {
                 Logger.log(`[自然推移] 顶部的旧历史被自然挤出，不视为破坏缓存。`, LogLevels.DETAILED); 
             }
 
-            if (recomputeRatio > 0.10 && Settings.showResetPrompt) {
+            if (recomputeRatio > 0.10 && Settings.showResetPrompt && !justSetDynamicMode) {
                 requireResetConfirm = true;
                 dropPercentStr = (recomputeRatio * 100).toFixed(1);
                 
@@ -865,17 +925,18 @@ async function setupUI() {
                     </div>
                     <div class="ds-opt-content">
                         <div class="ds-row">
-                            <span style="font-size:0.85em; color:#abb2bf;" title="遇到随对话改变的动态提示词时如何处理">动态提示词方案:</span>
-                            <select id="ds-cache-dynamic-strategy" class="text_pole" style="width:110px; padding:2px;">
-                                <option value="0" ${Settings.dynamicStrategy===0?'selected':''}>首次询问</option>
-                                <option value="1" ${Settings.dynamicStrategy===1?'selected':''}>智能下沉 (推荐)</option>
-                                <option value="2" ${Settings.dynamicStrategy===2?'selected':''}>原位更新</option>
-                                <option value="3" ${Settings.dynamicStrategy===3?'selected':''}>忽略修改</option>
+                            <span style="font-size:0.85em; color:#abb2bf;" title="当系统检测到每次都会改变的提示词时，该如何处理？">动态提示词处理模式:</span>
+                            <select id="ds-cache-dynamic-mode" class="text_pole" style="width:140px; padding:2px;">
+                                <option value="0" ${Settings.dynamicMode===0?'selected':''}>0: 首次弹窗询问我</option>
+                                <option value="1" ${Settings.dynamicMode===1?'selected':''}>1: 沉底更新 (推荐)</option>
+                                <option value="2" ${Settings.dynamicMode===2?'selected':''}>2: 原位更新 (费算力)</option>
+                                <option value="3" ${Settings.dynamicMode===3?'selected':''}>3: 强制冻结旧版</option>
+                                <option value="4" ${Settings.dynamicMode===4?'selected':''}>4: 彻底删除</option>
                             </select>
                         </div>
                         <div class="ds-row">
                             <span style="font-size:0.85em; color:#abb2bf;" title="对比旧文本与新文本的严格程度">匹配严格度:</span>
-                            <select id="ds-cache-tolerance" class="text_pole" style="width:110px; padding:2px;">
+                            <select id="ds-cache-tolerance" class="text_pole" style="width:140px; padding:2px;">
                                 <option value="0" ${Settings.tolerance===0?'selected':''}>严格 (推荐)</option>
                                 <option value="1" ${Settings.tolerance===1?'selected':''}>标准</option>
                                 <option value="2" ${Settings.tolerance===2?'selected':''}>宽松</option>
@@ -883,7 +944,7 @@ async function setupUI() {
                         </div>
                         <div class="ds-row">
                             <span style="font-size:0.85em; color:#abb2bf;">日志详细度:</span>
-                            <select id="ds-cache-loglevel" class="text_pole" style="width:110px; padding:2px;">
+                            <select id="ds-cache-loglevel" class="text_pole" style="width:140px; padding:2px;">
                                 <option value="0" ${Settings.logLevel===0?'selected':''}>0: 关闭</option>
                                 <option value="1" ${Settings.logLevel===1?'selected':''}>1: 基础</option>
                                 <option value="2" ${Settings.logLevel===2?'selected':''}>2: 详细</option>
@@ -892,11 +953,11 @@ async function setupUI() {
                         </div>
                         <div class="ds-row">
                             <span style="font-size:0.85em; color:#abb2bf;">历史存档保留上限:</span>
-                            <input type="number" id="ds-cache-maxsize" class="text_pole" value="${Settings.maxCacheSize}" min="5" max="100" style="width:110px; text-align:center; padding:2px;">
+                            <input type="number" id="ds-cache-maxsize" class="text_pole" value="${Settings.maxCacheSize}" min="5" max="100" style="width:140px; text-align:center; padding:2px;">
                         </div>
                         <div class="ds-row">
                             <span style="font-size:0.85em; color:#abb2bf;">📌 对话回合保护达标点:</span>
-                            <input type="number" id="ds-cache-autopin" class="text_pole" value="${Settings.autoPinThreshold}" min="0" max="999" title="当某个对话的节点数超过此数字，将自动钉选保护它免被系统清理。填0关闭。" style="width:110px; text-align:center; padding:2px;">
+                            <input type="number" id="ds-cache-autopin" class="text_pole" value="${Settings.autoPinThreshold}" min="0" max="999" title="当某个对话的节点数超过此数字，将自动钉选保护它免被系统清理。填0关闭。" style="width:140px; text-align:center; padding:2px;">
                         </div>
                         <div class="ds-row" style="margin-top:5px;">
                             <button id="ds-btn-export" class="menu_button interactable" style="flex:1; padding:4px; font-size:0.8em;"><i class="fa-solid fa-download"></i> 备份</button>
@@ -950,11 +1011,11 @@ async function setupUI() {
         $('#ds-toast-reset').on('change', function () { Settings.showResetPrompt = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-auto-accept').on('change', function () { Settings.autoAccept = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-hotkeys').on('change', function () { Settings.hotkeysEnabled = $(this).is(':checked'); safeSave(); });
-        $('#ds-cache-dynamic-strategy').on('change', function () { Settings.dynamicStrategy = parseInt($(this).val()); safeSave(); });
         $('#ds-cache-tolerance').on('change', function () { Settings.tolerance = parseInt($(this).val()); safeSave(); });
         $('#ds-cache-loglevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
         $('#ds-cache-maxsize').on('change', function () { Settings.maxCacheSize = parseInt($(this).val()) || 30; safeSave(); performGarbageCollection(); });
         $('#ds-cache-autopin').on('change', function () { Settings.autoPinThreshold = parseInt($(this).val()) || 0; safeSave(); });
+        $('#ds-cache-dynamic-mode').on('change', function () { Settings.dynamicMode = parseInt($(this).val()); safeSave(); });
 
         $('#ds-cache-factory-reset').on('click', () => { if (confirm("危险操作：确定要删除所有的缓存存档吗？")) { Settings.chats = {}; Settings.pinnedChats = {}; safeSave(); renderChatsUI(); } });
         
@@ -1016,7 +1077,6 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); renderChatsUI(); });
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             
-            // 僅保留真正對時序造成破壞的歷史對話編輯/刪除感知
             if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningImmediate('his_del', '您删除了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
