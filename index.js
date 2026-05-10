@@ -89,7 +89,7 @@ function initSettings() {
             toastHistory: oldSettings.toastHistory ?? true,
             showResetPrompt: oldSettings.showResetPrompt ?? true,
             autoAccept: oldSettings.autoAccept ?? false,
-            dynamicStrategy: oldSettings.dynamicStrategy ?? 1, // 預設 1: 智能下沉
+            dynamicStrategy: oldSettings.dynamicStrategy ?? 0, // 0:詢問, 1:下沉, 2:原位, 3:忽略
             logLevel: oldSettings.logLevel ?? 2,
             tolerance: oldSettings.tolerance ?? 1,
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
@@ -171,7 +171,7 @@ function performGarbageCollection() {
 }
 
 // ==========================================
-// 3. 醫療級日誌系統 (小白友善)
+// 3. 醫療級日誌系統
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
@@ -207,13 +207,15 @@ function setTopBarStatus(color, title) {
 
 function logAt(level, type, msg) {
     if (Settings.logLevel < level) return;
-    // 移除時間戳，讓日誌更乾淨，符合你的要求
+    const now = new Date();
+    const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
+    
     if (type === 'warn') console.warn(`%c[优化器] 🌪️ ${msg}`, 'color: #ffaa00;');
     else if (type === 'error') console.error(`[优化器] 🔴 ${msg}`);
     else if (type === 'map') console.log(`%c[优化器] 🗺️ ${msg}`, 'color: #00e5ff;');
-    else if (type === 'debug') console.log(`%c${msg}`, 'color: #c678dd;');
+    else if (type === 'debug') console.log(`%c[优化器] 🐛 ${msg}`, 'color: #c678dd;');
     else if (type === 'divider') console.log(`%c${msg}`, 'color: #4b5263; font-weight: bold;');
-    else console.log(`%c${msg}`, 'color: #00ff00;');
+    else console.log(`%c[优化器] ✅ ${msg}`, 'color: #00ff00;');
     
     const container = document.getElementById('ds-cache-log-container');
     if (container) {
@@ -224,7 +226,7 @@ function logAt(level, type, msg) {
         if (type === 'divider') {
             line.innerHTML = `<span class="ds-log-divider">${msg}</span>`;
         } else {
-            line.innerHTML = `<span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
+            line.innerHTML = `<span class="ds-log-time">[${time}]</span> <span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
         }
         
         container.appendChild(line);
@@ -246,7 +248,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理與擴充選單 (強制守護注入)
+// 4. 狀態管理與擴充選單
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -291,23 +293,6 @@ function ensureTopMenuButton() {
         else if ($('#right-nav-extensions').length > 0) $('#right-nav-extensions').append(btn);
     }
     updateTopBarState();
-}
-
-// 魔法棒原生選單按鈕守護進程 (高頻輪詢確保 100% 存活)
-function ensureBottomLeftMenuButton() {
-    const extMenu = $('#extensions_menu');
-    if (extMenu.length > 0 && extMenu.is(':visible') && $('#ds-bottom-reset-btn').length === 0) {
-        const btn = $(`
-            <li id="ds-bottom-reset-btn" class="menu_button interactable" title="清空当前聊天的缓存，让大模型完全重新阅读整个对话">
-                <span class="fa-solid fa-broom" style="color: #e06c75;"></span> 清空当前对话缓存
-            </li>
-        `);
-        btn.on('click', () => { 
-            resetCurrentCache(); 
-            extMenu.removeClass('open').hide(); 
-        });
-        extMenu.append(btn);
-    }
 }
 
 function resetCurrentCache() {
@@ -416,15 +401,43 @@ function parseSTStream(stream) {
     return { sysMsgs, historyTurns, currentTurn };
 }
 
-// 判斷是否為動態提示詞 (包含當前用戶輸入)
-function isPromptDynamic(promptContent, userContent) {
-    if (!userContent || userContent.trim().length < 2) return false;
-    return promptContent.includes(userContent.trim());
+// ==========================================
+// 6. 現代化攔截器 UI (動態提示詞專屬彈窗)
+// ==========================================
+function askDynamicStrategyAsync(oldItem, newItem) {
+    return new Promise(resolve => {
+        const html = `
+            <div class="ds-overlay" id="ds-dyn-modal-wrapper">
+                <div class="ds-modal" style="border-color: #c678dd;">
+                    <h2 class="ds-modal-title" style="color: #c678dd;"><span class="fa-solid fa-bolt"></span> 发现动态提示词</h2>
+                    <p class="ds-modal-text" style="line-height: 1.5;">
+                        检测到您的提示词会随对话动态改变（例如包含了 {{user_input}} 宏）。<br>
+                        如果在原位更新它，会导致每次发送都破坏大模型缓存！<br>
+                        <b>请选择未来的自动处理方案（仅询问一次，可在设置中修改）：</b>
+                    </p>
+                    <div class="ds-map-box">
+                        <div style="color:#e5c07b; margin-bottom:5px;">[变动预览]</div>
+                        <div class="ds-diff-del"><i class="fa-solid fa-minus"></i> ${escapeHtml(oldItem.content).substring(0, 80)}...</div>
+                        <div class="ds-diff-add"><i class="fa-solid fa-plus"></i> ${escapeHtml(newItem.content).substring(0, 80)}...</div>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">
+                        <button class="ds-btn ds-btn-accept" id="ds-btn-dyn-1" style="background:#c678dd; color:#fff;"><i class="fa-solid fa-arrow-down"></i> 智能下沉 (推荐：移至底部，完美保护历史缓存)</button>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-2"><i class="fa-solid fa-thumbtack"></i> 原位更新 (破坏缓存，但严格保持原位)</button>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-3"><i class="fa-solid fa-snowflake"></i> 忽略修改 (强制冻结旧内容，最高缓存率)</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        $('body').append(html);
+
+        const cleanup = () => { $('#ds-dyn-modal-wrapper').remove(); };
+        
+        $('#ds-btn-dyn-1').click(() => { cleanup(); resolve(1); });
+        $('#ds-btn-dyn-2').click(() => { cleanup(); resolve(2); });
+        $('#ds-btn-dyn-3').click(() => { cleanup(); resolve(3); });
+    });
 }
 
-// ==========================================
-// 6. 現代化攔截器 UI
-// ==========================================
 function askUserForResetAsync(dropPercent, mapInfo) {
     return new Promise(resolve => {
         let progColor = '#98c379'; 
@@ -470,7 +483,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
 }
 
 // ==========================================
-// 7. 完美時序凍結演算法 (Chrono-Lock Algorithm)
+// 7. 完美時序凍結演算法 (Dynamic Chrono-Lock)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -482,12 +495,11 @@ async function interceptAndRestructurePrompt(data) {
         if (!data?.chat?.length) return;
         const stream = data.chat;
 
-        const nowStr = new Date().toISOString().replace('T', '@').substring(0, 19).replace(/-/g, '-').replace(/:/g, 'm') + 's';
-        Logger.divider(`===== 启动发文拦截: ${chatKeyInfo.label.split('|')[0].trim()} | 存档: ${chatKeyInfo.label.split(':')[1].trim()} - ${nowStr} =====`);
+        Logger.divider(`===== 启动发文拦截: ${chatKeyInfo.label} =====`);
 
         if (Settings.logLevel >= LogLevels.DEBUG) {
-            Logger.debug(` [ST 原始发送阵列] 总节点数: ${stream.length}`);
-            stream.forEach((m, idx) => Logger.debug(` [${idx}] ${m.role} (${m.content?.length || 0}字): ${truncateLog(m.content, 30)}`));
+            Logger.debug(`[ST 原始发送阵列] 总节点数: ${stream.length}`);
+            stream.forEach((m, idx) => Logger.debug(`  [${idx}] ${m.role} (${m.content?.length || 0}字): ${truncateLog(m.content, 30)}`));
         }
 
         const { sysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
@@ -498,12 +510,12 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         let newFrozenSequence = [];
-        let dynamicPromptsToAppend = [];
+        let sunkPrompts = []; // 存放下沉的動態提示詞
         const sysPool = [...sysMsgs];
         const remainingHistory = [...flatHistoryPool];
         const thresholds = getTolerance();
         
-        // 1. 原位更新與動態提示詞抽離邏輯
+        // 1. 原位更新與動態提示詞感知邏輯
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const item = state.frozenSequence[i];
             if (item.tag === 'SYS') {
@@ -514,35 +526,32 @@ async function interceptAndRestructurePrompt(data) {
                 }
                 if (bestScore === 1) { 
                     newFrozenSequence.push(sysPool[bestIdx]); 
-                    Logger.debug(` [绝对冻结] 提示词: ${truncateLog(sysPool[bestIdx].content)}`);
+                    Logger.debug(`[绝对冻结] 提示词: ${truncateLog(sysPool[bestIdx].content)}`);
                     sysPool.splice(bestIdx, 1); 
                 } else if (bestScore > thresholds.sys) {
-                    const matchedItem = sysPool[bestIdx];
-                    const isDynamic = isPromptDynamic(matchedItem.content, currentTurn.user?.content);
-
-                    if (Settings.dynamicStrategy === 4) {
-                        // 方案D: 强制冻结
-                        newFrozenSequence.push(item);
-                        sysPool.splice(bestIdx, 1);
-                        Logger.debug(` [强制冻结] 忽略动态变化: ${truncateLog(item.content)}`);
-                    } else if (Settings.dynamicStrategy === 1 && isDynamic) {
-                        // 方案A: 智能下沉
-                        dynamicPromptsToAppend.push(matchedItem);
-                        sysPool.splice(bestIdx, 1);
-                        Logger.debug(` [智能下沉] 识别为动态提示词，移动至尾部: ${truncateLog(matchedItem.content)}`);
-                    } else if (Settings.dynamicStrategy === 2) {
-                        // 方案B: 全部下沉
-                        dynamicPromptsToAppend.push(matchedItem);
-                        sysPool.splice(bestIdx, 1);
-                        Logger.debug(` [全部下沉] 提示词已修改，移动至尾部: ${truncateLog(matchedItem.content)}`);
-                    } else {
-                        // 方案C 或 方案E (原位更新)
-                        newFrozenSequence.push(matchedItem);
-                        sysPool.splice(bestIdx, 1);
-                        Logger.debug(` [原位更新] 提示词 (相似度 ${(bestScore*100).toFixed(1)}%): -> ${truncateLog(matchedItem.content, 20)}`);
+                    // 發現動態提示詞 (內容被修改但相似度極高)
+                    let strategy = Settings.dynamicStrategy;
+                    if (strategy === 0) {
+                        strategy = await askDynamicStrategyAsync(item, sysPool[bestIdx]);
+                        Settings.dynamicStrategy = strategy;
+                        safeSave();
+                        $('#ds-cache-dynamic-strategy').val(strategy);
                     }
+
+                    const matchedItem = sysPool[bestIdx];
+                    if (strategy === 1) {
+                        sunkPrompts.push(matchedItem);
+                        Logger.debug(`[动态下沉] 提示词移至底部 (相似度 ${(bestScore*100).toFixed(1)}%): -> ${truncateLog(matchedItem.content, 20)}`);
+                    } else if (strategy === 2) {
+                        newFrozenSequence.push(matchedItem);
+                        Logger.debug(`[原位更新] 动态提示词 (相似度 ${(bestScore*100).toFixed(1)}%): -> ${truncateLog(matchedItem.content, 20)}`);
+                    } else if (strategy === 3) {
+                        newFrozenSequence.push(item);
+                        Logger.debug(`[忽略修改] 冻结旧提示词: ${truncateLog(item.content, 20)}`);
+                    }
+                    sysPool.splice(bestIdx, 1);
                 } else {
-                    Logger.debug(` [原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
+                    Logger.debug(`[原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
                 }
             } 
             else if (item.tag === 'USER' || item.tag === 'AI') {
@@ -554,31 +563,27 @@ async function interceptAndRestructurePrompt(data) {
                 }
                 if (bestScore > thresholds.his) {
                     newFrozenSequence.push(remainingHistory[bestIdx]);
-                    if (bestScore === 1) {
-                        Logger.debug(` [绝对冻结] 历史对话: ${truncateLog(remainingHistory[bestIdx].content)}`);
-                    } else {
-                        Logger.debug(` [原位更新] 历史对话 (相似度 ${(bestScore*100).toFixed(1)}%): -> ${truncateLog(remainingHistory[bestIdx].content, 20)}`);
-                    }
+                    Logger.debug(`[原位同步] 历史对话: ${truncateLog(remainingHistory[bestIdx].content)}`);
                     remainingHistory.splice(bestIdx, 1);
                 } else {
-                    Logger.debug(` [原位删除] 找不到旧对话，已移除: ${truncateLog(item.content)}`);
+                    Logger.debug(`[原位删除] 找不到旧对话，已移除: ${truncateLog(item.content)}`);
                 }
             }
         }
 
-        // 2. 嚴格排序邏輯：新增加的任何東西，必須嚴格墊底！
-        // 順序：新歷史 -> 新世界書/提示詞 -> 動態提示詞
+        // 2. 嚴格排序邏輯：新增加的東西與下沉的動態提示詞，必須嚴格墊底！
+        // 順序：新歷史 -> 新世界書/提示詞 -> 下沉的動態提示詞
         for (let h of remainingHistory) {
             newFrozenSequence.push(h);
-            Logger.debug(` [追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
+            Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
         }
         for (let sys of sysPool) {
             newFrozenSequence.push(sys);
-            Logger.debug(` [追加至尾部] 新增设定/世界书: ${truncateLog(sys.content)}`);
+            Logger.debug(`[追加至尾部] 新增设定/世界书: ${truncateLog(sys.content)}`);
         }
-        for (let dyn of dynamicPromptsToAppend) {
-            newFrozenSequence.push(dyn);
-            // 日誌已在上面印出
+        for (let dp of sunkPrompts) {
+            newFrozenSequence.push(dp);
+            Logger.debug(`[追加至尾部] 动态提示词(下沉): ${truncateLog(dp.content)}`);
         }
 
         // 3. 去重與組裝
@@ -597,8 +602,8 @@ async function interceptAndRestructurePrompt(data) {
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
         if (Settings.logLevel >= LogLevels.DEBUG) {
-            Logger.debug(` [最终排序发送阵列] 总节点数: ${proposedStream.length}`);
-            proposedStream.forEach((m, idx) => Logger.debug(` [${idx}] ${m.role} (${m.content?.length || 0}字): ${truncateLog(m.content, 30)}`));
+            Logger.debug(`[最终排序发送阵列] 总节点数: ${proposedStream.length}`);
+            proposedStream.forEach((m, idx) => Logger.debug(`  [${idx}] ${m.role} (${m.content?.length || 0}字): ${truncateLog(m.content, 30)}`));
         }
 
         // ==========================================
@@ -607,7 +612,6 @@ async function interceptAndRestructurePrompt(data) {
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
         let mapInfoText = "无变更";
-        let isBreakCausedBySys = false;
 
         if (state.lastSentSequence && state.lastSentSequence.length > 0) {
             const L = state.lastSentSequence;
@@ -655,7 +659,6 @@ async function interceptAndRestructurePrompt(data) {
             if (recomputeRatio > 0.10 && Settings.showResetPrompt) {
                 requireResetConfirm = true;
                 dropPercentStr = (recomputeRatio * 100).toFixed(1);
-                isBreakCausedBySys = (P[breakIndex]?.tag === 'SYS' || L[breakIndex]?.tag === 'SYS');
                 
                 const tagHtml = `<span class="ds-tag ds-tag-${P[breakIndex]?.tag}">[${P[breakIndex]?.tag}]</span>`;
                 const oldContent = escapeHtml(L[breakIndex]?.content || '∅').substring(0, 100).replace(/\n/g, ' ↵ ');
@@ -680,12 +683,7 @@ async function interceptAndRestructurePrompt(data) {
 
         if (requireResetConfirm) {
             setTopBarStatus('#ffaa00', `缓存: 等待确认`);
-            
-            // 方案C: 原位静默 (如果是提示词引起的断裂，自动放行)
-            if (Settings.dynamicStrategy === 3 && isBreakCausedBySys) {
-                Logger.warn(`[原位静默] 提示词在原位更新，已自动放行 (流失 ${dropPercentStr}%)`);
-                decision = 'accept';
-            } else if (Settings.autoAccept) {
+            if (Settings.autoAccept) {
                 Logger.warn(`[自动修复] 已放行断层重组 (需重算 ${dropPercentStr}%)`);
                 if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "缓存优化器");
                 decision = 'accept';
@@ -737,7 +735,7 @@ async function interceptAndRestructurePrompt(data) {
 
             // 完美替換 ST 的發送流
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-            Logger.log(` ✅ 排序完成，拦截器授权发送。耗时: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
+            Logger.log(`✅ 排序完成，拦截器授权发送。耗时: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
         }
 
     } catch (err) {
@@ -848,25 +846,6 @@ async function setupUI() {
                     </div>
                 </div>
 
-                <!-- 动态提示词修复方案 -->
-                <div class="ds-opt-group open">
-                    <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-wand-magic-sparkles"></i> 动态提示词修复方案</span> <i class="fa-solid fa-chevron-down"></i>
-                    </div>
-                    <div class="ds-opt-content">
-                        <div style="font-size: 12px; color: #abb2bf; line-height: 1.4;">
-                            如果您的预设中包含 <b>{{lastMessage}}</b> 等会随对话改变的宏，请选择处理方案：
-                        </div>
-                        <select id="ds-cache-dynamic-strategy" class="text_pole" style="width:100%; padding:5px; font-size:12px;">
-                            <option value="1" ${Settings.dynamicStrategy===1?'selected':''}>方案A: 智能下沉 (推荐) - 自动将包含当前输入的动态提示词移至最底部，保护缓存</option>
-                            <option value="2" ${Settings.dynamicStrategy===2?'selected':''}>方案B: 全部下沉 - 只要提示词发生变化，一律移至最底部 (最大化保护缓存)</option>
-                            <option value="3" ${Settings.dynamicStrategy===3?'selected':''}>方案C: 原位静默 - 允许提示词在原位更新并破坏缓存，但自动放行不弹窗</option>
-                            <option value="4" ${Settings.dynamicStrategy===4?'selected':''}>方案D: 强制冻结 - 彻底锁定提示词的初始状态，忽略 ST 传来的任何动态变化</option>
-                            <option value="0" ${Settings.dynamicStrategy===0?'selected':''}>方案E: 严格拦截 - 保持原位更新，并严格弹出缓存流失警告 (旧版逻辑)</option>
-                        </select>
-                    </div>
-                </div>
-
                 <!-- 提醒设置 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
@@ -885,6 +864,15 @@ async function setupUI() {
                         <span><i class="fa-solid fa-gears"></i> 高级参数 (小白无须修改)</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
+                        <div class="ds-row">
+                            <span style="font-size:0.85em; color:#abb2bf;" title="遇到随对话改变的动态提示词时如何处理">动态提示词方案:</span>
+                            <select id="ds-cache-dynamic-strategy" class="text_pole" style="width:110px; padding:2px;">
+                                <option value="0" ${Settings.dynamicStrategy===0?'selected':''}>首次询问</option>
+                                <option value="1" ${Settings.dynamicStrategy===1?'selected':''}>智能下沉 (推荐)</option>
+                                <option value="2" ${Settings.dynamicStrategy===2?'selected':''}>原位更新</option>
+                                <option value="3" ${Settings.dynamicStrategy===3?'selected':''}>忽略修改</option>
+                            </select>
+                        </div>
                         <div class="ds-row">
                             <span style="font-size:0.85em; color:#abb2bf;" title="对比旧文本与新文本的严格程度">匹配严格度:</span>
                             <select id="ds-cache-tolerance" class="text_pole" style="width:110px; padding:2px;">
@@ -1022,18 +1010,10 @@ jQuery(async () => {
         await setupUI();
         setupGlobalHotkeys(); 
         
-        setTimeout(() => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); }, 2000);
-        
-        // 雙重守護：使用定時器與全局點擊事件，保證魔法棒菜單按鈕 100% 存活
-        setInterval(() => {
-            if ($('#extensions_menu').is(':visible')) ensureBottomLeftMenuButton();
-        }, 500);
-        $(document).on('click', '#extensions_button, .fa-wand-magic-sparkles', () => { 
-            setTimeout(ensureBottomLeftMenuButton, 50); 
-        });
+        setTimeout(() => { ensureTopMenuButton(); }, 2000);
         
         if (eventSource) {
-            eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); renderChatsUI(); });
+            eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); renderChatsUI(); });
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             
             // 僅保留真正對時序造成破壞的歷史對話編輯/刪除感知
@@ -1041,7 +1021,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ DeepSeek 缓存优化器 v24 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ DeepSeek 缓存优化器 v25 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
