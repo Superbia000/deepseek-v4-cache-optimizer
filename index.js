@@ -781,7 +781,7 @@ function parseSTStreamStrict(stream) {
 
 function isDynamicPrompt(msg) {
     const content = msg.content || '';
-    return /(summary|previously on|摘要|前情提要|总结|回顾|当前时间|当前日期|current time|current date)/i.test(content);
+    return /(summary|previously on|摘要|前情提要|总结|回顾|当前时间|当前日期|current time|current date|时间：|日期：|time:|date:)/i.test(content);
 }
 
 // ==========================================
@@ -1046,8 +1046,15 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         let detectedAnomalies = [];
         const thresholds = getTolerance();
 
-        // 複製一份 frozenSequence 避免 DryRun 污染
-        const baseSequence = [...(state.frozenSequence || [])];
+        // 🚀 Req 1, 2: 解決 cleanStr undefined 導致的崩潰 (即時水合機制)
+        const baseSequence = (state.frozenSequence || []).map(item => {
+            const clone = { ...item };
+            if (clone.cleanStr === undefined) {
+                clone.cleanStr = stripHtml(clone.norm || Logger.normalize(clone.content || ''));
+                clone.cleanLen = clone.cleanStr.length;
+            }
+            return clone;
+        });
 
         for (let i = 0; i < baseSequence.length; i++) {
             const frozenItem = baseSequence[i];
@@ -1152,10 +1159,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         // 3. 處理 IncomingPool 中的剩餘物 (The "New" stuff)
-        // 這些是：上一回合的 AI 回覆、新插入的歷史、新觸發的世界書、動態提示詞的新版本
         let newHistory = [];
         let newSystems = [];
-        let dynamicSink = [];
+        let newDynamicPrompts = [];
 
         for (const item of incomingPool) {
             if (Settings.warpDriveFilter && item.content.replace(/[\s\*\.\-]/g, '').length === 0) continue;
@@ -1167,8 +1173,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 
                 if (isTimeSkip) {
                     timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：叙事过渡。${item.content}]`}, 'SYS'));
-                } else if (isSummary || isVector || Settings.dynamicMode === 2 || Settings.dynamicMode === 1 || isDynamicPrompt(item)) {
-                    dynamicSink.push(item);
+                } else if (isSummary || isVector || isDynamicPrompt(item)) {
+                    newDynamicPrompts.push(item);
                 } else {
                     newSystems.push(item);
                 }
@@ -1177,20 +1183,31 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             }
         }
 
-        // 4. 嚴格附加 (Strict Append) 構建最終陣列
-        // 順序：Base -> New History -> New Systems -> Dynamic Sink -> Patches
-        for (const h of newHistory) {
-            newFrozenSequence.push(h);
-            if (!isDryRun) Logger.debug(`[追加至尾部] 新历史节点: ${truncateLog(h.content)}`);
+        // 4. 🚀 Req 12: 嚴格附加 (Strict Append) 構建最終陣列
+        if (baseSequence.length === 0) {
+            // 對話 1 (首回合): 完全尊重 ST 的原始順序，建立最完美的基礎上下文
+            for (const item of incomingPool) {
+                newFrozenSequence.push(item);
+                if (!isDryRun) Logger.debug(`[初始化冻结] 写入基础节点: ${truncateLog(item.content)}`);
+            }
+        } else {
+            // 對話 2+ (後續回合): 嚴格的 Append-Only Event Sourcing
+            // 順序：Base -> New History -> New Systems -> Dynamic Prompts -> Patches
+            for (const h of newHistory) {
+                newFrozenSequence.push(h);
+                if (!isDryRun) Logger.debug(`[追加至尾部] 新历史节点: ${truncateLog(h.content)}`);
+            }
+            for (const s of newSystems) {
+                newFrozenSequence.push(s);
+                if (!isDryRun) Logger.debug(`[追加至尾部] 新设定/世界书: ${truncateLog(s.content)}`);
+            }
+            for (const d of newDynamicPrompts) {
+                newFrozenSequence.push(d);
+                if (!isDryRun) Logger.debug(`[追加至尾部] 动态/垫底提示词: ${truncateLog(d.content)}`);
+            }
         }
-        for (const s of newSystems) {
-            newFrozenSequence.push(s);
-            if (!isDryRun) Logger.debug(`[追加至尾部] 新设定/世界书: ${truncateLog(s.content)}`);
-        }
-        for (const d of dynamicSink) {
-            newFrozenSequence.push(d);
-            if (!isDryRun) Logger.debug(`[追加至尾部] 动态/垫底提示词: ${truncateLog(d.content)}`);
-        }
+        
+        // 補丁永遠在最底層
         for (const p of timeSpacePatches) {
             newFrozenSequence.push(p);
             if (!isDryRun) Logger.debug(`[追加至尾部] 时空修正补丁: ${truncateLog(p.content)}`);
@@ -1366,14 +1383,14 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         if (decision === 'accept') {
-            // 🚀 Req 12: 儲存新的 Base Sequence (不包含 Current User/Prefill)
-            // 這樣下一回合，Current User/Prefill 就會變成 "New History" 被 Append！
+            // 🚀 Req 1, 2: 儲存時刪除 cleanStr 以節省 50% 記憶體，讀取時再即時水合
             state.frozenSequence = dedupedSequence.map(n => {
                 const clean = {...n};
                 delete clean.isPhantom;
                 delete clean.isPatched;
                 delete clean.originalContent;
                 delete clean.cleanStr; 
+                delete clean.cleanLen;
                 return clean;
             });
             state.lastPrefills = currentTurn.prefills;
