@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (水平排版與摺疊模組化)
+// 1. 樣式注入 (全強制水平排版與摺疊模組化)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -17,28 +17,29 @@ const injectCSS = () => {
         .ds-opt-group.open .ds-opt-content { display: flex; animation: dsFadeIn 0.2s ease-out; }
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
 
-        /* 水平強制排版 */
+        /* 全強制水平排版 (Horizontal Strictly) */
         .ds-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%; gap: 10px; }
-        .ds-row-left { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px; cursor: pointer; color: #abb2bf; font-size: 0.9em; white-space: nowrap; }
+        .ds-row-left { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px; cursor: pointer; color: #abb2bf; font-size: 0.9em; white-space: nowrap; flex: 1; }
         .ds-row-left input[type="checkbox"] { margin: 0; }
         
-        /* 終端機日誌與濾波器 */
+        /* 終端機日誌與濾波器 (大幅強化) */
         .ds-log-toolbar { display: flex; gap: 5px; margin-bottom: 5px; }
         .ds-log-filter { cursor: pointer; padding: 2px 8px; border-radius: 12px; font-size: 10px; background: rgba(255,255,255,0.1); color: #abb2bf; transition: 0.2s; }
         .ds-log-filter.active { background: #56b6c2; color: #121212; font-weight: bold; }
         .ds-log-filter:hover:not(.active) { background: rgba(255,255,255,0.2); }
-        .ds-log-terminal { background: var(--black50a, #0d0d0d); color: var(--SmartThemeBody-color, #a9b7c6); font-family: Consolas, monospace; font-size: 11px; height: 220px; overflow-y: auto; border-radius: 6px; padding: 8px; border: 1px solid var(--SmartThemeBorder-color, #333); box-shadow: inset 0 0 10px rgba(0,0,0,0.5); scroll-behavior: smooth; }
-        .ds-log-line { margin-bottom: 3px; line-height: 1.4; word-wrap: break-word; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 2px; }
+        .ds-log-terminal { background: var(--black50a, #0a0a0a); color: var(--SmartThemeBody-color, #a9b7c6); font-family: Consolas, monospace; font-size: 11px; height: 280px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid var(--SmartThemeBorder-color, #333); box-shadow: inset 0 0 10px rgba(0,0,0,0.8); scroll-behavior: smooth; }
+        .ds-log-line { margin-bottom: 4px; line-height: 1.4; word-wrap: break-word; }
         .ds-log-line.hide { display: none; }
-        .ds-log-time { color: #5c6370; margin-right: 5px; }
+        .ds-log-time { color: #5c6370; margin-right: 5px; user-select: none; }
         .ds-log-info { color: #98c379; }
         .ds-log-warn { color: #e5c07b; font-weight: bold; }
         .ds-log-error { color: #e06c75; font-weight: bold; }
-        .ds-log-map { color: #56b6c2; }
+        .ds-log-map { color: #56b6c2; font-weight: bold; }
         .ds-log-debug { color: #c678dd; }
+        .ds-log-divider { color: #4b5263; font-weight: bold; display: block; text-align: center; margin: 8px 0; border-top: 1px dashed #4b5263; padding-top: 4px; }
         
         /* 標籤與快取列表 */
-        .ds-tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; background: rgba(255,255,255,0.05); }
+        .ds-tag { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; background: rgba(255,255,255,0.05); }
         .ds-tag-SYS { color: #61afef; border-left: 2px solid #61afef; }
         .ds-tag-USER { color: #98c379; border-left: 2px solid #98c379; }
         .ds-tag-AI { color: #e5c07b; border-left: 2px solid #e5c07b; }
@@ -88,7 +89,7 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態設定與 30秒絕對節流閥 (30s Throttle)
+// 2. 狀態設定與 30秒 節流閥感知器 (30s Throttle)
 // ==========================================
 let Settings = {};
 
@@ -105,7 +106,7 @@ function initSettings() {
             toastHistory: oldSettings.toastHistory ?? true,
             showResetPrompt: oldSettings.showResetPrompt ?? true,
             autoAccept: oldSettings.autoAccept ?? false,
-            logLevel: oldSettings.logLevel ?? 2,
+            logLevel: oldSettings.logLevel ?? 2, // 預設 DETAILED
             tolerance: oldSettings.tolerance ?? 1,
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
             hotkeysEnabled: oldSettings.hotkeysEnabled ?? true,
@@ -124,7 +125,7 @@ function safeSave() {
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
         if (Math.random() < 0.1) localStorage.setItem('ds_cache_v22_snapshot', JSON.stringify(Settings));
     } 
-    catch (e) { console.warn("[DS Cache] 存檔或快照失敗", e); }
+    catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
 }
 
 function getTolerance() {
@@ -133,18 +134,18 @@ function getTolerance() {
     return { sys: 0.05, his: 0.1 }; 
 }
 
-// 核心修正：30 秒絕對節流閥 (30000ms Throttle)
+// 核心修正：30 秒 (30000ms) 冷卻期的前沿觸發節流閥
 const triggerThrottlers = {};
-function triggerWarningImmediate(key, msg, enabled) {
-    if (!Settings.enabled || !enabled) return;
+function triggerWarningImmediate(key, msg, isEnabled) {
+    if (!Settings.enabled || !isEnabled) return;
     const now = Date.now();
-    // 如果從未觸發，或距離上次觸發超過 30 秒 (30000ms)，才執行並重設計時器
+    // 30,000 毫秒內不重複提醒同一個事件
     if (!triggerThrottlers[key] || now - triggerThrottlers[key] > 30000) {
         triggerThrottlers[key] = now;
         if (Settings.zenMode) {
-            Logger.log(`[禪模式靜默攔截] ${msg}`, LogLevels.BASIC);
+            Logger.log(`[禪模式靜默] 攔截通知: ${msg}`, LogLevels.BASIC);
         } else {
-            if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DeepSeek 优化缓存命中', { timeOut: 3000 });
+            if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DeepSeek 感知系統', { timeOut: 3000 });
         }
     }
 }
@@ -188,7 +189,7 @@ function performGarbageCollection() {
 }
 
 // ==========================================
-// 3. 日誌系統 (4 級透視)
+// 3. 醫療級日誌系統 (4 級透視)
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
@@ -227,22 +228,31 @@ function logAt(level, type, msg) {
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     
+    // Console 輸出
     if (type === 'warn') console.warn(`%c[DS v22] 🌪️ ${msg}`, 'color: #ffaa00;');
     else if (type === 'error') console.error(`[DS v22] 🔴 ${msg}`);
     else if (type === 'map') console.log(`%c[DS v22] 🗺️ ${msg}`, 'color: #00e5ff;');
     else if (type === 'debug') console.log(`%c[DS v22] 🐛 ${msg}`, 'color: #c678dd;');
+    else if (type === 'divider') console.log(`%c${msg}`, 'color: #4b5263; font-weight: bold;');
     else console.log(`%c[DS v22] ✅ ${msg}`, 'color: #00ff00;');
     
+    // 終端機輸出
     const container = document.getElementById('ds-cache-log-container');
     if (container) {
         const line = document.createElement('div');
         line.className = 'ds-log-line';
-        line.setAttribute('data-type', type);
-        line.innerHTML = `<span class="ds-log-time">[${time}]</span> <span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
+        line.setAttribute('data-type', type === 'divider' ? 'info' : type);
+        
+        if (type === 'divider') {
+            line.innerHTML = `<span class="ds-log-divider">${msg}</span>`;
+        } else {
+            line.innerHTML = `<span class="ds-log-time">[${time}]</span> <span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
+        }
+        
         container.appendChild(line);
         
         const activeFilter = $('.ds-log-filter.active').data('filter') || 'all';
-        if (activeFilter !== 'all' && activeFilter !== type) line.classList.add('hide');
+        if (activeFilter !== 'all' && activeFilter !== type && type !== 'divider') line.classList.add('hide');
 
         while (container.childNodes.length > 500) container.removeChild(container.firstChild);
         container.scrollTop = container.scrollHeight;
@@ -255,11 +265,12 @@ const Logger = {
     map: (msg, level = LogLevels.BASIC) => logAt(level, 'map', msg),
     error: (msg, err, level = LogLevels.BASIC) => logAt(level, 'error', err ? `${msg} ${err}` : msg),
     debug: (msg) => logAt(LogLevels.DEBUG, 'debug', msg),
+    divider: (msg) => logAt(LogLevels.BASIC, 'divider', msg),
     normalize: (text) => (text || '').replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim(),
 };
 
 // ==========================================
-// 4. 狀態管理與擴充選單 (永不消失雙重防護)
+// 4. 狀態管理與擴充選單
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -306,18 +317,14 @@ function ensureTopMenuButton() {
     updateTopBarState();
 }
 
-// 核心修正：確保選單永遠存活的注入器
 function ensureBottomLeftMenuButton() {
     if ($('#extensions_menu').length > 0 && $('#ds-bottom-reset-btn').length === 0) {
         const btn = $(`
             <li id="ds-bottom-reset-btn" class="menu_button interactable" title="清空當前聊天的 DeepSeek 快取池">
-                <span class="fa-solid fa-microchip"></span> 重置 DeepSeek 缓存
+                <span class="fa-solid fa-microchip" style="color: #e06c75;"></span> 重置 DS 缓存
             </li>
         `);
-        btn.on('click', () => { 
-            resetCurrentCache(); 
-            if ($('#extensions_menu').hasClass('open')) $('#extensions_menu').removeClass('open').hide(); 
-        });
+        btn.on('click', () => { resetCurrentCache(); if ($('#extensions_menu').hasClass('open')) $('#extensions_menu').removeClass('open').hide(); });
         $('#extensions_menu').append(btn);
     }
 }
@@ -362,7 +369,7 @@ function restoreFromLocalSnapshot() {
     try {
         const snap = localStorage.getItem('ds_cache_v22_snapshot');
         if (!snap) { alert("尚未找到有效的本地快照。"); return; }
-        if (confirm("即將從本地 localStorage 快照庫還原資料。這將覆蓋當前狀態。確定嗎？")) {
+        if (confirm("即將從本地隱藏快照庫還原資料。這將覆蓋當前狀態。確定嗎？")) {
             Object.assign(Settings, JSON.parse(snap));
             safeSave(); renderChatsUI();
             if (typeof toastr !== 'undefined') toastr.success("本地快照還原成功！");
@@ -496,6 +503,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
+    const startTime = performance.now();
 
     try {
         const chatKeyInfo = getChatKey();
@@ -503,13 +511,15 @@ async function interceptAndRestructurePrompt(data) {
         if (!data?.chat?.length) return;
         const stream = data.chat;
 
+        Logger.divider(`===== 啟動時序守護: ${chatKeyInfo.label} =====`);
+
+        // DEBUG 級別日誌：印出原始 ST 進來的陣列
         if (Settings.logLevel >= LogLevels.DEBUG) {
-            Logger.debug(`[輸入原始陣列] 長度: ${stream.length}`);
-            stream.forEach((m, idx) => Logger.debug(`  [${idx}] ${m.role}: ${truncateLog(m.content, 40)}`));
+            Logger.debug(`[輸入原始陣列] 總節點數: ${stream.length}`);
+            stream.forEach((m, idx) => Logger.debug(`  [${idx}] ${m.role} (${m.content?.length || 0}字): ${truncateLog(m.content, 40)}`));
         }
 
         const { sysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
-        Logger.log(`[流程啟動] 處理存檔: ${chatKeyInfo.label}`, LogLevels.BASIC);
 
         const flatHistoryPool = [];
         for(let t of historyTurns) {
@@ -583,9 +593,10 @@ async function interceptAndRestructurePrompt(data) {
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
+        // DEBUG 級別日誌：印出重組後陣列
         if (Settings.logLevel >= LogLevels.DEBUG) {
-            Logger.debug(`[輸出重組陣列] 長度: ${proposedStream.length}`);
-            proposedStream.forEach((m, idx) => Logger.debug(`  [${idx}] ${m.role}: ${truncateLog(m.content, 40)}`));
+            Logger.debug(`[輸出重組陣列] 總節點數: ${proposedStream.length}`);
+            proposedStream.forEach((m, idx) => Logger.debug(`  [${idx}] ${m.role} (${m.content?.length || 0}字): ${truncateLog(m.content, 40)}`));
         }
 
         let requireResetConfirm = false;
@@ -645,7 +656,7 @@ async function interceptAndRestructurePrompt(data) {
                 
                 mapInfoText = `
                     <div style="margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-                        <span style="color:#56b6c2;"><i class="fa-solid fa-location-crosshairs"></i> 斷裂點索引:</span> <b>[${breakIndex}]</b> ${tagHtml}
+                        <span style="color:#56b6c2;"><i class="fa-solid fa-location-crosshairs"></i> 斷裂點:</span> <b>[${breakIndex}]</b> ${tagHtml}
                     </div>
                     <div class="ds-diff-del"><i class="fa-solid fa-minus"></i> ${oldContent}...</div>
                     <div class="ds-diff-add"><i class="fa-solid fa-plus"></i> ${newContent}...</div>
@@ -654,7 +665,7 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         let decision = 'ignore';
-        setTopBarStatus('#00ff00', 'DeepSeek 缓存: 健康');
+        setTopBarStatus('#00ff00', 'DS 缓存: 健康');
 
         if (requireResetConfirm) {
             setTopBarStatus('#ffaa00', `DS 缓存: 阻斷中`);
@@ -670,7 +681,7 @@ async function interceptAndRestructurePrompt(data) {
         if (decision === 'abort') {
             Logger.error('[攔截] 已強制中止生成', null, LogLevels.BASIC);
             setTopBarStatus('#e06c75', 'DS 缓存: 使用者中斷');
-            if (typeof toastr !== 'undefined') toastr.error("已強制攔截！請復原提示詞。", "DeepSeek 缓存");
+            if (typeof toastr !== 'undefined') toastr.error("已強制攔截！請復原提示詞。", "DS 缓存");
             stream.splice(0, stream.length); 
             return;
         }
@@ -700,7 +711,7 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-        Logger.log('✅ 排序整理完成，授權發送。', LogLevels.BASIC);
+        Logger.log(`✅ 排序完成，授權發送。耗時: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
 
     } catch (err) {
         setTopBarStatus('#e06c75', 'DS 缓存: 核心崩潰');
@@ -710,7 +721,7 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 8. UI 面板
+// 8. UI 面板與高階事件綁定
 // ==========================================
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
@@ -847,7 +858,7 @@ async function setupUI() {
             </div>
             <div class="inline-drawer-content" style="padding:15px; background: rgba(0,0,0,0.1);">
                 
-                <!-- 核心控制 (水平排版) -->
+                <!-- 核心控制 (強制水平排版) -->
                 <div class="ds-opt-group open">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
                         <span><i class="fa-solid fa-sliders"></i> 核心控制</span> <i class="fa-solid fa-chevron-down"></i>
@@ -866,13 +877,13 @@ async function setupUI() {
                 <!-- 感知與通知 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-satellite-dish"></i> 感知與通知</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-satellite-dish"></i> 感知與通知 (30秒冷卻)</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 📝 提示詞內容變更 (30s 節流)</label></div>
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys-toggle" ${Settings.toastSysToggle ? 'checked' : ''}> 🎚️ 提示詞開關切換 (30s 節流)</label></div>
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 📖 角色世界書變更 (30s 節流)</label></div>
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-global-lore" ${Settings.toastGlobalLore ? 'checked' : ''}> 🌍 全局世界書變更 (30s 節流)</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 📝 提示詞 (內容變更 / 刪除)</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys-toggle" ${Settings.toastSysToggle ? 'checked' : ''}> 🎚️ 提示詞 (開關切換)</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 📖 當前角色世界書變更</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-global-lore" ${Settings.toastGlobalLore ? 'checked' : ''}> 🌍 全局世界書變更</label></div>
                         <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 💬 歷史對話變更</label></div>
                         <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); width:100%; margin:2px 0;">
                         <div class="ds-row"><label class="ds-row-left" style="color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 🛑 啟用視覺化攔截預警</label></div>
@@ -956,7 +967,7 @@ async function setupUI() {
         
         $('#extensions_settings').append(html);
 
-        // 基礎事件綁定
+        // UI 綁定
         $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); updateTopBarState(); });
         $('#ds-cache-zen').on('change', function () { Settings.zenMode = $(this).is(':checked'); safeSave(); updateTopBarState(); });
         $('#ds-toast-sys').on('change', function () { Settings.toastSys = $(this).is(':checked'); safeSave(); });
@@ -978,7 +989,7 @@ async function setupUI() {
         $('.ds-log-filter').on('click', function() {
             $('.ds-log-filter').removeClass('active'); $(this).addClass('active'); const f = $(this).data('filter');
             $('#ds-cache-log-container .ds-log-line').each(function() {
-                if (f === 'all' || $(this).data('type') === f) $(this).removeClass('hide'); else $(this).addClass('hide');
+                if (f === 'all' || $(this).data('type') === f || $(this).data('type') === 'divider') $(this).removeClass('hide'); else $(this).addClass('hide');
             });
         });
         
@@ -1015,56 +1026,63 @@ jQuery(async () => {
         await setupUI();
         setupGlobalHotkeys(); 
         
-        // 確保按鈕永遠存在的雙重防護
         setTimeout(() => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); }, 2000);
-        $(document).on('click', '#extensions_button', ensureBottomLeftMenuButton);
+        
+        // 強化觀察者：確保原生的 Extensions Menu 左下角菜單按鈕存活
         const observer = new MutationObserver(() => {
-            if ($('#extensions_menu').is(':visible') && $('#ds-bottom-reset-btn').length === 0) ensureBottomLeftMenuButton();
+            if (document.getElementById('extensions_menu') && $('#ds-bottom-reset-btn').length === 0) ensureBottomLeftMenuButton();
         });
-        if (document.getElementById('extensions_menu')) observer.observe(document.getElementById('extensions_menu'), { childList: true, subtree: true });
+        observer.observe(document.body, { childList: true, subtree: true });
         
         if (eventSource) {
             eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); renderChatsUI(); });
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningImmediate('his_del', '歷史對話被刪除！', Settings.toastHistory));
-            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '歷史對話被修改！', Settings.toastHistory));
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningImmediate('his_del', '對話被刪除！準備原位補位', Settings.toastHistory));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '對話被修改！準備原位更新', Settings.toastHistory));
         }
 
-        // 強效事件委派 (Event Delegation) 擷取實際內容變更 (包含清空方塊)
-        $(document).on('input', function(e) {
-            const $t = $(e.target);
-            const tag = e.target.tagName.toLowerCase();
-            const id = $t.attr('id') || '';
-            const cls = $t.attr('class') || '';
+        // ===============================================
+        // 強效祖先節點穿透感知引擎 (DOM Ancestral Tracking)
+        // ===============================================
 
-            if (tag === 'textarea' || (tag === 'input' && $t.attr('type') === 'text')) {
-                // 1. 預設提示詞變更 (包含刪除/清空)
-                if (id.includes('prompt') || cls.includes('prompt') || id.includes('rm_ch_sys')) {
-                    triggerWarningImmediate('sys_text', '預設提示詞內容已變更', Settings.toastSys);
-                } 
-                // 2. 世界書變更
-                else if ($t.closest('.world_info_entry, .lorebook_entry, #world_info_panel, #character_popup').length > 0) {
-                    if ($t.closest('#character_popup, .character_settings').length > 0) {
-                        triggerWarningImmediate('lore_char', '角色專屬世界書已變更', Settings.toastLore);
-                    } else {
-                        triggerWarningImmediate('lore_global', '全局世界書已變更', Settings.toastGlobalLore);
-                    }
-                }
-            }
+        // 1. 監聽文字輸入，判斷是否真正改變
+        $(document).on('input', 'textarea, input[type="text"]', function() {
+            const el = $(this);
+            const val = el.val();
+            const lastVal = el.data('ds-last-val') ?? val;
+            if (val === lastVal) return; // 沒實質改變就忽略
+            el.data('ds-last-val', val);
+
+            const isWorldInfo = el.closest('#world_info_panel, .world_info_manager').length > 0;
+            const isCharPopup = el.closest('#character_popup, #form_character_search').length > 0;
+            const isPrompt = el.closest('#advanced_formatting, #chat_completion_settings, .prompt-manager').length > 0 || el.attr('id')?.includes('prompt') || el.attr('class')?.includes('prompt');
+
+            if (isWorldInfo) triggerWarningImmediate('lore_global', '🌍 全局世界書文本已變更！', Settings.toastGlobalLore);
+            else if (isCharPopup) triggerWarningImmediate('lore_char', '📖 角色世界書文本已變更！', Settings.toastLore);
+            else if (isPrompt) triggerWarningImmediate('sys_text', '📝 提示詞內容已變更！', Settings.toastSys);
         });
 
-        $(document).on('change', function(e) {
-            const $t = $(e.target);
-            const tag = e.target.tagName.toLowerCase();
-            const id = $t.attr('id') || '';
-            const cls = $t.attr('class') || '';
+        // 2. 監聽開關與選單切換
+        $(document).on('change', 'input[type="checkbox"], select', function() {
+            const el = $(this);
+            const isPrompt = el.closest('#advanced_formatting, #chat_completion_settings, .prompt-manager').length > 0 || el.attr('id')?.includes('prompt') || el.attr('class')?.includes('prompt');
+            if (isPrompt) triggerWarningImmediate('sys_toggle', '🎚️ 提示詞開關已切換！', Settings.toastSysToggle);
+        });
 
-            if (tag === 'input' && $t.attr('type') === 'checkbox') {
-                if (id.includes('prompt') || id.includes('jailbreak') || id.includes('nsfw') || cls.includes('prompt_toggle')) {
-                    triggerWarningImmediate('sys_toggle', '預設提示詞開關已切換', Settings.toastSysToggle);
-                }
-            } else if (tag === 'select' && (id.includes('preset') || id.includes('prompt'))) {
-                triggerWarningImmediate('sys_toggle', '預設提示詞預設檔已切換', Settings.toastSysToggle);
+        // 3. 監聽垃圾桶/刪除按鈕，捕捉「刪除提示詞方塊」
+        $(document).on('click', 'button, .menu_button, .fa-trash, .fa-trash-can, .fa-minus', function() {
+            const el = $(this);
+            const id = el.attr('id') || ''; const cls = el.attr('class') || '';
+            const isDeleteBtn = id.includes('delete') || id.includes('remove') || cls.includes('delete') || cls.includes('remove') || cls.includes('trash') || cls.includes('minus');
+            
+            if (isDeleteBtn) {
+                const isWorldInfo = el.closest('#world_info_panel, .world_info_manager').length > 0;
+                const isCharPopup = el.closest('#character_popup').length > 0;
+                const isPrompt = el.closest('#advanced_formatting, #chat_completion_settings, .prompt-manager').length > 0;
+
+                if (isWorldInfo) triggerWarningImmediate('lore_global', '🌍 刪除了全局世界書條目！', Settings.toastGlobalLore);
+                else if (isCharPopup) triggerWarningImmediate('lore_char', '📖 刪除了角色世界書條目！', Settings.toastLore);
+                else if (isPrompt) triggerWarningImmediate('sys_text', '📝 刪除了提示詞方塊！', Settings.toastSys);
             }
         });
 
