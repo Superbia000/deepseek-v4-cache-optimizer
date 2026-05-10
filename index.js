@@ -131,7 +131,7 @@ const injectCSS = () => {
         .ds-health-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.3s, background 0.3s; }
 
-        /* Omni-Vision UI Styles (v51 Enhanced) */
+        /* Omni-Vision UI Styles (v52 Enhanced) */
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
         .ds-omni-body { display: flex; gap: 15px; flex: 1; min-height: 0; position: relative; }
@@ -145,7 +145,7 @@ const injectCSS = () => {
         .ds-node-empty { background: transparent; border: 1px dashed rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.2); font-style: italic; }
         
         .ds-status-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.05) 0%, rgba(0,0,0,0) 100%); }
-        .ds-status-miss { border-left: 4px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.05) 0%, rgba(0,0,0,0) 100%); } /* Changed to Cyan for Append */
+        .ds-status-miss { border-left: 4px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.05) 0%, rgba(0,0,0,0) 100%); } 
         .ds-status-patch { border-left: 4px solid var(--ds-purple); background: linear-gradient(90deg, rgba(198,120,221,0.05) 0%, rgba(0,0,0,0) 100%); }
         .ds-status-phantom { border-left: 4px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.05) 0%, rgba(0,0,0,0) 100%); }
         .ds-status-break { border-left: 4px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.05) 0%, rgba(0,0,0,0) 100%); }
@@ -188,9 +188,9 @@ let sessionSnoozeReset = false;
 let backupVault = []; 
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v50 || extension_settings.ds_cache_v49 || {};
-    if (!extension_settings.ds_cache_v51) {
-        extension_settings.ds_cache_v51 = {
+    const oldSettings = extension_settings.ds_cache_v52 || extension_settings.ds_cache_v51 || {};
+    if (!extension_settings.ds_cache_v52) {
+        extension_settings.ds_cache_v52 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -229,16 +229,18 @@ function initSettings() {
             phantomSync: oldSettings.phantomSync ?? true, 
             smartAutoPatch: oldSettings.smartAutoPatch ?? true, 
             chats: oldSettings.chats || {},
-            pinnedChats: oldSettings.pinnedChats || {} 
+            pinnedChats: oldSettings.pinnedChats || {},
+            stats: oldSettings.stats || { intercepted: 0, tokensSaved: 0 } 
         };
     }
-    Settings = extension_settings.ds_cache_v51;
+    Settings = extension_settings.ds_cache_v52;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
+    if (!Settings.stats) Settings.stats = { intercepted: 0, tokensSaved: 0 };
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v51_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v52_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -252,7 +254,7 @@ function flushSaveSync() {
     if (pendingSave) {
         try { 
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-            localStorage.setItem('ds_cache_v51_snapshot', JSON.stringify(Settings));
+            localStorage.setItem('ds_cache_v52_snapshot', JSON.stringify(Settings));
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -277,7 +279,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v51_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v52_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -316,6 +318,7 @@ function truncateLog(str, len = 50) {
     const s = String(str).replace(/\n/g, ' ↵ ');
     return s.length > len ? s.substring(0, len) + '...' : s;
 }
+function formatNumber(num) { return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
 
 function calculateExactStorage(object) {
     try {
@@ -635,7 +638,6 @@ function cyrb53(str, seed = 0) {
     return 4294967296 * (2097151 & h2) + (h1 >>> 0);
 }
 
-// 🚀 Req 8, 9: Zero-GC 滑動視窗比對，徹底消滅 Set 物件分配
 function getSimilarityFast(s1, s2) {
     if (s1 === s2) return 1;
     if (!s1 || !s2 || s1.length < 2 || s2.length < 2) return 0;
@@ -672,7 +674,6 @@ function createMsg(msg, tag) {
     };
 }
 
-// 🚀 核心修復：防止 cleanStr 丟失導致的 length 崩潰
 function getSimilarity(msg1, msg2) {
     if (msg1.hash === msg2.hash) return 1;
     if (msg1.fuzzyHash === msg2.fuzzyHash) return 0.99; 
@@ -682,9 +683,10 @@ function getSimilarity(msg1, msg2) {
     const l1 = msg1.cleanLen !== undefined ? msg1.cleanLen : c1.length;
     const l2 = msg2.cleanLen !== undefined ? msg2.cleanLen : c2.length;
 
-    if (Math.abs(l1 - l2) > Math.max(l1, l2) * 0.5) return 0;
+    if (l1 === 0 && l2 === 0) return 1; 
     if (l1 === 0 || l2 === 0) return 0;
 
+    if (Math.abs(l1 - l2) > Math.max(l1, l2) * 0.5) return 0;
     return getSimilarityFast(c1, c2);
 }
 
@@ -705,26 +707,6 @@ function simpleDiffHighlight(oldStr, newStr) {
     if (insText) result += `<ins style="color:#98c379; background:rgba(152,195,121,0.2); text-decoration:none; font-weight:bold; padding:0 2px;">${insText}</ins>`;
     result += suffix;
     return result.replace(/\n/g, '<br>');
-}
-
-function stripPrefillFromAssistant(assistantObj, prefills) {
-    if (!assistantObj || !prefills || !Array.isArray(prefills) || prefills.length === 0) return assistantObj;
-    let content = assistantObj.content || '';
-    let modified = false;
-    for (const p of prefills) {
-        const pContent = p.content || '';
-        const trimmedContent = content.trimStart();
-        const trimmedPContent = pContent.trimStart();
-        if (trimmedContent.startsWith(trimmedPContent)) { 
-            content = trimmedContent.substring(trimmedPContent.length); 
-            modified = true; 
-        }
-    }
-    if (modified) {
-        content = content.replace(/^[\s\n]+/, ''); 
-        return createMsg({role: assistantObj.role, content: content}, assistantObj.tag);
-    }
-    return assistantObj;
 }
 
 function isDynamicPrompt(msg) {
@@ -980,13 +962,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             currentTurn.prefills = parsedStream.slice(lastUserIdx + 1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
         }
 
-        // 處理 Prefill 剝離
-        for (let i = 0; i < incomingPool.length; i++) {
-            if (incomingPool[i].tag === 'AI') {
-                incomingPool[i] = stripPrefillFromAssistant(incomingPool[i], state.lastPrefills);
-            }
-        }
-
         // 2. 匹配凍結陣列 (Base Sequence)
         let newFrozenSequence = [];
         let timeSpacePatches = [];
@@ -994,33 +969,52 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         let detectedAnomalies = [];
         const thresholds = getTolerance();
 
-        // 🚀 Req 13: 嚴格繼承上一回合的完整發送陣列 (不含上一回合的動態變數，因為它們會被重新評估)
-        // 在 v51 中，frozenSequence 已經包含了上一回合的 User 和 AI Reply。
-        const baseSequence = [...(state.frozenSequence || [])];
+        // 🚀 致命 Bug 修復：深層拷貝隔離，防止 isDryRun 污染真實狀態矩陣
+        const baseSequence = state.frozenSequence ? state.frozenSequence.map(item => ({...item})) : [];
 
         for (let i = 0; i < baseSequence.length; i++) {
             const frozenItem = baseSequence[i];
             let bestIdx = -1, bestScore = 0;
-            
+            let isPatchedMatch = false;
+
             for (let j = 0; j < incomingPool.length; j++) {
                 if (frozenItem.tag === 'SYS' && incomingPool[j].tag !== 'SYS') continue;
                 if (frozenItem.tag !== 'SYS' && incomingPool[j].tag === 'SYS') continue;
+
+                // 🚀 致命 Bug 修復：精準識別已修補的歷史，防止無限生成補丁
+                if (frozenItem.patchedContent && frozenItem.patchedContent === incomingPool[j].content) {
+                    bestScore = 1;
+                    bestIdx = j;
+                    isPatchedMatch = true;
+                    break;
+                }
 
                 const score = getSimilarity(frozenItem, incomingPool[j]);
                 if (score > bestScore) { bestScore = score; bestIdx = j; }
             }
 
             if (bestScore === 1 || (bestIdx !== -1 && frozenItem.fuzzyHash === incomingPool[bestIdx].fuzzyHash)) {
-                // 完美命中 或 幻影同步
                 let matchedItem = incomingPool[bestIdx];
-                if (frozenItem.fuzzyHash === matchedItem.fuzzyHash && frozenItem.hash !== matchedItem.hash && Settings.phantomSync) {
+                
+                if (isPatchedMatch) {
+                    // 🚀 完美吸收：已修補的內容再次出現，靜默保留原位，不生成新補丁
+                    newFrozenSequence.push(frozenItem);
+                    incomingPool.splice(bestIdx, 1);
+                } else if (frozenItem.fuzzyHash === matchedItem.fuzzyHash && frozenItem.hash !== matchedItem.hash && Settings.phantomSync) {
                     matchedItem = { ...frozenItem, isPhantom: true, originalContent: matchedItem.content };
+                    newFrozenSequence.push(matchedItem);
+                    incomingPool.splice(bestIdx, 1);
                     if (!isDryRun) Logger.debug(`[👻 幻影同步] 拦截到微小修改，强制使用旧版缓存以保住 100% 命中率。`);
+                } else {
+                    // 完美命中，繼承所有神聖屬性
+                    matchedItem.isPatched = frozenItem.isPatched;
+                    matchedItem.patchedContent = frozenItem.patchedContent;
+                    matchedItem.isErased = frozenItem.isErased;
+                    matchedItem.isTimeSpacePatch = frozenItem.isTimeSpacePatch;
+                    newFrozenSequence.push(matchedItem);
+                    incomingPool.splice(bestIdx, 1);
                 }
-                newFrozenSequence.push(matchedItem);
-                incomingPool.splice(bestIdx, 1);
             } else if (bestScore > (frozenItem.tag === 'SYS' ? thresholds.sys : thresholds.his)) {
-                // 部分命中 (動態提示詞 或 歷史修改)
                 const matchedItem = incomingPool[bestIdx];
                 if (frozenItem.tag === 'SYS') {
                     if (bestScore < 1) {
@@ -1028,41 +1022,48 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         if (Settings.dynamicMode === 0) needsAsk = true;
                     }
                     
-                    if (Settings.dynamicMode === 1) { // 日記模式
-                        newFrozenSequence.push(frozenItem); // 保留舊的在原位
+                    if (Settings.dynamicMode === 1) { 
+                        newFrozenSequence.push(frozenItem); 
+                        matchedItem.isDynamicUpdate = true; 
                         if (!isDryRun) Logger.debug(`[动态提示词-日记模式] 冻结历史快照: ${truncateLog(frozenItem.content)}`);
-                        // 新的留在 incomingPool 中，稍後會被 Append 到最後
-                    } else if (Settings.dynamicMode === 2) { // 墊底模式
-                        // 丟棄舊的，新的留在 incomingPool 中，稍後會被 Append 到最後
+                    } else if (Settings.dynamicMode === 2) { 
+                        matchedItem.isDynamicUpdate = true; 
                         if (!isDryRun) Logger.debug(`[动态提示词-垫底模式] 抽离旧版，准备将新版移至尾部。`);
-                    } else if (Settings.dynamicMode === 3) { // 假裝沒看見
+                    } else if (Settings.dynamicMode === 3) { 
                         newFrozenSequence.push(frozenItem);
-                        incomingPool.splice(bestIdx, 1); // 丟棄新的
+                        incomingPool.splice(bestIdx, 1); 
                         if (!isDryRun) Logger.debug(`[动态提示词-假装没看见] 强制冻结旧版。`);
-                    } else if (Settings.dynamicMode === 4) { // 原位替換
+                    } else if (Settings.dynamicMode === 4) { 
                         newFrozenSequence.push(matchedItem);
                         incomingPool.splice(bestIdx, 1);
                         if (!isDryRun) Logger.debug(`[动态提示词-原位替换] -> ${truncateLog(matchedItem.content)}`);
-                    } else if (Settings.dynamicMode === 5) { // 刪除
+                    } else if (Settings.dynamicMode === 5) { 
                         incomingPool.splice(bestIdx, 1);
                     } else {
                         newFrozenSequence.push(matchedItem);
                         incomingPool.splice(bestIdx, 1);
                     }
                 } else {
-                    // 歷史修改
+                    // 歷史修改：追蹤最新修改，生成一次性補丁
                     if (Settings.entropyShield && bestScore > 0.99) {
+                        frozenItem.patchedContent = matchedItem.content;
                         newFrozenSequence.push(frozenItem); 
-                        timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(frozenItem.content, 15)}" 已修正为 "${truncateLog(matchedItem.content, 15)}"]`}, 'SYS'));
+                        const patchMsg = createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(frozenItem.content, 15)}" 已修正为 "${truncateLog(matchedItem.content, 15)}"]`}, 'SYS');
+                        patchMsg.isTimeSpacePatch = true; // 🚀 賦予永久駐留權
+                        timeSpacePatches.push(patchMsg);
                         incomingPool.splice(bestIdx, 1);
                         if (!isDryRun) Logger.debug(`[🛡️ 熵减护盾] 拦截了微小的错字修改，已自动豁免并生成底部修正补丁，保住 100% 缓存。`);
                     } else if (Settings.smartAutoPatch || Settings.historyEditMode === 1) {
-                        const patchedNode = { ...frozenItem, isPatched: true };
-                        newFrozenSequence.push(patchedNode); 
-                        timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(frozenItem.content, 20)}" 实际上已发生改变，最新情况为："${matchedItem.content}"]`}, 'SYS'));
+                        frozenItem.isPatched = true;
+                        frozenItem.patchedContent = matchedItem.content;
+                        newFrozenSequence.push(frozenItem); 
+                        const patchMsg = createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(frozenItem.content, 20)}" 实际上已发生改变，最新情况为："${matchedItem.content}"]`}, 'SYS');
+                        patchMsg.isTimeSpacePatch = true; // 🚀 賦予永久駐留權
+                        timeSpacePatches.push(patchMsg);
                         incomingPool.splice(bestIdx, 1);
                         if (!isDryRun) Logger.debug(`[🧠 智慧无痕修补] 拦截了历史修改，已自动生成底部修正补丁，流失率降为 0%。`);
                     } else if (Settings.historyEditMode === 2) {
+                        frozenItem.patchedContent = matchedItem.content;
                         newFrozenSequence.push(frozenItem); 
                         incomingPool.splice(bestIdx, 1);
                         if (!isDryRun) Logger.debug(`[🛡️ 幻象隐藏] 拦截了历史修改，强行使用旧版以保住 100% 缓存。`);
@@ -1074,15 +1075,22 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             } else {
                 // 找不到匹配 (被刪除)
                 if (frozenItem.tag === 'SYS') {
-                    if (Settings.lorebookSink) {
-                        newFrozenSequence.push(frozenItem); // 幽靈錨點：保留已失效的世界書
-                        if (!isDryRun) Logger.debug(`[👻 世界书幽灵锚点] 发现不再触发的旧设定，已将其永久冻结在历史中以保住 100% 缓存: ${truncateLog(frozenItem.content)}`);
+                    // 🚀 致命 Bug 修復：時空補丁無視 Lorebook Sink 永久駐留
+                    if (Settings.lorebookSink || frozenItem.isTimeSpacePatch) {
+                        newFrozenSequence.push(frozenItem); 
+                        if (!isDryRun && !frozenItem.isTimeSpacePatch) Logger.debug(`[👻 世界书幽灵锚点] 发现不再触发的旧设定，已将其永久冻结在历史中以保住 100% 缓存: ${truncateLog(frozenItem.content)}`);
                     }
                 } else {
-                    if (Settings.smartAutoPatch || Settings.retconProtocol) {
-                        const patchedNode = { ...frozenItem, isPatched: true };
-                        newFrozenSequence.push(patchedNode);
-                        timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS'));
+                    if (frozenItem.isErased) {
+                        // 🚀 完美吸收：已經抹除過的內容，靜默保留原位，不生成新補丁
+                        newFrozenSequence.push(frozenItem);
+                    } else if (Settings.smartAutoPatch || Settings.retconProtocol) {
+                        frozenItem.isPatched = true;
+                        frozenItem.isErased = true;
+                        newFrozenSequence.push(frozenItem);
+                        const patchMsg = createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS');
+                        patchMsg.isTimeSpacePatch = true; // 🚀 賦予永久駐留權
+                        timeSpacePatches.push(patchMsg);
                         if (!isDryRun) Logger.debug(`[🧠 智慧无痕修补] 拦截了历史删除，已自动生成底部抹除声明，流失率降为 0%。`);
                     }
                 }
@@ -1101,7 +1109,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         // 3. 處理 IncomingPool 中的剩餘物 (The "New" stuff)
-        // 🚀 Req 13: 嚴格分類。上一回合的 AI 回覆會在這裡被識別為 newHistory。
         let newHistory = [];
         let newSystems = [];
         let dynamicSink = [];
@@ -1115,11 +1122,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 const isTimeSkip = Settings.chronosProtocol && item.content && item.content.length < 150 && /(later|next day|第二天|几个小时后|一段时间后|meanwhile|之后|随后|时光飞逝|转眼间)/i.test(item.content);
                 
                 if (isTimeSkip) {
-                    timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：叙事过渡。${item.content}]`}, 'SYS'));
-                } else if (isSummary || isVector || Settings.dynamicMode === 2 || Settings.dynamicMode === 1 || isDynamicPrompt(item)) {
+                    const patchMsg = createMsg({role: 'system', content: `[系统提示：叙事过渡。${item.content}]`}, 'SYS');
+                    patchMsg.isTimeSpacePatch = true;
+                    timeSpacePatches.push(patchMsg);
+                } else if (isSummary || isVector || item.isDynamicUpdate || isDynamicPrompt(item)) { 
                     dynamicSink.push(item);
                 } else {
-                    newSystems.push(item);
+                    newSystems.push(item); 
                 }
             } else {
                 newHistory.push(item);
@@ -1127,7 +1136,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         // 4. 嚴格附加 (Strict Append) 構建最終陣列
-        // 🚀 Req 13 順序：Base -> New History (含上一回合AI回覆) -> New Systems (新世界書) -> Dynamic Sink -> Patches
         for (const h of newHistory) {
             newFrozenSequence.push(h);
             if (!isDryRun) Logger.debug(`[追加至尾部] 新历史节点: ${truncateLog(h.content)}`);
@@ -1166,13 +1174,17 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
-        // 🚀 Req 4: 增強日誌輸出，精確顯示最終陣列
+        // 🚀 Req 4: 增強日誌輸出，精確顯示最終陣列的結構透視
         if (Settings.logLevel >= LogLevels.DEBUG && !isDryRun) {
             Logger.debug(`[最终排序发送阵列] 总节点数: ${proposedStream.length}`);
-            proposedStream.forEach((m, idx) => {
-                const tokenEst = Math.floor((m.content?.length || 0) / 3.5);
-                Logger.trace(`  [${idx}] ${m.role} [${m.tag}] (~${tokenEst} Tokens): ${truncateLog(m.content, 40)}`);
-            });
+            if (Settings.logLevel >= LogLevels.TRACE) {
+                let logStr = "--- 阵列结构透视 ---\n";
+                proposedStream.forEach((m, idx) => {
+                    const tokenEst = Math.floor((m.content?.length || 0) / 3.5);
+                    logStr += `[${idx}] ${m.role} [${m.tag}] (~${tokenEst}T): ${truncateLog(m.content, 30)}\n`;
+                });
+                Logger.trace(logStr);
+            }
         }
 
         // ==========================================
@@ -1226,8 +1238,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             
             dropPercentStr = (recomputeRatio * 100).toFixed(1);
 
-            // 🚀 Req 12: 真正的智慧降噪 (Post-Patch Evaluation)
-            // 只有當「無法修補的真實斷裂」導致重算 Token > 500 時，才彈窗警告。
             if (recomputeRatio >= 0.10 && recomputeTokens > 500 && Settings.showResetPrompt && !justSetDynamicMode && !isTailEndMutation && !sessionSnoozeReset) {
                 requireResetConfirm = true;
                 
@@ -1325,14 +1335,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         if (decision === 'accept') {
-            // 🚀 Req 13: 儲存新的 Base Sequence (不包含 Current User/Prefill)
-            // 這樣下一回合，Current User/Prefill 就會變成 "New History" 被 Append！
-            // 🚀 核心修復：絕對不能刪除 cleanStr 和 cleanLen，否則下一回合會崩潰！
+            // 🚀 核心修復：絕對保留神聖屬性，只刪除臨時標籤
             state.frozenSequence = dedupedSequence.map(n => {
                 const clean = {...n};
-                delete clean.isPhantom;
-                delete clean.isPatched;
-                delete clean.originalContent;
+                delete clean.isDynamicUpdate; 
                 return clean;
             });
             state.lastPrefills = currentTurn.prefills;
@@ -1349,6 +1355,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 if (state.multiverse.length > 5) state.multiverse.pop();
             }
 
+            Settings.stats.intercepted = (Settings.stats.intercepted || 0) + 1;
+            Settings.stats.tokensSaved = (Settings.stats.tokensSaved || 0) + preservedTokens;
+
             safeSave();
 
             if (Settings.autoPinThreshold > 0 && finalStream.length >= Settings.autoPinThreshold) {
@@ -1361,6 +1370,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
             Logger.log(`✅ 排序完成，拦截器授权发送。耗时: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
+            
+            $('#ds-stat-intercepts').text(Settings.stats.intercepted);
+            $('#ds-stat-tokens').text(formatNumber(Settings.stats.tokensSaved));
         }
 
     } catch (err) {
@@ -1372,7 +1384,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 6.0 (Req 10, 11)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 7.0 (Req 10, 11)
 // ==========================================
 let omniRenderTimeout = null;
 let isOmniCollapsed = false;
@@ -1390,7 +1402,7 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒 6.0</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒 7.0</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="$('#ds-omni-modal-wrapper').remove();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
@@ -1428,19 +1440,17 @@ async function showOmniVisionUI() {
                 </div>
 
                 <div class="ds-omni-body">
-                    <!-- 🚀 Req 11: 明確的左右對比說明 -->
                     <div class="ds-omni-pane" style="flex: 0 0 48%;">
                         <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> [左侧] 历史观测 (上一次真实发送给 AI 的阵列)</span>
+                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> [左侧] 上一次真实发送 (已冻结的完美快取)</span>
                         </div>
                     </div>
                     <div class="ds-omni-pane" style="flex: 0 0 48%; margin-left: auto; margin-right: 20px;">
                         <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> [右侧] 量子预测 (当前设定下，下一次将发送的预览阵列)</span>
+                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> [右侧] 本次即将发送 (量子沙盒预测)</span>
                         </div>
                     </div>
                     
-                    <!-- 🚀 Req 10: 全域快取雷達 Minimap -->
                     <div id="omni-minimap" class="ds-minimap-container" title="全域快取雷达 (点击跳转)"></div>
                     
                     <div id="omni-dual-scroll" class="ds-scroll ds-strict-contain" style="position:absolute; top:45px; left:0; right:20px; bottom:0; overflow-y:auto; padding:15px;">
@@ -1520,7 +1530,6 @@ async function renderOmniVision(state) {
     let preservedTokens = 0;
     let recomputeTokens = 0;
 
-    // 🚀 Req 10: 嚴格的 try...catch 保護，防止卡加載
     try {
         if (state.lastRawStream && state.lastRawStream.length > 0) {
             const dryRunResult = await interceptAndRestructurePrompt({ chat: JSON.parse(JSON.stringify(state.lastRawStream)) }, true);
@@ -1572,7 +1581,7 @@ async function renderOmniVision(state) {
             else if (rightNode.isPatched) row.status = 'patch';
             else row.status = 'hit';
             l++; r++;
-        } else if (leftNode && (!rightNode || !rightArray.slice(r, r+5).some(n => n.hash === leftNode.hash))) {
+        } else if (leftNode && (!rightNode || !rightArray.slice(r, r+20).some(n => n.hash === leftNode.hash))) {
             row.left = leftNode;
             row.status = 'miss';
             l++;
@@ -1620,13 +1629,17 @@ async function renderOmniVision(state) {
             if (row.status === 'hit') minimapColor = 'var(--ds-green)';
             else if (row.status === 'phantom') minimapColor = 'var(--ds-yellow)';
             else if (row.status === 'patch') minimapColor = 'var(--ds-purple)';
-            else if (row.status === 'miss') minimapColor = 'var(--ds-cyan)'; // Append
+            else if (row.status === 'miss') minimapColor = 'var(--ds-cyan)'; 
 
             let contentToShow = escapeHtml(row.right.content).replace(/\n/g, '<br>');
-            if (row.right.isPhantom && row.right.originalContent) {
+            
+            // 🚀 視覺強化：明確標示出底層的特殊神聖狀態
+            if (row.right.isTimeSpacePatch) {
+                contentToShow = `<div style="color:var(--ds-purple); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(198,120,221,0.3); padding-bottom:5px;">[时空修正补丁: 永久驻留]</div>` + contentToShow;
+            } else if (row.right.isPhantom && row.right.originalContent) {
                 contentToShow = `<div style="color:var(--ds-yellow); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(229,192,123,0.3); padding-bottom:5px;">[幻影同步: 强制发送旧版]</div>` + escapeHtml(row.right.originalContent).replace(/\n/g, '<br>');
             } else if (row.right.isPatched) {
-                contentToShow = `<div style="color:var(--ds-purple); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(198,120,221,0.3); padding-bottom:5px;">[智慧修补: 强制保留原位]</div>` + contentToShow;
+                contentToShow = `<div style="color:var(--ds-purple); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(198,120,221,0.3); padding-bottom:5px;">[智慧修补: 强制保留原位 (AI将看到旧版, 底部已加补丁)]</div>` + contentToShow;
             } else if (row.status === 'miss') {
                 contentToShow = `<div style="color:var(--ds-cyan); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(0,229,255,0.3); padding-bottom:5px;">[追加事件: 附加于尾部]</div>` + contentToShow;
             }
@@ -1646,7 +1659,6 @@ async function renderOmniVision(state) {
         el.innerHTML = `${leftHtml}${rightHtml}`;
         frag.appendChild(el);
 
-        // 構建 Minimap
         const mapSeg = document.createElement('div');
         mapSeg.className = 'ds-minimap-segment';
         mapSeg.style.flex = '1';
@@ -1875,15 +1887,28 @@ function applyOneClickOptimize() {
 
 async function setupUI() {
     try {
+        if ($('#ds-v52-opt-drawer').length > 0) return;
+
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v51-opt-drawer">
+        <div class="inline-drawer" id="ds-v52-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v51)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v52 全知矩阵版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
                 
+                <div style="display:flex; gap:10px; margin-bottom:15px;">
+                    <div style="flex:1; background:rgba(152,195,121,0.1); border:1px solid rgba(152,195,121,0.3); padding:10px; border-radius:8px; text-align:center; box-shadow: inset 0 0 10px rgba(0,0,0,0.5);">
+                        <div id="ds-stat-intercepts" style="font-size:20px; font-weight:bold; color:var(--ds-green); font-family: monospace;">${Settings.stats.intercepted}</div>
+                        <div style="font-size:11px; color:#abb2bf; margin-top:4px;"><i class="fa-solid fa-shield-halved"></i> 总拦截次数</div>
+                    </div>
+                    <div style="flex:1; background:rgba(0,229,255,0.1); border:1px solid rgba(0,229,255,0.3); padding:10px; border-radius:8px; text-align:center; box-shadow: inset 0 0 10px rgba(0,0,0,0.5);">
+                        <div id="ds-stat-tokens" style="font-size:20px; font-weight:bold; color:var(--ds-cyan); font-family: monospace;">${formatNumber(Settings.stats.tokensSaved)}</div>
+                        <div style="font-size:11px; color:#abb2bf; margin-top:4px;"><i class="fa-solid fa-coins"></i> 累计拯救 Tokens</div>
+                    </div>
+                </div>
+
                 <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 全视之眼沙盒 (即时预览)</button>
                 <button id="ds-btn-one-click" class="ds-btn ds-btn-magic"><i class="fa-solid fa-wand-magic-sparkles"></i> 🌟 一键套用 DeepSeek 100% 缓存最佳设定</button>
 
@@ -2425,7 +2450,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v51_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v52_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2481,7 +2506,10 @@ jQuery(async () => {
         setTimeout(() => { ensureTopMenuButton(); }, 2000);
         addResetMenuEntry(); 
         
-        if (eventSource) {
+        // 🚀 致命 Bug 修復：全域事件監聽器防重複綁定守衛
+        if (eventSource && !window.dsCacheInitialized) {
+            window.dsCacheInitialized = true;
+            
             eventSource.on(event_types.CHAT_CHANGED, () => { 
                 ensureTopMenuButton(); 
                 renderChatsUI(); 
@@ -2498,7 +2526,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v51 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v52 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
