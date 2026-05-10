@@ -1,5 +1,5 @@
 {
-  "display_name": "DeepSeek 优化缓存命中",
+  "display_name": "DeepSeek 缓存优化器",
   "loading_order": 200,
   "requires": [],
   "optional": [],
