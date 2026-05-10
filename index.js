@@ -93,9 +93,9 @@ const injectCSS = () => {
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v30 || extension_settings.ds_cache_v29 || {};
-    if (!extension_settings.ds_cache_v31) {
-        extension_settings.ds_cache_v31 = {
+    const oldSettings = extension_settings.ds_cache_v31 || extension_settings.ds_cache_v30 || {};
+    if (!extension_settings.ds_cache_v32) {
+        extension_settings.ds_cache_v32 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -111,7 +111,7 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v31;
+    Settings = extension_settings.ds_cache_v32;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -119,7 +119,7 @@ function initSettings() {
 function safeSave() {
     try { 
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v31_snapshot', JSON.stringify(Settings));
+        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v32_snapshot', JSON.stringify(Settings));
     } 
     catch (e) {}
 }
@@ -692,49 +692,16 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         // ---------------------------------------------------------
-        // 階段 2：原位更新與同步邏輯 (支援快照歸檔)
+        // 階段 2：原位更新與同步邏輯 (支援快照歸檔與時序修正)
         // ---------------------------------------------------------
         let dynamicPromptsToSink = [];
+        let oldSnapshotsToMove = [];
+        let hasSeenHistory = false;
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const item = state.frozenSequence[i];
-            if (item.tag === 'SYS') {
-                let bestIdx = -1, bestScore = 0;
-                for (let j = 0; j < sysPool.length; j++) {
-                    const score = getSimilarity(item.norm, sysPool[j].norm);
-                    if (score > bestScore) { bestScore = score; bestIdx = j; }
-                }
-                if (bestScore === 1) { 
-                    newFrozenSequence.push(sysPool[bestIdx]); 
-                    Logger.debug(`[绝对冻结] 提示词: ${truncateLog(sysPool[bestIdx].content)}`);
-                    sysPool.splice(bestIdx, 1); 
-                } else if (bestScore > thresholds.sys) {
-                    const matchedItem = sysPool[bestIdx];
-
-                    if (Settings.dynamicMode === 1) { 
-                        newFrozenSequence.push(item);
-                        Logger.debug(`[动态提示词-快照归档] 冻结历史快照: ${truncateLog(item.content)}`);
-                    } else {
-                        sysPool.splice(bestIdx, 1);
-
-                        if (Settings.dynamicMode === 2) { 
-                            dynamicPromptsToSink.push(matchedItem);
-                            Logger.debug(`[动态提示词-沉底锚定] 已抽离并准备移至尾部: ${truncateLog(matchedItem.content)}`);
-                        } else if (Settings.dynamicMode === 3) { 
-                            newFrozenSequence.push(item);
-                            Logger.debug(`[动态提示词-智能忽略] 强制冻结旧版: ${truncateLog(item.content)}`);
-                        } else if (Settings.dynamicMode === 4) { 
-                            newFrozenSequence.push(matchedItem);
-                            Logger.debug(`[动态提示词-原位更新] -> ${truncateLog(matchedItem.content)}`);
-                        } else if (Settings.dynamicMode === 5) { 
-                            Logger.debug(`[动态提示词-彻底删除] 已移除: ${truncateLog(item.content)}`);
-                        }
-                    }
-                } else {
-                    Logger.debug(`[原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
-                }
-            } 
-            else if (item.tag === 'USER' || item.tag === 'AI') {
+            if (item.tag === 'USER' || item.tag === 'AI') {
+                hasSeenHistory = true;
                 let bestIdx = -1, bestScore = 0;
                 for (let j = 0; j < remainingHistory.length; j++) {
                     if (item.tag !== remainingHistory[j].tag) continue;
@@ -753,7 +720,59 @@ async function interceptAndRestructurePrompt(data) {
                 } else {
                     Logger.debug(`[原位删除] 找不到旧对话，已移除: ${truncateLog(item.content)}`);
                 }
+            } 
+            else if (item.tag === 'SYS') {
+                let bestIdx = -1, bestScore = 0;
+                for (let j = 0; j < sysPool.length; j++) {
+                    const score = getSimilarity(item.norm, sysPool[j].norm);
+                    if (score > bestScore) { bestScore = score; bestIdx = j; }
+                }
+                if (bestScore === 1) { 
+                    newFrozenSequence.push(sysPool[bestIdx]); 
+                    Logger.debug(`[绝对冻结] 提示词: ${truncateLog(sysPool[bestIdx].content)}`);
+                    sysPool.splice(bestIdx, 1); 
+                } else if (bestScore > thresholds.sys) {
+                    const matchedItem = sysPool[bestIdx];
+
+                    if (Settings.dynamicMode === 1) { 
+                        if (!hasSeenHistory) {
+                            oldSnapshotsToMove.push(item);
+                            Logger.debug(`[动态提示词-快照归档] 发现置顶快照，准备下沉至旧历史尾部: ${truncateLog(item.content)}`);
+                        } else {
+                            newFrozenSequence.push(item);
+                            Logger.debug(`[动态提示词-快照归档] 冻结历史快照: ${truncateLog(item.content)}`);
+                        }
+                    } else {
+                        sysPool.splice(bestIdx, 1);
+
+                        if (Settings.dynamicMode === 2) { 
+                            dynamicPromptsToSink.push(matchedItem);
+                            Logger.debug(`[动态提示词-沉底锚定] 已抽离并准备移至尾部: ${truncateLog(matchedItem.content)}`);
+                        } else if (Settings.dynamicMode === 3) { 
+                            if (!hasSeenHistory) {
+                                oldSnapshotsToMove.push(item);
+                                Logger.debug(`[动态提示词-智能忽略] 发现置顶旧版，准备下沉至旧历史尾部: ${truncateLog(item.content)}`);
+                            } else {
+                                newFrozenSequence.push(item);
+                                Logger.debug(`[动态提示词-智能忽略] 强制冻结旧版: ${truncateLog(item.content)}`);
+                            }
+                        } else if (Settings.dynamicMode === 4) { 
+                            newFrozenSequence.push(matchedItem);
+                            Logger.debug(`[动态提示词-原位更新] -> ${truncateLog(matchedItem.content)}`);
+                        } else if (Settings.dynamicMode === 5) { 
+                            Logger.debug(`[动态提示词-彻底删除] 已移除: ${truncateLog(item.content)}`);
+                        }
+                    }
+                } else {
+                    Logger.debug(`[原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
+                }
             }
+        }
+
+        // 將置頂的舊快照下沉到舊歷史的尾部，完美還原時間流逝感
+        for (let snap of oldSnapshotsToMove) {
+            newFrozenSequence.push(snap);
+            Logger.debug(`[动态提示词-时序修正] 已将置顶旧提示词下沉至旧历史尾部: ${truncateLog(snap.content)}`);
         }
 
         // ---------------------------------------------------------
@@ -836,7 +855,14 @@ async function interceptAndRestructurePrompt(data) {
             }
 
             let totalLen = preservedLen + recomputeLen;
-            let recomputeRatio = totalLen === 0 ? 0 : (recomputeLen / totalLen);
+            let recomputeRatio = 0;
+            
+            // 修復：如果完美在尾部追加，流失率絕對為 0，徹底解決不斷彈窗的問題
+            if (breakIndex === L.length) {
+                recomputeRatio = 0; 
+            } else {
+                recomputeRatio = totalLen === 0 ? 0 : (recomputeLen / totalLen);
+            }
             
             if (recomputeRatio >= 0.10 && Settings.showResetPrompt && !justSetDynamicMode) {
                 requireResetConfirm = true;
@@ -1042,7 +1068,7 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v31-opt-drawer">
+        <div class="inline-drawer" id="ds-v32-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b><span class="fa-solid fa-microchip"></span> DeepSeek 缓存优化器</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
@@ -1233,7 +1259,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v31_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v32_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("备份文件已导出！");
         });
@@ -1270,7 +1296,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ DeepSeek 缓存优化器 v31 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ DeepSeek 缓存优化器 v32 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
