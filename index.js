@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (全強制水平排版與小白友善模組化)
+// 1. 樣式注入
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -76,7 +76,7 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態設定
+// 2. 狀態與基礎設定
 // ==========================================
 let Settings = {};
 
@@ -107,8 +107,7 @@ function safeSave() {
     try { 
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
         if (Math.random() < 0.1) localStorage.setItem('ds_cache_v24_snapshot', JSON.stringify(Settings));
-    } 
-    catch (e) {}
+    } catch (e) {}
 }
 
 function getTolerance() {
@@ -126,7 +125,7 @@ function triggerWarningImmediate(key, msg, isEnabled) {
         if (Settings.zenMode) {
             Logger.log(`[免打扰模式] 已隐藏通知: ${msg}`, LogLevels.BASIC);
         } else {
-            if (typeof toastr !== 'undefined') toastr.warning(msg, '💡 DeepSeek 缓存提示', { timeOut: 3000 });
+            if (typeof toastr !== 'undefined') toastr.warning(msg, '💡 缓存优化器', { timeOut: 3000 });
         }
     }
 }
@@ -170,7 +169,7 @@ function performGarbageCollection() {
 }
 
 // ==========================================
-// 3. 醫療級日誌系統 (小白友善)
+// 3. 醫療級日誌系統 
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
@@ -221,17 +220,12 @@ function logAt(level, type, msg) {
         const line = document.createElement('div');
         line.className = 'ds-log-line';
         line.setAttribute('data-type', type === 'divider' ? 'info' : type);
+        if (type === 'divider') line.innerHTML = `<span class="ds-log-divider">${msg}</span>`;
+        else line.innerHTML = `<span class="ds-log-time">[${time}]</span> <span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
         
-        if (type === 'divider') {
-            line.innerHTML = `<span class="ds-log-divider">${msg}</span>`;
-        } else {
-            line.innerHTML = `<span class="ds-log-time">[${time}]</span> <span class="ds-log-${type}">${msg.replace(/\n/g, '<br>')}</span>`;
-        }
         container.appendChild(line);
-        
         const activeFilter = $('.ds-log-filter.active').data('filter') || 'all';
         if (activeFilter !== 'all' && activeFilter !== type && type !== 'divider') line.classList.add('hide');
-
         while (container.childNodes.length > 500) container.removeChild(container.firstChild);
         container.scrollTop = container.scrollHeight;
     }
@@ -248,7 +242,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理與擴充選單
+// 4. 狀態管理與強制選單注入
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -264,7 +258,7 @@ function getChatKey() {
 
 function getChatState(chatKeyInfo) {
     if (!Settings.chats[chatKeyInfo.key]) {
-        Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, frozenSequence: [], lastSentSequence: [], lastPrefills: [], lastAccessed: Date.now() };
+        Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, frozenSequence: [], lastSentSequence: [], lastAccessed: Date.now() };
         safeSave(); renderChatsUI();
     } else {
         Settings.chats[chatKeyInfo.key].lastAccessed = Date.now();
@@ -286,7 +280,7 @@ function ensureTopMenuButton() {
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
             safeSave(); updateTopBarState();
-            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "缓存优化已开启" : "缓存优化已关闭", "DeepSeek");
+            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "缓存优化已开启" : "缓存优化已关闭", "优化器");
         });
         btn.on('contextmenu', (e) => { e.preventDefault(); resetCurrentCache(); });
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
@@ -296,16 +290,19 @@ function ensureTopMenuButton() {
 }
 
 function ensureBottomLeftMenuButton() {
-    if ($('#extensions_menu').length > 0 && $('#ds-bottom-reset-btn').length === 0) {
+    const menu = $('#extensions_menu');
+    if (menu.length > 0 && $('#ds-bottom-reset-btn').length === 0) {
         const btn = $(`
             <li id="ds-bottom-reset-btn" class="menu_button interactable" title="如果您觉得对话逻辑乱了，点击清空当前聊天的缓存让AI重新阅读">
-                <span class="fa-solid fa-broom" style="color: #e06c75;"></span> 重置当前对话的缓存
+                <span class="fa-solid fa-broom" style="color: #e06c75;"></span> 重置当前对话缓存
             </li>
         `);
-        btn.on('click', () => { resetCurrentCache(); if ($('#extensions_menu').hasClass('open')) $('#extensions_menu').removeClass('open').hide(); });
-        $('#extensions_menu').append(btn);
+        btn.on('click', () => { resetCurrentCache(); if (menu.hasClass('open')) menu.removeClass('open').hide(); });
+        menu.append(btn);
     }
 }
+// 高頻心跳檢測：確保按鈕不會被 ST 主題或動態刷新吃掉
+setInterval(ensureBottomLeftMenuButton, 1500);
 
 function resetCurrentCache() {
     if(!confirm("确定要清空当前对话的缓存吗？\n(这会让AI重新阅读整个对话，适合在觉得AI逻辑混乱时使用)")) return;
@@ -325,17 +322,13 @@ function setupGlobalHotkeys() {
         
         if (e.ctrlKey && e.altKey) {
             if (e.key.toLowerCase() === 'c') {
-                e.preventDefault();
-                Settings.enabled = !Settings.enabled;
-                $('#ds-cache-enable').prop('checked', Settings.enabled);
+                e.preventDefault(); Settings.enabled = !Settings.enabled; $('#ds-cache-enable').prop('checked', Settings.enabled);
                 safeSave(); updateTopBarState();
                 if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "已开启" : "已关闭", "快捷键");
             }
             if (e.key.toLowerCase() === 'r') { e.preventDefault(); resetCurrentCache(); }
             if (e.key.toLowerCase() === 'z') { 
-                e.preventDefault(); 
-                Settings.zenMode = !Settings.zenMode; 
-                $('#ds-cache-zen').prop('checked', Settings.zenMode);
+                e.preventDefault(); Settings.zenMode = !Settings.zenMode; $('#ds-cache-zen').prop('checked', Settings.zenMode);
                 safeSave(); updateTopBarState(); 
                 if(typeof toastr !== 'undefined') toastr.info(Settings.zenMode ? "免打扰已开启" : "免打扰已关闭", "快捷键");
             }
@@ -344,7 +337,7 @@ function setupGlobalHotkeys() {
 }
 
 // ==========================================
-// 5. 核心邏輯工具
+// 5. 核心邏輯工具與陣列平坦化解析
 // ==========================================
 function createMsg(msg, tag) {
     const content = msg.content || '';
@@ -365,21 +358,7 @@ function getSimilarity(str1, str2) {
     return union <= 0 ? 1 : matchCount / union;
 }
 
-function stripPrefillFromAssistant(assistantObj, prefills) {
-    if (!assistantObj || !prefills || prefills.length === 0) return assistantObj;
-    let content = assistantObj.content || '';
-    let modified = false;
-    for (const p of prefills) {
-        const pContent = p.content || '';
-        if (content.startsWith(pContent)) { content = content.substring(pContent.length); modified = true; }
-    }
-    if (modified) {
-        content = content.replace(/^[\s\n]+/, ''); 
-        return { ...assistantObj, content: content, norm: Logger.normalize(content), len: content.length };
-    }
-    return assistantObj;
-}
-
+// 重構：將 ST 陣列完美展平，直接反映最原始的歷史對話順序 (不再分割 prefill 破壞原意)
 function parseSTStream(stream) {
     const sysMsgs = []; const chatMsgs = [];
     for (const msg of stream) {
@@ -404,74 +383,23 @@ function parseSTStream(stream) {
         let curUser = null; let curAiContents = [];
         for (const msg of hMsgs) {
             if (msg.tag === 'USER') {
-                if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
+                if (curUser) {
+                    historyTurns.push(curUser);
+                    if (curAiContents.length) historyTurns.push(createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI'));
+                }
                 curUser = msg; curAiContents = [];
             } else if (msg.tag === 'AI') curAiContents.push(msg.content);
         }
-        if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
+        if (curUser) {
+            historyTurns.push(curUser);
+            if (curAiContents.length) historyTurns.push(createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI'));
+        }
     }
     return { sysMsgs, historyTurns, currentTurn };
 }
 
-// 核心：序列位置對齊演算法 (Positional Sequence Alignment)
-function alignArrays(oldArr, newArr, threshold) {
-    const mapping = new Array(oldArr.length).fill(-1);
-    const usedNew = new Array(newArr.length).fill(false);
-
-    // 1. 完全一致匹配
-    for (let i = 0; i < oldArr.length; i++) {
-        for (let j = 0; j < newArr.length; j++) {
-            if (!usedNew[j] && oldArr[i].norm === newArr[j].norm) {
-                mapping[i] = j; usedNew[j] = true; break;
-            }
-        }
-    }
-
-    // 2. 高相似度匹配
-    for (let i = 0; i < oldArr.length; i++) {
-        if (mapping[i] !== -1) continue;
-        let bestIdx = -1, bestScore = 0;
-        for (let j = 0; j < newArr.length; j++) {
-            if (!usedNew[j]) {
-                const score = getSimilarity(oldArr[i].norm, newArr[j].norm);
-                if (score > bestScore) { bestScore = score; bestIdx = j; }
-            }
-        }
-        if (bestScore > threshold) {
-            mapping[i] = bestIdx; usedNew[bestIdx] = true;
-        }
-    }
-
-    // 3. 位置推斷 (三明治夾心映射：專門處理徹底修改的文本)
-    for (let i = 0; i < oldArr.length; i++) {
-        if (mapping[i] !== -1) continue;
-        
-        let prevMappedNewIdx = -1;
-        for (let k = i - 1; k >= 0; k--) {
-            if (mapping[k] !== -1) { prevMappedNewIdx = mapping[k]; break; }
-        }
-        
-        let nextMappedNewIdx = newArr.length;
-        for (let k = i + 1; k < oldArr.length; k++) {
-            if (mapping[k] !== -1) { nextMappedNewIdx = mapping[k]; break; }
-        }
-
-        const candidates = [];
-        for (let j = Math.max(0, prevMappedNewIdx + 1); j < nextMappedNewIdx; j++) {
-            if (!usedNew[j]) candidates.push(j);
-        }
-
-        // 只要這段區間還有未匹配的新對象，就將原位置指向它（實現原地內容替換）
-        if (candidates.length > 0) {
-            mapping[i] = candidates[0]; usedNew[candidates[0]] = true;
-        }
-    }
-    
-    return { mapping, usedNew };
-}
-
 // ==========================================
-// 6. 現代化攔截器 UI
+// 6. 現代化攔截器 UI 
 // ==========================================
 function askUserForResetAsync(dropPercent, mapInfo) {
     return new Promise(resolve => {
@@ -518,7 +446,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
 }
 
 // ==========================================
-// 7. 核心時序處理器 (全新對齊引擎)
+// 7. 終極修復版時序處理器 (In-Place Sync & Strict Order)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -538,67 +466,75 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         const { sysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
-        const flatHistoryPool = [];
-        for(let t of historyTurns) {
-            flatHistoryPool.push(t.user);
-            if(t.assistant) flatHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
-        }
-
-        const oldSys = state.frozenSequence.filter(m => m.tag === 'SYS');
-        const oldHis = state.frozenSequence.filter(m => m.tag === 'USER' || m.tag === 'AI');
-        const newSys = [...sysMsgs];
-        const newHis = [...flatHistoryPool];
-        const thresholds = getTolerance();
-
-        // 執行序列位置對齊
-        const sysAlign = alignArrays(oldSys, newSys, thresholds.sys);
-        const hisAlign = alignArrays(oldHis, newHis, thresholds.his);
 
         let rawFrozenSequence = [];
-        let oldSysIdx = 0;
-        let oldHisIdx = 0;
-
-        // 1. 原位更新或補位 (嚴格保持凍結排序)
+        const sysMsgsPool = [...sysMsgs];
+        const remainingHistory = [...historyTurns];
+        const thresholds = getTolerance();
+        
+        // 核心原位比對與同步邏輯
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const item = state.frozenSequence[i];
+            
             if (item.tag === 'SYS') {
-                const mappedTo = sysAlign.mapping[oldSysIdx];
-                if (mappedTo !== -1) {
-                    rawFrozenSequence.push(newSys[mappedTo]);
-                    if (item.norm !== newSys[mappedTo].norm) Logger.debug(`[SYS 原位更新] 旧: ${truncateLog(item.content, 20)} -> 新: ${truncateLog(newSys[mappedTo].content, 20)}`);
-                    else Logger.debug(`[SYS 冻结] ${truncateLog(item.content, 30)}`);
-                } else {
-                    Logger.debug(`[SYS 删除补位] ${truncateLog(item.content, 30)}`);
+                let bestIdx = -1, bestScore = 0;
+                for (let j = 0; j < sysMsgsPool.length; j++) {
+                    const score = getSimilarity(item.norm, sysMsgsPool[j].norm);
+                    if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
-                oldSysIdx++;
-            } else if (item.tag === 'USER' || item.tag === 'AI') {
-                const mappedTo = hisAlign.mapping[oldHisIdx];
-                if (mappedTo !== -1) {
-                    rawFrozenSequence.push(newHis[mappedTo]);
-                    if (item.norm !== newHis[mappedTo].norm) Logger.debug(`[HIS 原位更新] 旧: ${truncateLog(item.content, 20)} -> 新: ${truncateLog(newHis[mappedTo].content, 20)}`);
-                    else Logger.debug(`[HIS 冻结] ${truncateLog(item.content, 30)}`);
+                if (bestScore === 1) { 
+                    rawFrozenSequence.push(sysMsgsPool[bestIdx]); 
+                    sysMsgsPool.splice(bestIdx, 1); 
+                    Logger.debug(`[原位保留] 提示词: ${truncateLog(item.content)}`);
+                } else if (bestScore > thresholds.sys) {
+                    const matchedItem = sysMsgsPool[bestIdx];
+                    rawFrozenSequence.push(matchedItem); 
+                    sysMsgsPool.splice(bestIdx, 1);
+                    Logger.debug(`[原位更新] 提示词 (相似度 ${(bestScore*100).toFixed(1)}%): -> ${truncateLog(matchedItem.content, 20)}`);
                 } else {
-                    Logger.debug(`[HIS 删除补位] ${truncateLog(item.content, 30)}`);
+                    Logger.debug(`[原位删除] 提示词已被移除: ${truncateLog(item.content)}`);
                 }
-                oldHisIdx++;
+            } 
+            else if (item.tag === 'USER' || item.tag === 'AI' || item.tag === 'PREFILL') {
+                let bestIdx = -1, bestScore = 0;
+                for (let j = 0; j < remainingHistory.length; j++) {
+                    const hist = remainingHistory[j];
+                    if (item.tag === 'USER' && hist.tag !== 'USER') continue;
+                    if ((item.tag === 'AI' || item.tag === 'PREFILL') && hist.tag !== 'AI') continue;
+
+                    let score = 0;
+                    if (item.tag === 'PREFILL' && hist.content.startsWith(item.content)) {
+                        score = 1; // 完美匹配：舊的預填充變成了現在完整的 AI 回覆
+                    } else if (item.tag === 'PREFILL') {
+                        score = getSimilarity(item.norm, hist.norm);
+                    } else {
+                        score = getSimilarity(item.norm, hist.norm);
+                    }
+
+                    if (score > bestScore) { bestScore = score; bestIdx = j; }
+                }
+
+                if (bestScore === 1 || bestScore > thresholds.his) {
+                    const matchedHist = remainingHistory[bestIdx];
+                    rawFrozenSequence.push(matchedHist); // 原位繼承為 AI tag，完美過渡
+                    remainingHistory.splice(bestIdx, 1);
+                    Logger.debug(`[原位保留] 历史 ${item.tag}: ${truncateLog(matchedHist.content)}`);
+                } else {
+                    Logger.debug(`[原位删除] 历史已被移除: ${truncateLog(item.content)}`);
+                }
             }
         }
 
-        // 2. 處理新增 (按邏輯排序：新歷史 -> 新設定 -> 當前輸入)
-        for (let j = 0; j < newHis.length; j++) {
-            if (!hisAlign.usedNew[j]) {
-                rawFrozenSequence.push(newHis[j]);
-                Logger.debug(`[HIS 尾部追加] ${truncateLog(newHis[j].content, 30)}`);
-            }
+        // 嚴格排序邏輯：1. 舊凍結 -> 2. 新增的歷史對話 (含上一輪的AI回覆) -> 3. 新增的提示詞/世界書 -> 4. 當前用戶輸入 -> 5. 當前預填充
+        for (let h of remainingHistory) {
+            rawFrozenSequence.push(h);
+            Logger.debug(`[追加] 新历史节点: ${truncateLog(h.content)}`);
         }
-        for (let j = 0; j < newSys.length; j++) {
-            if (!sysAlign.usedNew[j]) {
-                rawFrozenSequence.push(newSys[j]);
-                Logger.debug(`[SYS 尾部追加] ${truncateLog(newSys[j].content, 30)}`);
-            }
+        for (let sys of sysMsgsPool) {
+            rawFrozenSequence.push(sys);
+            Logger.debug(`[追加] 新提示词/世界书: ${truncateLog(sys.content)}`);
         }
 
-        // 3. 去重與組裝
         let dedupedSequence = [];
         const seenSysNorms = new Set();
         for (const item of rawFrozenSequence) {
@@ -614,11 +550,13 @@ async function interceptAndRestructurePrompt(data) {
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
         if (Settings.logLevel >= LogLevels.DEBUG) {
-            Logger.debug(`[准备发送] 重组后总节点数: ${proposedStream.length}`);
+            Logger.debug(`[准备发送] 严格排序后总节点数: ${proposedStream.length}`);
             proposedStream.forEach((m, idx) => Logger.debug(`  [${idx}] ${m.role} (${m.content?.length || 0}字): ${truncateLog(m.content, 40)}`));
         }
 
-        // 計算精確流失率
+        // ==========================================
+        // 精準前綴快取流失率算式
+        // ==========================================
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
         let mapInfoText = "无变更";
@@ -650,11 +588,10 @@ async function interceptAndRestructurePrompt(data) {
                 }
             }
 
-            let preservedLen = 0, recomputeLen = 0;
+            let preservedLen = 0; let recomputeLen = 0;
             for (let i = 0; i < P.length; i++) {
                 let len = P[i].content?.length || 0;
-                if (i < breakIndex) preservedLen += len;
-                else recomputeLen += len;
+                if (i < breakIndex) preservedLen += len; else recomputeLen += len;
             }
 
             let totalLen = preservedLen + recomputeLen;
@@ -675,7 +612,7 @@ async function interceptAndRestructurePrompt(data) {
                 
                 mapInfoText = `
                     <div style="margin-bottom:8px; display:flex; align-items:center; gap:8px;">
-                        <span style="color:#56b6c2;"><i class="fa-solid fa-location-crosshairs"></i> 缓存断层位置:</span> <b>[${breakIndex}]</b> ${tagHtml}
+                        <span style="color:#56b6c2;"><i class="fa-solid fa-location-crosshairs"></i> 缓存断裂点索引:</span> <b>[${breakIndex}]</b> ${tagHtml}
                     </div>
                     <div class="ds-diff-del"><i class="fa-solid fa-minus"></i> 原内容: ${oldContent}...</div>
                     <div class="ds-diff-add"><i class="fa-solid fa-plus"></i> 新内容: ${newContent}...</div>
@@ -724,25 +661,19 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         if (decision === 'accept') {
-            state.frozenSequence = dedupedSequence;
-            state.lastPrefills = currentTurn.prefills;
-
-            const finalStream = [...state.frozenSequence];
-            if (currentTurn.user) finalStream.push(currentTurn.user);
-            for (const p of currentTurn.prefills) finalStream.push(p);
-
-            state.lastSentSequence = finalStream;
+            state.frozenSequence = proposedStream;
+            state.lastSentSequence = proposedStream;
             safeSave();
 
-            if (Settings.autoPinThreshold > 0 && finalStream.length >= Settings.autoPinThreshold) {
+            if (Settings.autoPinThreshold > 0 && proposedStream.length >= Settings.autoPinThreshold) {
                 if (!Settings.pinnedChats[chatKeyInfo.key]) {
                     Settings.pinnedChats[chatKeyInfo.key] = true;
                     safeSave();
-                    Logger.map(`[自动保护] 节点数(${finalStream.length})达标，已锁定当前存档。`);
+                    Logger.map(`[自动保护] 节点数(${proposedStream.length})达标，已锁定当前存档。`);
                 }
             }
 
-            stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
+            stream.splice(0, stream.length, ...proposedStream.map(i => ({ role: i.role, content: i.content })));
             Logger.log(`✅ 排序完成，授权发送。耗时: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
         }
 
@@ -980,38 +911,26 @@ async function setupUI() {
         $('#ds-btn-clearlog').on('click', () => { $('#ds-cache-log-container').empty(); });
 
         $('#ds-btn-export').on('click', () => {
-            const blob = new Blob
-        $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
-            const url = URL.createObjectURL(blob); 
-            const a = document.createElement("a");
+            const url = URL.createObjectURL(blob); const a = document.createElement("a");
             a.href = url; a.download = `DeepSeek_Cache_Backup_v24_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("备份文件已导出！");
         });
-        
         $('#ds-btn-import').on('click', () => $('#ds-file-import').click());
-        
         $('#ds-file-import').on('change', function(e) {
             const f = e.target.files[0]; if(!f) return;
             const r = new FileReader();
             r.onload = (ev) => {
-                try { 
-                    Object.assign(Settings, JSON.parse(ev.target.result)); 
-                    safeSave(); 
-                    renderChatsUI(); 
-                    updateTopBarState(); 
-                    alert("恢复成功！"); 
-                } catch (err) { 
-                    alert("文件格式错误"); 
-                }
+                try { Object.assign(Settings, JSON.parse(ev.target.result)); safeSave(); renderChatsUI(); updateTopBarState(); alert("恢复成功！"); } 
+                catch (err) { alert("文件格式错误"); }
                 e.target.value = '';
             };
             r.readAsText(f);
         });
 
         renderChatsUI();
-    } catch (e) { console.error('[DS Cache] UI初始化崩溃', e); }
+    } catch (e) { console.error('[DS Cache] UI初始化崩潰', e); }
 }
 
 jQuery(async () => {
@@ -1022,35 +941,14 @@ jQuery(async () => {
         
         setTimeout(() => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); }, 2000);
         
-        // 强化观察者：确保原生的 Extensions Menu (魔法棒) 左下角菜单按钮存活
-        const observer = new MutationObserver(() => {
-            if (document.getElementById('extensions_menu') && $('#ds-bottom-reset-btn').length === 0) {
-                ensureBottomLeftMenuButton();
-            }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-        
         if (eventSource) {
-            eventSource.on(event_types.CHAT_CHANGED, () => { 
-                ensureTopMenuButton(); 
-                ensureBottomLeftMenuButton(); 
-                renderChatsUI(); 
-            });
-            
-            if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
-                eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-            }
-            
-            // 仅保留真正对时序造成破坏的历史对话编辑/删除感知
-            if (event_types?.MESSAGE_DELETED) {
-                eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningImmediate('his_del', '您删除了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
-            }
-            if (event_types?.MESSAGE_EDITED) {
-                eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
-            }
+            eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); renderChatsUI(); });
+            if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningImmediate('his_del', '您删除了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ DeepSeek 缓存优化器 (v24 精准对齐版) 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ DeepSeek 缓存优化器 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
