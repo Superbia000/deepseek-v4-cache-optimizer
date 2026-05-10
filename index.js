@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Omni-Vision UI & GPU Acceleration)
+// 1. 樣式注入 (Ultimate Singularity UI)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -13,7 +13,7 @@ const injectCSS = () => {
         
         .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
-        .ds-virtual-list { content-visibility: auto; contain-intrinsic-size: 1px 60px; }
+        .ds-virtual-list { content-visibility: auto; contain-intrinsic-size: 1px 100px; }
         
         .ds-scroll::-webkit-scrollbar { width: 6px; }
         .ds-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
@@ -131,25 +131,39 @@ const injectCSS = () => {
         .ds-health-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.3s, background 0.3s; }
 
-        /* Omni-Vision UI Styles */
-        .ds-omni-modal { max-width: 95vw !important; width: 1600px !important; height: 90vh !important; display: flex; flex-direction: column; padding: 25px !important; }
+        /* Omni-Vision UI Styles (v46 Enhanced) */
+        .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
-        .ds-omni-body { display: flex; gap: 20px; flex: 1; min-height: 0; }
+        .ds-omni-body { display: flex; gap: 15px; flex: 1; min-height: 0; position: relative; }
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); }
         .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
         
-        .ds-node-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; }
-        .ds-node-card:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
-        .ds-node-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.05) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-miss { border-left: 4px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.05) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-warn { border-left: 4px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.05) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; color: #5c6370; border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 4px; }
+        .ds-node-row { display: flex; width: 100%; gap: 15px; margin-bottom: 10px; align-items: stretch; }
+        .ds-node-cell { flex: 1; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; display: flex; flex-direction: column; }
+        .ds-node-cell:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
+        .ds-node-empty { background: transparent; border: 1px dashed rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.2); font-style: italic; }
         
-        .ds-omni-toolbar { display: flex; gap: 10px; padding: 10px 15px; background: rgba(0,0,0,0.5); border-bottom: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
+        .ds-status-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.05) 0%, rgba(0,0,0,0) 100%); }
+        .ds-status-miss { border-left: 4px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.05) 0%, rgba(0,0,0,0) 100%); }
+        .ds-status-patch { border-left: 4px solid var(--ds-purple); background: linear-gradient(90deg, rgba(198,120,221,0.05) 0%, rgba(0,0,0,0) 100%); }
+        .ds-status-phantom { border-left: 4px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.05) 0%, rgba(0,0,0,0) 100%); }
+        
+        .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; color: #5c6370; border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 4px; }
+        .ds-node-text { flex: 1; overflow: hidden; transition: max-height 0.3s ease; }
+        .ds-node-text.ds-collapsed { max-height: 60px; position: relative; }
+        .ds-node-text.ds-collapsed::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 30px; background: linear-gradient(transparent, rgba(30,30,36,0.9)); }
+        
+        .ds-omni-toolbar { display: flex; gap: 10px; padding: 10px 15px; background: rgba(0,0,0,0.5); border-bottom: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; align-items: center; }
         .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 6px; transition: 0.2s; border: 1px solid transparent; }
         .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
         .ds-omni-toggle.active { background: rgba(0,229,255,0.1); color: var(--ds-cyan); border-color: rgba(0,229,255,0.3); }
+
+        .ds-legend { display: flex; gap: 15px; font-size: 11px; padding: 10px 15px; background: rgba(0,0,0,0.3); border-radius: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        .ds-legend-item { display: flex; align-items: center; gap: 6px; }
+        .ds-legend-color { width: 12px; height: 12px; border-radius: 3px; }
+        
+        .ds-money-badge { background: rgba(152,195,121,0.15); color: var(--ds-green); border: 1px solid rgba(152,195,121,0.3); padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
 
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -163,12 +177,12 @@ const injectCSS = () => {
 // ==========================================
 let Settings = {};
 let sessionSnoozeReset = false; 
-let backupVault = []; // 多重宇宙備份庫
+let backupVault = []; 
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v43 || extension_settings.ds_cache_v42 || {};
-    if (!extension_settings.ds_cache_v44) {
-        extension_settings.ds_cache_v44 = {
+    const oldSettings = extension_settings.ds_cache_v45 || extension_settings.ds_cache_v44 || {};
+    if (!extension_settings.ds_cache_v46) {
+        extension_settings.ds_cache_v46 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -204,17 +218,19 @@ function initSettings() {
             autoBackup: oldSettings.autoBackup ?? true, 
             absoluteOrderMatrix: oldSettings.absoluteOrderMatrix ?? true, 
             vectorQuarantine: oldSettings.vectorQuarantine ?? true, 
+            phantomSync: oldSettings.phantomSync ?? true, 
+            smartAutoPatch: oldSettings.smartAutoPatch ?? true, 
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v44;
+    Settings = extension_settings.ds_cache_v46;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v44_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v46_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -228,7 +244,7 @@ function flushSaveSync() {
     if (pendingSave) {
         try { 
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-            localStorage.setItem('ds_cache_v44_snapshot', JSON.stringify(Settings));
+            localStorage.setItem('ds_cache_v46_snapshot', JSON.stringify(Settings));
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -253,7 +269,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v44_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v46_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -281,7 +297,7 @@ function triggerWarningImmediate(key, msg, isEnabled) {
     if (!triggerThrottlers[key] || now - triggerThrottlers[key] > 30000) {
         triggerThrottlers[key] = now;
         if (Settings.zenMode) Logger.log(`[免打扰模式] 已隐藏通知: ${msg}`, LogLevels.BASIC);
-        else if (typeof toastr !== 'undefined') toastr.warning(msg, '💡 全视之眼优化器', { timeOut: 3000 });
+        else if (typeof toastr !== 'undefined') toastr.warning(msg, '💡 终极奇点优化器', { timeOut: 3000 });
     }
 }
 
@@ -342,15 +358,15 @@ function updateTopBarState() {
     if (!dot.length) return;
     if (!Settings.enabled) {
         dot.css('color', '#5c6370');
-        $('#ds-top-reset-btn').attr('title', '全视之眼缓存: 已停用 (大模型每次都会重读所有内容)');
+        $('#ds-top-reset-btn').attr('title', '终极奇点缓存: 已停用 (大模型每次都会重读所有内容)');
         dot.html('<i class="fa-solid fa-circle"></i>');
     } else if (Settings.zenMode) {
         dot.css('color', '#c678dd');
-        $('#ds-top-reset-btn').attr('title', '全视之眼缓存: 运作中 [沉浸免打扰模式]');
+        $('#ds-top-reset-btn').attr('title', '终极奇点缓存: 运作中 [沉浸免打扰模式]');
         dot.html('<i class="fa-solid fa-yin-yang ds-zen-icon"></i>');
     } else {
         dot.css('color', '#00e5ff');
-        $('#ds-top-reset-btn').attr('title', '全视之眼缓存: 运作中 (正在为您省钱省算力)');
+        $('#ds-top-reset-btn').attr('title', '终极奇点缓存: 运作中 (正在为您省钱省算力)');
         dot.html('<i class="fa-solid fa-circle" style="text-shadow: 0 0 5px #00e5ff;"></i>');
     }
 }
@@ -416,12 +432,12 @@ function logAt(level, type, msg) {
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     
-    if (type === 'warn') console.warn(`%c[全视日志] 🌪️ ${msg}`, 'color: #e5c07b;');
-    else if (type === 'error') console.error(`[全视日志] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[全视日志] 🗺️ ${msg}`, 'color: #00e5ff;');
-    else if (type === 'debug') console.log(`%c[全视日志] 🐛 ${msg}`, 'color: #c678dd;');
+    if (type === 'warn') console.warn(`%c[奇点日志] 🌪️ ${msg}`, 'color: #e5c07b;');
+    else if (type === 'error') console.error(`[奇点日志] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[奇点日志] 🗺️ ${msg}`, 'color: #00e5ff;');
+    else if (type === 'debug') console.log(`%c[奇点日志] 🐛 ${msg}`, 'color: #c678dd;');
     else if (type === 'divider') console.log(`%c${msg}`, 'color: #4b5263; font-weight: bold;');
-    else console.log(`%c[全视日志] ✅ ${msg}`, 'color: #98c379;');
+    else console.log(`%c[奇点日志] ✅ ${msg}`, 'color: #98c379;');
     
     logQueue.push({ time, type, msg });
     if (logQueue.length > 500) logQueue.shift();
@@ -467,7 +483,6 @@ const Logger = {
         else norm = norm.replace(/ +/g, ' ').trim();
         return norm;
     },
-    // 🧠 模糊語義哈希：剝離標點與大小寫
     fuzzyNormalize: (text) => {
         if (!text) return '';
         return text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/gi, '').replace(/\s+/g, '').trim();
@@ -506,7 +521,7 @@ function getChatState(chatKeyInfo) {
 function ensureTopMenuButton() {
     if ($('#ds-top-reset-btn').length === 0) {
         const btn = $(`
-            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 全视之眼缓存优化器">
+            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 终极奇点缓存优化器">
                 <span class="fa-solid fa-microchip"></span>
                 <span id="ds-top-status-dot" style="font-size:0.7em; margin-left:2px; vertical-align:top;"></span>
             </li>
@@ -516,7 +531,7 @@ function ensureTopMenuButton() {
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
             safeSave(); updateTopBarState();
-            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 全视之眼缓存已启动！" : "💤 全视之眼缓存已关闭。", "DeepSeek");
+            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 终极奇点缓存已启动！" : "💤 终极奇点缓存已关闭。", "DeepSeek");
         });
         btn.on('contextmenu', (e) => { e.preventDefault(); resetCurrentCache(); });
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
@@ -581,7 +596,7 @@ function setupGlobalHotkeys() {
                 Settings.enabled = !Settings.enabled;
                 $('#ds-cache-enable').prop('checked', Settings.enabled);
                 safeSave(); updateTopBarState();
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 全视之眼缓存已启动" : "💤 全视之眼缓存已关闭", "快捷键");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 终极奇点缓存已启动" : "💤 终极奇点缓存已关闭", "快捷键");
             }
             if (e.key.toLowerCase() === 'r') { e.preventDefault(); resetCurrentCache(); }
             if (e.key.toLowerCase() === 'z') { 
@@ -597,7 +612,7 @@ function setupGlobalHotkeys() {
 }
 
 // ==========================================
-// 5. 核心邏輯工具與 Diff 演算法 (Cyrb53 + Fuzzy Hash)
+// 5. 核心邏輯工具與 Diff 演算法 (O(1) Bigram Matrix)
 // ==========================================
 
 function cyrb53(str, seed = 0) {
@@ -612,30 +627,10 @@ function cyrb53(str, seed = 0) {
     return 4294967296 * (2097151 & h2) + (h1 >>> 0);
 }
 
-class LRUCache {
-    constructor(maxSize) { this.cache = new Map(); this.maxSize = maxSize; }
-    get(key) {
-        if (!this.cache.has(key)) return null;
-        const val = this.cache.get(key);
-        this.cache.delete(key); this.cache.set(key, val); 
-        return val;
-    }
-    set(key, value) {
-        if (this.cache.has(key)) this.cache.delete(key);
-        else if (this.cache.size >= this.maxSize) this.cache.delete(this.cache.keys().next().value); 
-        this.cache.set(key, value);
-    }
-    clear() { this.cache.clear(); }
-}
-
-const bigramCache = new LRUCache(2000);
-
-function getBigrams(str) {
-    const cached = bigramCache.get(str);
-    if (cached) return cached;
+// 🚀 Req 8: O(1) 預計算語義矩陣
+function getBigramsSet(str) {
     const bigrams = new Set();
     for (let i = 0; i < str.length - 1; i++) bigrams.add(str.substring(i, i+2));
-    bigramCache.set(str, bigrams);
     return bigrams;
 }
 
@@ -643,36 +638,42 @@ function createMsg(msg, tag) {
     const content = msg.content || '';
     const norm = Logger.normalize(content);
     const fuzzy = Logger.fuzzyNormalize(content);
+    const clean = stripHtml(norm);
+    
     return { 
         role: msg.role, 
         content: content, 
         norm: norm, 
         hash: cyrb53(norm), 
-        fuzzyHash: cyrb53(fuzzy), // 🧠 模糊語義哈希
+        fuzzyHash: cyrb53(fuzzy), 
         len: content.length, 
-        tag: tag 
+        tag: tag,
+        bigrams: getBigramsSet(clean), // 預計算特徵
+        cleanLen: clean.length
     };
 }
 
 function getSimilarity(msg1, msg2) {
     if (msg1.hash === msg2.hash) return 1;
-    if (msg1.fuzzyHash === msg2.fuzzyHash) return 0.99; // 模糊匹配成功，視為極高相似度
+    if (msg1.fuzzyHash === msg2.fuzzyHash) return 0.99; 
     
-    const str1 = msg1.norm; const str2 = msg2.norm;
-    if (Math.abs(str1.length - str2.length) > Math.max(str1.length, str2.length) * 0.5) return 0;
+    if (Math.abs(msg1.cleanLen - msg2.cleanLen) > Math.max(msg1.cleanLen, msg2.cleanLen) * 0.5) return 0;
     
-    const clean1 = stripHtml(str1); const clean2 = stripHtml(str2);
-    if (clean1 === clean2) return 1;
-    
-    const s1 = clean1.length < clean2.length ? clean1 : clean2;
-    const s2 = clean1.length < clean2.length ? clean2 : clean1;
-    if (s1.length === 0) return 0;
-    if (s2.includes(s1) && s1.length > 10) return 0.95;
+    if (msg1.cleanLen === 0 || msg2.cleanLen === 0) return 0;
 
-    const bigrams1 = getBigrams(s1);
+    // 🚀 Req 8: O(1) 集合交集比對
+    const b1 = msg1.bigrams;
+    const b2 = msg2.bigrams;
     let matchCount = 0;
-    for (let i = 0; i < s2.length - 1; i++) { if (bigrams1.has(s2.substring(i, i+2))) matchCount++; }
-    const union = (s1.length - 1) + (s2.length - 1) - matchCount;
+    
+    // 遍歷較小的 Set 以提升效能
+    if (b1.size < b2.size) {
+        for (const bg of b1) { if (b2.has(bg)) matchCount++; }
+    } else {
+        for (const bg of b2) { if (b1.has(bg)) matchCount++; }
+    }
+
+    const union = (msg1.cleanLen - 1) + (msg2.cleanLen - 1) - matchCount;
     return union <= 0 ? 1 : matchCount / union;
 }
 
@@ -693,6 +694,7 @@ function extractAddedText(oldStr, newStr) {
 }
 
 function simpleDiffHighlight(oldStr, newStr) {
+    if (oldStr === newStr) return escapeHtml(oldStr);
     let start = 0;
     while(start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) start++;
     let endOld = oldStr.length - 1; let endNew = newStr.length - 1;
@@ -730,7 +732,7 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
     return assistantObj;
 }
 
-function parseSTStream(stream) {
+function parseSTStream(stream, state) {
     const topSysMsgs = []; 
     const bottomSysMsgs = []; 
     const chatMsgs = [];
@@ -768,17 +770,30 @@ function parseSTStream(stream) {
         }
     }
 
-    // 🧊 邊緣保護矩陣 (Edge-Protected Matrix)
+    // 🧊 邊緣保護矩陣 (Contextual Pinning)
     if (Settings.absoluteOrderMatrix) {
-        if (topSysMsgs.length > 2) {
-            const first = topSysMsgs.shift(); // 鎖死 Main Prompt
-            const last = topSysMsgs.pop();    // 鎖死 Jailbreak
-            topSysMsgs.sort((a, b) => a.hash - b.hash); // 只排序中間的世界書
-            topSysMsgs.unshift(first);
-            topSysMsgs.push(last);
-        } else if (topSysMsgs.length === 2) {
-            // 只有兩個就不排序，保持原樣
+        const pinnedTop = [];
+        const floatingTop = [];
+        
+        // 找出哪些是原本就存在的 (Pinned)，哪些是新注入的 (Floating)
+        const oldSysHashes = new Set(state.frozenSequence.filter(m => m.tag === 'SYS').map(m => m.hash));
+        
+        for (const sys of topSysMsgs) {
+            if (oldSysHashes.has(sys.hash) || topSysMsgs.indexOf(sys) === 0 || topSysMsgs.indexOf(sys) === topSysMsgs.length - 1) {
+                pinnedTop.push(sys);
+            } else {
+                floatingTop.push(sys);
+            }
         }
+        
+        floatingTop.sort((a, b) => a.hash - b.hash);
+        
+        // 重組：頭部 Pinned -> 排序後的 Floating -> 尾部 Pinned
+        topSysMsgs.length = 0;
+        if (pinnedTop.length > 0) topSysMsgs.push(pinnedTop.shift()); // Main Prompt
+        topSysMsgs.push(...floatingTop);
+        topSysMsgs.push(...pinnedTop); // 剩餘的 Pinned (包含 Jailbreak)
+        
         bottomSysMsgs.sort((a, b) => a.hash - b.hash);
     } else {
         topSysMsgs.sort((a, b) => a.norm.localeCompare(b.norm));
@@ -819,7 +834,7 @@ function showDiagnosticCenter() {
     
     let contentHtml = '';
     if (!state || !state.dynamicAnomalies || state.dynamicAnomalies.length === 0) {
-        contentHtml = `<div style="text-align:center; padding: 30px; color:var(--ds-green);"><i class="fa-solid fa-shield-heart" style="font-size:50px; margin-bottom:20px; text-shadow: 0 0 20px rgba(152,195,121,0.5);"></i><br><b style="font-size:18px;">太棒了！您的缓存处于全视纠缠态 (完美健康)！</b><br><br><span style="color:#abb2bf; font-size:14px;">当前对话没有检测到任何会破坏缓存的「捣蛋鬼」(动态提示词)。<br>大模型可以完美记住你们的每一句对话！</span></div>`;
+        contentHtml = `<div style="text-align:center; padding: 30px; color:var(--ds-green);"><i class="fa-solid fa-shield-heart" style="font-size:50px; margin-bottom:20px; text-shadow: 0 0 20px rgba(152,195,121,0.5);"></i><br><b style="font-size:18px;">太棒了！您的缓存处于奇点纠缠态 (完美健康)！</b><br><br><span style="color:#abb2bf; font-size:14px;">当前对话没有检测到任何会破坏缓存的「捣蛋鬼」(动态提示词)。<br>大模型可以完美记住你们的每一句对话！</span></div>`;
     } else {
         const anomaly = state.dynamicAnomalies[state.dynamicAnomalies.length - 1]; 
         const diffHtml = simpleDiffHighlight(anomaly.oldText, anomaly.newText);
@@ -1034,22 +1049,20 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (!data?.chat?.length) return;
         const stream = data.chat;
         
-        // 儲存原始流供 Omni-Vision 使用
         if (!isDryRun) {
             state.lastRawStream = JSON.parse(JSON.stringify(stream));
             safeSave();
         }
 
-        if (!isDryRun) Logger.divider(`===== 🚀 启动全视之眼拦截: ${chatKeyInfo.label} =====`);
+        if (!isDryRun) Logger.divider(`===== 🚀 启动终极奇点拦截: ${chatKeyInfo.label} =====`);
 
-        const { topSysMsgs, bottomSysMsgs, historyTurns, currentTurn } = parseSTStream(stream);
+        const { topSysMsgs, bottomSysMsgs, historyTurns, currentTurn } = parseSTStream(stream, state);
         const flatHistoryPool = [];
         for(let t of historyTurns) {
             flatHistoryPool.push(t.user);
             if(t.assistant) flatHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
         }
 
-        // 🌌 平行宇宙協議
         if (Settings.multiverseProtocol && state.multiverse && state.multiverse.length > 0) {
             let bestUniverse = state.frozenSequence;
             let bestMatchCount = -1;
@@ -1080,9 +1093,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const remainingHistory = [...flatHistoryPool];
         const thresholds = getTolerance();
         
-        // ---------------------------------------------------------
-        // 階段 1：動態提示詞偵測與詢問
-        // ---------------------------------------------------------
         let needsAsk = false;
         let detectedAnomalies = [];
         
@@ -1112,9 +1122,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             Logger.warn(`[动态提示词] 用户已选择处理模式: ${Settings.dynamicMode}`);
         }
 
-        // ---------------------------------------------------------
-        // 階段 2：原位更新與同步邏輯 (包含絕對前綴錨點)
-        // ---------------------------------------------------------
         let dynamicPromptsToSink = [];
         let oldSnapshotsToMove = [];
         let timeSpacePatches = []; 
@@ -1179,9 +1186,22 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
                 
-                if (bestScore === 1 || (bestIdx !== -1 && item.fuzzyHash === remainingHistory[bestIdx].fuzzyHash)) {
+                const isLastAiMessage = (i === state.frozenSequence.length - 1 && item.tag === 'AI');
+
+                if (bestScore === 1) {
                     newFrozenSequence.push(remainingHistory[bestIdx]);
                     remainingHistory.splice(bestIdx, 1);
+                } else if (bestIdx !== -1 && (item.fuzzyHash === remainingHistory[bestIdx].fuzzyHash || bestScore > 0.85)) {
+                    // 👻 Phantom Sync 2.0 (支援微小語義差異)
+                    if (Settings.phantomSync && !isLastAiMessage) {
+                        const phantomNode = { ...item, isPhantom: true, originalContent: remainingHistory[bestIdx].content };
+                        newFrozenSequence.push(phantomNode);
+                        remainingHistory.splice(bestIdx, 1);
+                        if (!isDryRun) Logger.debug(`[👻 幻影同步 2.0] 拦截到微小修改 (相似度 ${(bestScore*100).toFixed(1)}%)，强制使用旧版缓存以保住 100% 命中率。`);
+                    } else {
+                        newFrozenSequence.push(remainingHistory[bestIdx]);
+                        remainingHistory.splice(bestIdx, 1);
+                    }
                 } else if (bestScore > thresholds.his) {
                     const matchedItem = remainingHistory[bestIdx];
                     
@@ -1191,11 +1211,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         remainingHistory.splice(bestIdx, 1);
                         if (!isDryRun) Logger.debug(`[🛡️ 熵减护盾] 拦截了微小的错字修改，已自动豁免并生成底部修正补丁，保住 100% 缓存。`);
                     }
-                    else if (Settings.historyEditMode === 1) {
-                        newFrozenSequence.push(item); 
+                    else if ((Settings.smartAutoPatch || Settings.historyEditMode === 1) && !isLastAiMessage) {
+                        // 🧠 智慧無痕修補 (避開最後一句 Swipe)
+                        const patchedNode = { ...item, isPatched: true };
+                        newFrozenSequence.push(patchedNode); 
                         timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(item.content, 20)}" 实际上已发生改变，最新情况为："${matchedItem.content}"]`}, 'SYS'));
                         remainingHistory.splice(bestIdx, 1);
-                        if (!isDryRun) Logger.debug(`[🛡️ 时空补丁] 拦截了历史修改，已生成底部修正补丁以保住 100% 缓存。`);
+                        if (!isDryRun) Logger.debug(`[🧠 智慧无痕修补] 拦截了历史修改，已自动生成底部修正补丁，流失率降为 0%。`);
                     } else if (Settings.historyEditMode === 2) {
                         newFrozenSequence.push(item); 
                         remainingHistory.splice(bestIdx, 1);
@@ -1206,8 +1228,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         if (!isDryRun) Logger.debug(`[历史记录-原位同步] -> ${truncateLog(matchedItem.content)}`);
                     }
                 } else {
-                    const isLastAiMessage = (i === state.frozenSequence.length - 1 && item.tag === 'AI');
-                    
                     if (isLastAiMessage) {
                         if (!isDryRun) Logger.debug(`[🚀 Swipe 识别] 检测到用户重新生成了最后一句回复，完美截断，保住 100% 缓存！`);
                     } else if (isPrefixTruncated && i === 0) {
@@ -1223,10 +1243,11 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                             timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：上下文微小跳跃。]`}, 'SYS'));
                             middleDeletionCount = 0;
                         }
-                    } else if (Settings.retconProtocol) {
-                        newFrozenSequence.push(item);
+                    } else if (Settings.smartAutoPatch || Settings.retconProtocol) {
+                        const patchedNode = { ...item, isPatched: true };
+                        newFrozenSequence.push(patchedNode);
                         timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(item.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS'));
-                        if (!isDryRun) Logger.debug(`[🗑️ 吃书协议] 拦截了历史删除，已生成底部抹除声明以保住 100% 缓存。`);
+                        if (!isDryRun) Logger.debug(`[🧠 智慧无痕修补] 拦截了历史删除，已自动生成底部抹除声明，流失率降为 0%。`);
                     } else {
                         if (!isDryRun) Logger.debug(`[原位删除] 找不到旧对话，已移除: ${truncateLog(item.content)}`);
                     }
@@ -1309,10 +1330,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             if (!isDryRun) Logger.debug(`[动态提示词-时序修正] 已将置顶旧提示词下沉至旧历史尾部: ${truncateLog(snap.content)}`);
         }
 
-        // ---------------------------------------------------------
-        // 階段 3：嚴格排序追加
-        // ---------------------------------------------------------
-        
         const remainingTopSys = [];
         const remainingBottomSys = [];
         for (let sys of sysPool) {
@@ -1369,9 +1386,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             if (!isDryRun) Logger.debug(`[追加至尾部] 时空修正/吃书补丁: ${truncateLog(patch.content)}`);
         }
 
-        // ---------------------------------------------------------
-        // 階段 4：去重與組裝
-        // ---------------------------------------------------------
         let dedupedSequence = [];
         const seenSysNorms = new Set();
         for (const item of newFrozenSequence) {
@@ -1391,7 +1405,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         continue;
                     }
                 }
-                
                 seenSysNorms.add(item.hash);
             }
             dedupedSequence.push(item);
@@ -1407,7 +1420,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         // ==========================================
-        // 5. 精準流失率演算法
+        // 5. 精準流失率演算法 (Req 10: 智慧降噪)
         // ==========================================
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
@@ -1457,7 +1470,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             
             dropPercentStr = (recomputeRatio * 100).toFixed(1);
 
-            if (recomputeRatio >= 0.10 && Settings.showResetPrompt && !justSetDynamicMode && !isTailEndMutation && !sessionSnoozeReset) {
+            // 🚀 Req 10: 微突變豁免協議 (Micro-Mutation Exemption)
+            // 即使流失率超過 10%，但如果重算 Token 小於 500，直接靜默放行，大幅減少彈窗！
+            if (recomputeRatio >= 0.10 && recomputeTokens > 500 && Settings.showResetPrompt && !justSetDynamicMode && !isTailEndMutation && !sessionSnoozeReset) {
                 requireResetConfirm = true;
                 
                 if (P[breakIndex]?.tag === 'SYS' || L[breakIndex]?.tag === 'SYS') {
@@ -1485,10 +1500,11 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 if (Settings.logLevel >= LogLevels.TRACE && !isDryRun) {
                     Logger.trace(`[网络层追踪] 预计保留 Tokens: ${preservedTokens}, 预计重算 Tokens: ${recomputeTokens}, 流失率: ${dropPercentStr}%`);
                 }
+            } else if (recomputeRatio >= 0.10 && recomputeTokens <= 500 && !isDryRun) {
+                Logger.log(`[🤫 微突变豁免] 流失率虽达 ${dropPercentStr}%，但重算量极小 (${recomputeTokens} Tokens)，已自动静默放行，不弹窗打扰。`);
             }
         }
 
-        // 👁️ Dry Run 模式：直接返回預覽結果，不修改任何狀態
         if (isDryRun) {
             return {
                 proposedStream: proposedStream,
@@ -1506,7 +1522,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             setTopBarStatus('#e5c07b', `缓存: 等待确认`);
             if (Settings.autoAccept) {
                 Logger.warn(`[自动修复] 已放行断层重组 (需重算 ${dropPercentStr}%)`);
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "全视之眼");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "终极奇点");
                 decision = 'accept';
             } else {
                 decision = await askUserForResetAsync(dropPercentStr, mapInfoText, causeText);
@@ -1516,7 +1532,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (decision === 'abort') {
             Logger.error('[物理拦截] 已拦截本次发送，强制中止生成。', null, LogLevels.BASIC);
             setTopBarStatus('#e06c75', '缓存: 已拦截发送');
-            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "全视之眼");
+            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "终极奇点");
             
             data.chat.length = 0; 
             data.chat.push({ role: "invalid_abort_role", content: "ABORT_GENERATION" });
@@ -1542,7 +1558,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             safeSave();
 
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "全视之眼");
+            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "终极奇点");
             return;
         }
 
@@ -1553,7 +1569,14 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         if (decision === 'accept') {
-            state.frozenSequence = dedupedSequence;
+            state.frozenSequence = dedupedSequence.map(n => {
+                const clean = {...n};
+                delete clean.isPhantom;
+                delete clean.isPatched;
+                delete clean.originalContent;
+                delete clean.bigrams; // 清理記憶體
+                return clean;
+            });
             state.lastPrefills = currentTurn.prefills;
 
             const finalStream = [...state.frozenSequence];
@@ -1591,9 +1614,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Req 9)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 3.0 (Req 9)
 // ==========================================
 let omniRenderTimeout = null;
+let isOmniCollapsed = false;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1608,46 +1632,53 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒 3.0</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="$('#ds-omni-modal-wrapper').remove();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
                 <div style="background:rgba(0,0,0,0.5); padding:15px; border-radius:10px; margin-bottom:15px; border:1px solid rgba(255,255,255,0.05);">
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; font-weight:bold;">
                         <span style="color:var(--ds-green);"><i class="fa-solid fa-shield-halved"></i> 预计缓存命中率: <span id="omni-hit-rate">计算中...</span></span>
-                        <span style="color:var(--ds-cyan);"><i class="fa-solid fa-coins"></i> 预计保留 Tokens: <span id="omni-tokens-saved">...</span> / 需重算: <span id="omni-tokens-lost" style="color:var(--ds-red);">...</span></span>
+                        <div style="display:flex; gap:15px;">
+                            <span class="ds-money-badge" title="基于 DeepSeek API 价格估算"><i class="fa-solid fa-piggy-bank"></i> 约省下: $<span id="omni-money-saved">0.00</span></span>
+                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-coins"></i> 预计保留 Tokens: <span id="omni-tokens-saved">...</span> / 需重算: <span id="omni-tokens-lost" style="color:var(--ds-red);">...</span></span>
+                        </div>
                     </div>
                     <div class="ds-health-bar" style="height:8px; border-radius:4px; background:rgba(224,108,117,0.3);"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%;"></div></div>
                 </div>
 
+                <div class="ds-legend">
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:var(--ds-green);"></div> <b>完美命中</b> (完全相同，不消耗算力)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:var(--ds-yellow);"></div> <b>幻影同步</b> (仅标点/排版不同，强制使用旧版保住缓存)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:var(--ds-purple);"></div> <b>时空补丁</b> (内容被修改/删除，已自动生成底部补丁保住缓存)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:var(--ds-red);"></div> <b>缓存断裂</b> (全新内容或无法修补的修改，需重新计算)</div>
+                </div>
+
+                <div class="ds-omni-toolbar">
+                    <span style="font-size:12px; color:#abb2bf; font-weight:bold; margin-right:10px;"><i class="fa-solid fa-sliders"></i> 即时沙盒开关:</span>
+                    <div class="ds-omni-toggle ${Settings.dynamicMode===1?'active':''}" data-setting="dynamicMode" data-val="1" title="写日记模式"><i class="fa-solid fa-book-journal-whills"></i> 日记模式</div>
+                    <div class="ds-omni-toggle ${Settings.absoluteOrderMatrix?'active':''}" data-setting="absoluteOrderMatrix" title="边缘保护矩阵"><i class="fa-solid fa-sort"></i> 边缘保护矩阵</div>
+                    <div class="ds-omni-toggle ${Settings.vectorQuarantine?'active':''}" data-setting="vectorQuarantine" title="向量隔离区"><i class="fa-solid fa-bullseye"></i> 向量隔离</div>
+                    <div class="ds-omni-toggle ${Settings.phantomSync?'active':''}" data-setting="phantomSync" title="幻影同步"><i class="fa-solid fa-ghost"></i> 幻影同步</div>
+                    <div class="ds-omni-toggle ${Settings.smartAutoPatch?'active':''}" data-setting="smartAutoPatch" title="智慧无痕修补"><i class="fa-solid fa-wand-magic-sparkles"></i> 智慧无痕修补</div>
+                    <div style="flex:1;"></div>
+                    <button id="ds-btn-omni-collapse" class="ds-btn ds-btn-blue" style="padding: 6px 12px; font-size: 12px;"><i class="fa-solid fa-compress"></i> 折叠长文本</button>
+                </div>
+
                 <div class="ds-omni-body">
-                    <!-- 左視窗：歷史觀測 -->
-                    <div class="ds-omni-pane">
+                    <div class="ds-omni-pane" style="flex: 0 0 49%;">
                         <div class="ds-omni-pane-header">
                             <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (上一次发送的真实阵列)</span>
-                            <select id="omni-history-select" class="ds-select-styled" style="width:200px; padding:4px 8px; font-size:11px;">
-                                <option value="last">最近一次发送 (Last Sent)</option>
-                            </select>
-                        </div>
-                        <div id="omni-left-content" class="ds-omni-pane-content ds-scroll ds-strict-contain">
-                            <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
                     </div>
-
-                    <!-- 右視窗：即時沙盒預覽 -->
-                    <div class="ds-omni-pane">
+                    <div class="ds-omni-pane" style="flex: 0 0 49%; margin-left: auto;">
                         <div class="ds-omni-pane-header">
                             <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用当前设定后)</span>
-                            <span style="font-size:11px; color:#abb2bf; font-weight:normal;">*修改下方设定会即时重算</span>
                         </div>
-                        <div class="ds-omni-toolbar">
-                            <div class="ds-omni-toggle ${Settings.dynamicMode===1?'active':''}" data-setting="dynamicMode" data-val="1" title="写日记模式"><i class="fa-solid fa-book-journal-whills"></i> 日记模式</div>
-                            <div class="ds-omni-toggle ${Settings.absoluteOrderMatrix?'active':''}" data-setting="absoluteOrderMatrix" title="绝对秩序矩阵"><i class="fa-solid fa-sort"></i> 秩序矩阵</div>
-                            <div class="ds-omni-toggle ${Settings.vectorQuarantine?'active':''}" data-setting="vectorQuarantine" title="向量隔离区"><i class="fa-solid fa-bullseye"></i> 向量隔离</div>
-                            <div class="ds-omni-toggle ${Settings.semanticNormalize?'active':''}" data-setting="semanticNormalize" title="语义正规化"><i class="fa-solid fa-broom"></i> 语义正规化</div>
-                            <div class="ds-omni-toggle ${Settings.prefixAnchor?'active':''}" data-setting="prefixAnchor" title="绝对前缀锚点"><i class="fa-solid fa-anchor"></i> 前缀锚点</div>
-                        </div>
-                        <div id="omni-right-content" class="ds-omni-pane-content ds-scroll ds-strict-contain">
+                    </div>
+                    
+                    <div id="omni-dual-scroll" class="ds-scroll ds-strict-contain" style="position:absolute; top:45px; left:0; right:0; bottom:0; overflow-y:auto; padding:15px;">
+                        <div id="omni-dual-content" style="display:flex; flex-direction:column; gap:10px;">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
                     </div>
@@ -1657,7 +1688,6 @@ async function showOmniVisionUI() {
     `;
     $('body').append(html);
 
-    // 綁定快速開關事件
     $('.ds-omni-toggle').on('click', function() {
         const setting = $(this).data('setting');
         if (setting === 'dynamicMode') {
@@ -1673,7 +1703,16 @@ async function showOmniVisionUI() {
         triggerOmniRender(state);
     });
 
-    $('#omni-history-select').on('change', () => triggerOmniRender(state));
+    $('#ds-btn-omni-collapse').on('click', function() {
+        isOmniCollapsed = !isOmniCollapsed;
+        if (isOmniCollapsed) {
+            $(this).html('<i class="fa-solid fa-expand"></i> 展开长文本');
+            $('.ds-node-text').addClass('ds-collapsed');
+        } else {
+            $(this).html('<i class="fa-solid fa-compress"></i> 折叠长文本');
+            $('.ds-node-text').removeClass('ds-collapsed');
+        }
+    });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) $(this).remove(); });
 
@@ -1682,19 +1721,14 @@ async function showOmniVisionUI() {
 
 function triggerOmniRender(state) {
     if (omniRenderTimeout) clearTimeout(omniRenderTimeout);
-    // 非同步分塊渲染，防止卡頓
     omniRenderTimeout = setTimeout(() => renderOmniVision(state), 100);
 }
 
 async function renderOmniVision(state) {
-    const leftContainer = document.getElementById('omni-left-content');
-    const rightContainer = document.getElementById('omni-right-content');
-    if (!leftContainer || !rightContainer) return;
+    const dualContainer = document.getElementById('omni-dual-content');
+    if (!dualContainer) return;
 
-    // 1. 獲取左側歷史資料
     const leftArray = state.lastSentSequence || [];
-    
-    // 2. 獲取右側預覽資料 (Dry Run)
     let rightArray = [];
     let breakIndex = -1;
     let dropPercent = "0.0";
@@ -1711,53 +1745,100 @@ async function renderOmniVision(state) {
             recomputeTokens = dryRunResult.recomputeTokens;
         }
     } else {
-        // 如果沒有 lastRawStream (舊版升級上來的)，只能用 lastSentSequence 模擬
         rightArray = [...leftArray];
         breakIndex = leftArray.length;
     }
 
-    // 3. 更新頂部進度條
     const hitRate = (100 - parseFloat(dropPercent)).toFixed(1);
     $('#omni-hit-rate').text(`${hitRate}%`);
     $('#omni-hit-bar').css('width', `${hitRate}%`);
     $('#omni-tokens-saved').text(preservedTokens);
     $('#omni-tokens-lost').text(recomputeTokens);
+    
+    // 估算省下的錢 (DeepSeek API 價格約 $0.14 / 1M tokens)
+    const moneySaved = (preservedTokens / 1000000) * 0.14;
+    $('#omni-money-saved').text(moneySaved.toFixed(4));
 
-    // 4. 渲染左側 (使用 DocumentFragment 加速)
-    const leftFrag = document.createDocumentFragment();
-    leftArray.forEach((node, idx) => {
-        const isMiss = breakIndex !== -1 && idx >= breakIndex;
-        const el = document.createElement('div');
-        el.className = `ds-node-card ds-virtual-list ${isMiss ? 'ds-node-miss' : 'ds-node-hit'}`;
-        el.innerHTML = `
-            <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx}</span>
-                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
-            </div>
-            <div>${escapeHtml(node.content).substring(0, 150).replace(/\n/g, '<br>')}...</div>
-        `;
-        leftFrag.appendChild(el);
-    });
-    leftContainer.innerHTML = '';
-    leftContainer.appendChild(leftFrag);
+    const rows = [];
+    let l = 0, r = 0;
+    
+    while (l < leftArray.length || r < rightArray.length) {
+        const leftNode = leftArray[l];
+        const rightNode = rightArray[r];
+        
+        let row = { left: null, right: null, status: 'miss' };
+        
+        if (leftNode && rightNode && (leftNode.hash === rightNode.hash || leftNode.fuzzyHash === rightNode.fuzzyHash)) {
+            row.left = leftNode;
+            row.right = rightNode;
+            if (rightNode.isPhantom) row.status = 'phantom';
+            else if (rightNode.isPatched) row.status = 'patch';
+            else row.status = (breakIndex !== -1 && r >= breakIndex) ? 'miss' : 'hit';
+            l++; r++;
+        } else if (leftNode && (!rightNode || !rightArray.slice(r, r+5).some(n => n.hash === leftNode.hash))) {
+            row.left = leftNode;
+            row.status = 'miss';
+            l++;
+        } else if (rightNode) {
+            row.right = rightNode;
+            if (rightNode.isPatched) row.status = 'patch';
+            else row.status = (breakIndex !== -1 && r >= breakIndex) ? 'miss' : 'hit';
+            r++;
+        } else {
+            l++; r++;
+        }
+        rows.push(row);
+    }
 
-    // 5. 渲染右側
-    const rightFrag = document.createDocumentFragment();
-    rightArray.forEach((node, idx) => {
-        const isMiss = breakIndex !== -1 && idx >= breakIndex;
+    const frag = document.createDocumentFragment();
+    const collapseClass = isOmniCollapsed ? 'ds-collapsed' : '';
+
+    rows.forEach((row, idx) => {
         const el = document.createElement('div');
-        el.className = `ds-node-card ds-virtual-list ${isMiss ? 'ds-node-warn' : 'ds-node-hit'}`;
-        el.innerHTML = `
-            <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx}</span>
-                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
-            </div>
-            <div>${escapeHtml(node.content).substring(0, 150).replace(/\n/g, '<br>')}...</div>
-        `;
-        rightFrag.appendChild(el);
+        el.className = 'ds-node-row ds-virtual-list';
+        
+        let leftHtml = '<div class="ds-node-cell ds-node-empty">无对应节点</div>';
+        if (row.left) {
+            leftHtml = `
+                <div class="ds-node-cell">
+                    <div class="ds-node-header">
+                        <span><span class="ds-tag ds-tag-${row.left.tag}">[${row.left.tag}]</span></span>
+                        <span>Hash: ${row.left.hash.toString(16).substring(0,8)}</span>
+                    </div>
+                    <div class="ds-node-text ${collapseClass}">${escapeHtml(row.left.content).replace(/\n/g, '<br>')}</div>
+                </div>
+            `;
+        }
+        
+        let rightHtml = '<div class="ds-node-cell ds-node-empty">无对应节点</div>';
+        if (row.right) {
+            let statusClass = `ds-status-${row.status}`;
+            let statusIcon = row.status === 'hit' ? '🟢' : row.status === 'phantom' ? '🟡' : row.status === 'patch' ? '🟣' : '🔴';
+            
+            let contentToShow = escapeHtml(row.right.content).replace(/\n/g, '<br>');
+            if (row.right.isPhantom && row.right.originalContent) {
+                contentToShow = `<div style="color:var(--ds-yellow); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(229,192,123,0.3); padding-bottom:5px;">[幻影同步: 强制发送旧版]</div>` + escapeHtml(row.right.originalContent).replace(/\n/g, '<br>');
+            } else if (row.right.isPatched) {
+                contentToShow = `<div style="color:var(--ds-purple); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(198,120,221,0.3); padding-bottom:5px;">[智慧修补: 强制保留原位]</div>` + contentToShow;
+            }
+
+            rightHtml = `
+                <div class="ds-node-cell ${statusClass}">
+                    <div class="ds-node-header">
+                        <span>${statusIcon} <span class="ds-tag ds-tag-${row.right.tag}">[${row.right.tag}]</span></span>
+                        <span>Hash: ${row.right.hash.toString(16).substring(0,8)}</span>
+                    </div>
+                    <div class="ds-node-text ${collapseClass}">${contentToShow}</div>
+                </div>
+            `;
+        }
+        
+        el.innerHTML = `${leftHtml}${rightHtml}`;
+        frag.appendChild(el);
     });
-    rightContainer.innerHTML = '';
-    rightContainer.appendChild(rightFrag);
+    
+    dualContainer.innerHTML = '';
+    dualContainer.appendChild(frag);
 }
 
 // ==========================================
@@ -1854,7 +1935,7 @@ function generateDiagnosticReport() {
     const chatKeyInfo = getChatKey();
     const state = Settings.chats[chatKeyInfo.key] || {};
     
-    let report = `=== DeepSeek Omni-Vision Diagnostic Report ===\n`;
+    let report = `=== DeepSeek Ultimate Singularity Diagnostic Report ===\n`;
     report += `Generated: ${new Date().toISOString()}\n`;
     report += `User Agent: ${navigator.userAgent}\n\n`;
     
@@ -1934,6 +2015,8 @@ function applyOneClickOptimize() {
     Settings.semanticNormalize = true;
     Settings.absoluteOrderMatrix = true;
     Settings.vectorQuarantine = true;
+    Settings.phantomSync = true;
+    Settings.smartAutoPatch = true;
     
     safeSave();
     
@@ -1958,6 +2041,8 @@ function applyOneClickOptimize() {
     $('#ds-cache-flashback').prop('checked', true);
     $('#ds-cache-matrix').prop('checked', true);
     $('#ds-cache-vector').prop('checked', true);
+    $('#ds-cache-phantom').prop('checked', true);
+    $('#ds-cache-smartpatch').prop('checked', true);
     
     updateTopBarState();
     if (typeof toastr !== 'undefined') toastr.success("🌟 已成功套用 DeepSeek 最佳化设定！");
@@ -1967,9 +2052,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v44-opt-drawer">
+        <div class="inline-drawer" id="ds-v46-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 全视之眼优化器 (v44)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 终极奇点优化器 (v46)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -1987,7 +2072,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动全视之眼引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
+                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动终极奇点引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
                                     <span>(核心功能！让回复变秒回，大幅节省 Token 和 API 费用)</span>
                                 </div>
                             </label>
@@ -2024,6 +2109,26 @@ async function setupUI() {
                         
                         <div class="ds-row" style="margin-top:5px;">
                             <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-smartpatch" ${Settings.smartAutoPatch ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-cyan);">🧠 智慧无痕修补 (Smart Auto-Patch) <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在中间修改或删除了对话，系统会自动将旧对话保留在原位以保住 100% 缓存，并将你的修改转化为系统备注塞入最底部。大幅减少警告弹窗！">?</span></b>
+                                    <span>(中间修改/删除不破缓存，且不弹窗)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-phantom" ${Settings.phantomSync ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-yellow);">👻 幻影同步协议 (Phantom Sync 2.0) <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改历史时，如果只改了标点符号、全半角、空格，甚至微小的错字，系统会强制发送旧版缓存给 AI。AI 不在乎少个逗号，但你的缓存保住了！">?</span></b>
+                                    <span>(标点/排版/微小修改不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-matrix" ${Settings.absoluteOrderMatrix ? 'checked' : ''}> 
                                 <div class="ds-row-text">
                                     <b style="color:var(--ds-cyan);">🧊 边缘保护矩阵 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的系统提示词排序。锁死头尾，只对中间的世界书进行绝对排序。无论 ST 怎么随机乱洗牌，发给大模型的顺序永远是绝对固定的！">?</span></b>
@@ -2056,8 +2161,8 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-semantic" ${Settings.semanticNormalize ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🧹 模糊语义引擎 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="自动压缩并忽略 ST 偷偷加入的空白符、换行符、甚至全半角标点差异。只要核心文字没变，缓存就绝对不断。">?</span></b>
-                                    <span>(隐形排版与标点差异不破缓存)</span>
+                                    <b style="color:var(--ds-green);">🧹 模糊语义引擎 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="自动压缩并忽略 ST 偷偷加入的空白符、换行符差异。只要核心文字没变，缓存就绝对不断。">?</span></b>
+                                    <span>(隐形排版差异不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2209,7 +2314,7 @@ async function setupUI() {
                                 <option value="2" ${Settings.historyEditMode===2?'selected':''}>🙈 方案 B：幻象隐藏 (保住100%缓存，但AI不知道你改了)</option>
                                 <option value="0" ${Settings.historyEditMode===0?'selected':''}>💥 方案 C：真实修改 (极度不推荐！会破坏大量缓存，烧钱重算)</option>
                             </select>
-                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*选择「时空补丁」时，系统会保留旧对话，并在最底部偷偷塞一张纸条告诉AI你修改了什么。</span>
+                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*若开启了「智慧无痕修补」，此选项将被覆盖，系统会自动选择最优解。</span>
                         </div>
                     </div>
                 </div>
@@ -2423,6 +2528,8 @@ async function setupUI() {
         $('#ds-cache-autobackup').on('change', function () { Settings.autoBackup = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-matrix').on('change', function () { Settings.absoluteOrderMatrix = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-vector').on('change', function () { Settings.vectorQuarantine = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-phantom').on('change', function () { Settings.phantomSync = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-smartpatch').on('change', function () { Settings.smartAutoPatch = $(this).is(':checked'); safeSave(); });
         $('#ds-log-autoscroll').on('change', function () { Settings.autoScrollLog = $(this).is(':checked'); safeSave(); });
 
         $('#ds-btn-diagnostic').on('click', showDiagnosticCenter);
@@ -2474,7 +2581,7 @@ async function setupUI() {
             }
             bigramCache.clear(); 
             safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success(`👻 碎片整理完毕！共清除了 ${count} 个未锁定的缓存，并释放了内存池。`);
+            if (typeof toastr !== 'undefined') toastr.success(`👻 碎片整理完毕！共清清除 ${count} 个未锁定的缓存，并释放了内存池。`);
         });
         
         $('.ds-log-filter').on('click', function() {
@@ -2494,7 +2601,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v44_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v46_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2510,7 +2617,6 @@ async function setupUI() {
             r.readAsText(f);
         });
 
-        // 備份庫下拉選單更新
         const updateVaultSelect = () => {
             const select = $('#ds-vault-select');
             select.empty().append('<option value="">-- 选择多重宇宙备份 --</option>');
@@ -2563,7 +2669,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 全视之眼优化器 v44 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 终极奇点优化器 v46 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
