@@ -93,9 +93,9 @@ const injectCSS = () => {
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v28 || extension_settings.ds_cache_v27 || {};
-    if (!extension_settings.ds_cache_v29) {
-        extension_settings.ds_cache_v29 = {
+    const oldSettings = extension_settings.ds_cache_v29 || extension_settings.ds_cache_v28 || {};
+    if (!extension_settings.ds_cache_v30) {
+        extension_settings.ds_cache_v30 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -111,7 +111,7 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v29;
+    Settings = extension_settings.ds_cache_v30;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -119,7 +119,7 @@ function initSettings() {
 function safeSave() {
     try { 
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v29_snapshot', JSON.stringify(Settings));
+        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v30_snapshot', JSON.stringify(Settings));
     } 
     catch (e) {}
 }
@@ -260,7 +260,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理與擴充選單 (原生註冊法修復)
+// 4. 狀態管理與擴充選單
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -757,15 +757,15 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         // ---------------------------------------------------------
-        // 階段 3：嚴格排序追加 (新歷史 -> 新提示詞 -> 動態提示詞)
+        // 階段 3：嚴格排序追加 (修復：先追加系統提示詞，再追加歷史對話)
         // ---------------------------------------------------------
-        for (let h of remainingHistory) {
-            newFrozenSequence.push(h);
-            Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
-        }
         for (let sys of sysPool) {
             newFrozenSequence.push(sys);
             Logger.debug(`[追加至尾部] 新增设定/世界书/动态快照: ${truncateLog(sys.content)}`);
+        }
+        for (let h of remainingHistory) {
+            newFrozenSequence.push(h);
+            Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
         }
         for (let dp of dynamicPromptsToSink) {
             newFrozenSequence.push(dp);
@@ -824,13 +824,10 @@ async function interceptAndRestructurePrompt(data) {
             let totalLen = preservedLen + recomputeLen;
             let recomputeRatio = totalLen === 0 ? 0 : (recomputeLen / totalLen);
             
-            // 徹底移除 isPureContextShift 妥協演算法，嚴格執行「包括任何因素」的 10% 觸發原則
-
             if (recomputeRatio >= 0.10 && Settings.showResetPrompt && !justSetDynamicMode) {
                 requireResetConfirm = true;
                 dropPercentStr = (recomputeRatio * 100).toFixed(1);
                 
-                // 自適應判斷原因
                 if (P[breakIndex]?.tag === 'SYS' || L[breakIndex]?.tag === 'SYS') {
                     causeText = "大幅修改或删除了【设定 / 世界书 / 预设提示词】";
                 } else {
@@ -895,7 +892,6 @@ async function interceptAndRestructurePrompt(data) {
             Logger.warn('[时空回溯] 用户选择无视本次修改，强行使用旧版缓存。');
             setTopBarStatus('#c678dd', '缓存: 强行冻结旧版');
             
-            // 直接使用舊的 frozenSequence，完全拋棄這次的修改
             const finalStream = [...state.frozenSequence];
             if (currentTurn.user) finalStream.push(currentTurn.user);
             for (const p of currentTurn.prefills) finalStream.push(p);
@@ -1032,7 +1028,7 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v29-opt-drawer">
+        <div class="inline-drawer" id="ds-v30-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b><span class="fa-solid fa-microchip"></span> DeepSeek 缓存优化器</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
@@ -1223,7 +1219,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v29_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v30_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("备份文件已导出！");
         });
@@ -1260,7 +1256,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ DeepSeek 缓存优化器 v29 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ DeepSeek 缓存优化器 v30 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
