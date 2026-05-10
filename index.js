@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (全強制水平排版與診斷中心樣式)
+// 1. 樣式注入 (修復 UI 排版與換行問題)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -17,8 +17,10 @@ const injectCSS = () => {
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
 
         .ds-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%; gap: 10px; }
-        .ds-row-left { display: flex; flex-direction: row; justify-content: flex-start; align-items: center; gap: 8px; cursor: pointer; color: #abb2bf; font-size: 0.9em; white-space: nowrap; flex: 1; }
-        .ds-row-left input[type="checkbox"] { margin: 0; }
+        
+        /* 修復：讓文字可以正常換行，核取方塊不變形 */
+        .ds-row-left { display: flex; flex-direction: row; justify-content: flex-start; align-items: flex-start; gap: 8px; cursor: pointer; color: #abb2bf; font-size: 0.9em; flex: 1; line-height: 1.4; word-break: break-word; white-space: normal; }
+        .ds-row-left input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
         
         .ds-log-toolbar { display: flex; gap: 5px; margin-bottom: 5px; align-items: center; }
         .ds-log-filter { cursor: pointer; padding: 2px 8px; border-radius: 12px; font-size: 10px; background: rgba(255,255,255,0.1); color: #abb2bf; transition: 0.2s; }
@@ -58,13 +60,14 @@ const injectCSS = () => {
         .ds-diff-del { background: rgba(224, 108, 117, 0.15); border-left: 3px solid #e06c75; padding: 6px 10px; margin-bottom: 4px; border-radius: 0 4px 4px 0; color: #e06c75; word-wrap: break-word; }
         .ds-diff-add { background: rgba(152, 195, 121, 0.15); border-left: 3px solid #98c379; padding: 6px 10px; border-radius: 0 4px 4px 0; color: #98c379; word-wrap: break-word; }
         
-        .ds-btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 25px; }
+        .ds-btn-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 20px; }
         .ds-btn-col { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-        .ds-btn { padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; transition: all 0.2s; position: relative; overflow: hidden; display:flex; align-items:center; justify-content:center; gap:8px;}
+        .ds-btn { padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 14px; transition: all 0.2s; position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:10px; text-align:left;}
         .ds-btn:hover { transform: translateY(-2px); filter: brightness(1.15); box-shadow: 0 5px 15px rgba(0,0,0,0.4); }
         .ds-btn:active { transform: translateY(0); }
         .ds-btn-accept { background: #98c379; color: #121212; }
         .ds-btn-abort { background: #e06c75; color: #fff; }
+        .ds-btn-revert { background: #c678dd; color: #fff; }
         .ds-btn-bypass { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
         .ds-btn-reset { background: rgba(224, 108, 117, 0.1); color: #e06c75; border: 1px solid #e06c75; }
         .ds-btn-blue { background: #56b6c2; color: #121212; }
@@ -90,9 +93,9 @@ const injectCSS = () => {
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v26 || extension_settings.ds_cache_v25 || {};
-    if (!extension_settings.ds_cache_v27) {
-        extension_settings.ds_cache_v27 = {
+    const oldSettings = extension_settings.ds_cache_v27 || extension_settings.ds_cache_v26 || {};
+    if (!extension_settings.ds_cache_v28) {
+        extension_settings.ds_cache_v28 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -103,12 +106,12 @@ function initSettings() {
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
             hotkeysEnabled: oldSettings.hotkeysEnabled ?? true,
             autoPinThreshold: oldSettings.autoPinThreshold ?? 0,
-            dynamicMode: oldSettings.dynamicMode ?? 0, // 0:詢問, 1:快照歸檔, 2:沉底, 3:忽略, 4:原位, 5:刪除
+            dynamicMode: oldSettings.dynamicMode ?? 0,
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v27;
+    Settings = extension_settings.ds_cache_v28;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -116,7 +119,7 @@ function initSettings() {
 function safeSave() {
     try { 
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v27_snapshot', JSON.stringify(Settings));
+        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v28_snapshot', JSON.stringify(Settings));
     } 
     catch (e) {}
 }
@@ -257,7 +260,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理與擴充選單 (原生註冊法)
+// 4. 狀態管理與擴充選單 (原生註冊法修復)
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -305,20 +308,20 @@ function ensureTopMenuButton() {
     updateTopBarState();
 }
 
-// 魔法棒選單原生註冊
+// 修復：嚴格按照原生代碼結構註冊魔法棒選單
 function addResetMenuEntry() {
-    const menu = document.getElementById('extensions_menu') || document.getElementById('extensionsMenu');
+    const menu = document.getElementById('extensionsMenu') || document.getElementById('extensions_menu');
     if (!menu) {
         setTimeout(addResetMenuEntry, 300);
         return;
     }
     if (document.getElementById('ds-bottom-reset-btn')) return;
 
-    const toggleBtn = document.createElement('li');
+    const toggleBtn = document.createElement('div');
     toggleBtn.id = 'ds-bottom-reset-btn';
-    toggleBtn.className = 'menu_button interactable';
+    toggleBtn.className = 'list-group-item'; // 使用原生 class 確保水平排版
     toggleBtn.title = '清空当前聊天的缓存，让大模型完全重新阅读整个对话';
-    toggleBtn.innerHTML = '<span class="fa-solid fa-broom" style="color: #e06c75;"></span> 清空当前对话缓存';
+    toggleBtn.innerHTML = '<i class="fa-solid fa-broom" style="color: #e06c75;"></i> 清空当前对话缓存';
     toggleBtn.addEventListener('click', () => {
         resetCurrentCache();
         const menuJq = $('#extensions_menu');
@@ -454,7 +457,7 @@ function parseSTStream(stream) {
 }
 
 // ==========================================
-// 6. 診斷中心與小白友善攔截器 UI
+// 6. 診斷中心與自適應攔截器 UI
 // ==========================================
 function showDiagnosticCenter() {
     const chatKeyInfo = getChatKey();
@@ -523,25 +526,35 @@ function askDynamicPromptStrategyAsync() {
                     </p>
                     
                     <div class="ds-btn-col">
-                        <button class="ds-btn ds-btn-blue" id="ds-btn-dyn-1" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-camera-retro"></i> <b>方案 1：快照归档 (完美100%缓存，强烈推荐)</b><br>
-                            <span style="font-size:11px; font-weight:normal;">把它当做日记存下来，新的写在最后面。大模型能看到时间流逝，且完全不破坏缓存！</span>
+                        <button class="ds-btn ds-btn-blue" id="ds-btn-dyn-1">
+                            <div style="flex:1;">
+                                <i class="fa-solid fa-camera-retro"></i> <b>方案 1：快照归档 (完美100%缓存，强烈推荐)</b><br>
+                                <span style="font-size:11px; font-weight:normal;">把它当做日记存下来，新的写在最后面。大模型能看到时间流逝，且完全不破坏缓存！</span>
+                            </div>
                         </button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-2" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-anchor"></i> <b>方案 2：沉底更新 (99%缓存)</b><br>
-                            <span style="font-size:11px; font-weight:normal;">把它抽出来放在最后面。只会稍微影响一点点缓存。</span>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-2">
+                            <div style="flex:1;">
+                                <i class="fa-solid fa-anchor"></i> <b>方案 2：沉底更新 (99%缓存)</b><br>
+                                <span style="font-size:11px; font-weight:normal;">把它抽出来放在最后面。只会稍微影响一点点缓存。</span>
+                            </div>
                         </button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-3" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-snowflake"></i> <b>方案 3：智能忽略 (100%缓存)</b><br>
-                            <span style="font-size:11px; font-weight:normal;">如果只是时间变了，直接无视，永远用第一次的时间。</span>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-3">
+                            <div style="flex:1;">
+                                <i class="fa-solid fa-snowflake"></i> <b>方案 3：智能忽略 (100%缓存)</b><br>
+                                <span style="font-size:11px; font-weight:normal;">如果只是时间变了，直接无视，永远用第一次的时间。</span>
+                            </div>
                         </button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-4" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-rotate"></i> <b>方案 4：原位更新 (极度费算力)</b><br>
-                            <span style="font-size:11px; font-weight:normal;">让它在中间变。警告：每次都会破坏大量缓存！</span>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-4">
+                            <div style="flex:1;">
+                                <i class="fa-solid fa-rotate"></i> <b>方案 4：原位更新 (极度费算力)</b><br>
+                                <span style="font-size:11px; font-weight:normal;">让它在中间变。警告：每次都会破坏大量缓存！</span>
+                            </div>
                         </button>
-                        <button class="ds-btn ds-btn-reset" id="ds-btn-dyn-5" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-trash"></i> <b>方案 5：彻底删除 (100%缓存)</b><br>
-                            <span style="font-size:11px; font-weight:normal;">直接把这句话删掉，AI 永远看不到它。</span>
+                        <button class="ds-btn ds-btn-reset" id="ds-btn-dyn-5">
+                            <div style="flex:1;">
+                                <i class="fa-solid fa-trash"></i> <b>方案 5：彻底删除 (100%缓存)</b><br>
+                                <span style="font-size:11px; font-weight:normal;">直接把这句话删掉，AI 永远看不到它。</span>
+                            </div>
                         </button>
                     </div>
                 </div>
@@ -559,7 +572,7 @@ function askDynamicPromptStrategyAsync() {
     });
 }
 
-function askUserForResetAsync(dropPercent, mapInfo) {
+function askUserForResetAsync(dropPercent, mapInfo, causeText) {
     return new Promise(resolve => {
         let progColor = '#98c379'; 
         if (dropPercent >= 50) progColor = '#e06c75'; 
@@ -571,17 +584,28 @@ function askUserForResetAsync(dropPercent, mapInfo) {
                     <h2 class="ds-modal-title"><span class="fa-solid fa-triangle-exclamation"></span> ⚠️ 发现记忆断层 (缓存失效警告)</h2>
                     <p class="ds-modal-text" style="line-height: 1.5;">
                         大模型就像看书，如果中间有一页被修改了，它就要把那一页到结尾全部重新看一遍（这就是消耗算力和时间的原因）。<br>
-                        系统发现您修改了过去的聊天记录，导致约 <b style="color:${progColor}">${dropPercent}%</b> 的内容需要重新阅读。<br>
-                        系统已在后台帮您完成了无缝修补，请问要如何处理本次发送？
+                        系统检测到您 <b>${causeText}</b>，导致约 <b style="color:${progColor}">${dropPercent}%</b> 的内容需要重新阅读。<br>
+                        请问要如何处理本次发送？
                     </p>
                     <div class="ds-progress-container"><div class="ds-progress-bar" id="ds-prog-bar" style="background: ${progColor};"></div></div>
                     <div class="ds-map-box">${mapInfo}</div>
                     
-                    <div class="ds-btn-grid">
-                        <button class="ds-btn ds-btn-accept" id="ds-btn-accept"><i class="fa-solid fa-check"></i> 帮我无缝修补，继续发送 (推荐)</button>
-                        <button class="ds-btn ds-btn-abort" id="ds-btn-abort"><i class="fa-solid fa-ban"></i> 物理拔管！立刻停止发送 (让我退回去改改)</button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-bypass" title="关闭本次的优化，完全按ST原本的乱序发送"><i class="fa-solid fa-forward"></i> 不管缓存，按原样硬发</button>
-                        <button class="ds-btn ds-btn-reset" id="ds-btn-reset" title="清空当前缓存，完全重新开始建立缓存库"><i class="fa-solid fa-trash"></i> 撕掉整本书，让大模型从头重新读</button>
+                    <div class="ds-btn-col">
+                        <button class="ds-btn ds-btn-accept" id="ds-btn-accept">
+                            <div style="flex:1;"><i class="fa-solid fa-check"></i> <b>帮我无缝修补，继续发送 (推荐)</b><br><span style="font-size:11px; font-weight:normal;">我确实要改这些内容。消耗算力重新建立缓存。</span></div>
+                        </button>
+                        <button class="ds-btn ds-btn-revert" id="ds-btn-revert">
+                            <div style="flex:1;"><i class="fa-solid fa-clock-rotate-left"></i> <b>时空回溯：强行无视修改，使用旧版</b><br><span style="font-size:11px; font-weight:normal;">我不想浪费算力。无视我刚才的修改，强行用旧版内容发送 (保住100%缓存)。</span></div>
+                        </button>
+                        <button class="ds-btn ds-btn-abort" id="ds-btn-abort">
+                            <div style="flex:1;"><i class="fa-solid fa-ban"></i> <b>物理拔管！立刻停止发送</b><br><span style="font-size:11px; font-weight:normal;">等一下，我改错了！立刻中止对话，让我退回去修改。</span></div>
+                        </button>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-bypass">
+                            <div style="flex:1;"><i class="fa-solid fa-forward"></i> <b>不管缓存，按原样硬发</b><br><span style="font-size:11px; font-weight:normal;">关闭本次优化，完全按 ST 原本的乱序发送。</span></div>
+                        </button>
+                        <button class="ds-btn ds-btn-reset" id="ds-btn-reset">
+                            <div style="flex:1;"><i class="fa-solid fa-trash"></i> <b>撕掉整本书，从头重读</b><br><span style="font-size:11px; font-weight:normal;">清空当前所有缓存，让大模型完全重新开始阅读。</span></div>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -592,6 +616,7 @@ function askUserForResetAsync(dropPercent, mapInfo) {
         const cleanup = () => { $('#ds-modal-wrapper').remove(); document.removeEventListener('keydown', keyHandler, true); };
         
         $('#ds-btn-accept').click(() => { cleanup(); resolve('accept'); });
+        $('#ds-btn-revert').click(() => { cleanup(); resolve('revert'); });
         $('#ds-btn-abort').click(() => { cleanup(); resolve('abort'); });
         $('#ds-btn-bypass').click(() => { cleanup(); resolve('bypass'); });
         $('#ds-btn-reset').click(() => { cleanup(); resolve('force_reset'); });
@@ -688,23 +713,21 @@ async function interceptAndRestructurePrompt(data) {
                     const matchedItem = sysPool[bestIdx];
 
                     if (Settings.dynamicMode === 1) { 
-                        // 快照歸檔 (Snapshot Archive)：保留舊的，不消耗新的 (讓新的自然墊底)
                         newFrozenSequence.push(item);
                         Logger.debug(`[动态提示词-快照归档] 冻结历史快照: ${truncateLog(item.content)}`);
                     } else {
-                        // 其他模式都需要消耗掉 sysPool 中的新項目
                         sysPool.splice(bestIdx, 1);
 
-                        if (Settings.dynamicMode === 2) { // 沉底更新
+                        if (Settings.dynamicMode === 2) { 
                             dynamicPromptsToSink.push(matchedItem);
                             Logger.debug(`[动态提示词-沉底锚定] 已抽离并准备移至尾部: ${truncateLog(matchedItem.content)}`);
-                        } else if (Settings.dynamicMode === 3) { // 智能忽略
+                        } else if (Settings.dynamicMode === 3) { 
                             newFrozenSequence.push(item);
                             Logger.debug(`[动态提示词-智能忽略] 强制冻结旧版: ${truncateLog(item.content)}`);
-                        } else if (Settings.dynamicMode === 4) { // 原位更新
+                        } else if (Settings.dynamicMode === 4) { 
                             newFrozenSequence.push(matchedItem);
                             Logger.debug(`[动态提示词-原位更新] -> ${truncateLog(matchedItem.content)}`);
-                        } else if (Settings.dynamicMode === 5) { // 徹底刪除
+                        } else if (Settings.dynamicMode === 5) { 
                             Logger.debug(`[动态提示词-彻底删除] 已移除: ${truncateLog(item.content)}`);
                         }
                     }
@@ -773,11 +796,12 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         // ==========================================
-        // 5. 精準流失率演算法 (True Prefix Penalty)
+        // 5. 精準流失率演算法與自適應大幅度修改偵測
         // ==========================================
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
         let mapInfoText = "无变更";
+        let causeText = "修改了内容";
         let justSetDynamicMode = (needsAsk === true); 
 
         if (state.lastSentSequence && state.lastSentSequence.length > 0) {
@@ -823,11 +847,18 @@ async function interceptAndRestructurePrompt(data) {
                 Logger.log(`[自然推移] 顶部的旧历史被自然挤出，不视为破坏缓存。`, LogLevels.DETAILED); 
             }
 
-            if (recomputeRatio > 0.10 && Settings.showResetPrompt && !justSetDynamicMode) {
+            if (recomputeRatio >= 0.10 && Settings.showResetPrompt && !justSetDynamicMode) {
                 requireResetConfirm = true;
                 dropPercentStr = (recomputeRatio * 100).toFixed(1);
                 
-                const tagHtml = `<span class="ds-tag ds-tag-${P[breakIndex]?.tag}">[${P[breakIndex]?.tag}]</span>`;
+                // 自適應判斷原因
+                if (P[breakIndex]?.tag === 'SYS' || L[breakIndex]?.tag === 'SYS') {
+                    causeText = "大幅修改或删除了【设定 / 世界书 / 预设提示词】";
+                } else {
+                    causeText = "修改或删除了【历史聊天记录】";
+                }
+                
+                const tagHtml = `<span class="ds-tag ds-tag-${P[breakIndex]?.tag || L[breakIndex]?.tag}">[${P[breakIndex]?.tag || L[breakIndex]?.tag}]</span>`;
                 const oldContent = escapeHtml(L[breakIndex]?.content || '∅').substring(0, 100).replace(/\n/g, ' ↵ ');
                 const newContent = escapeHtml(P[breakIndex]?.content || '∅').substring(0, 100).replace(/\n/g, ' ↵ ');
                 
@@ -855,7 +886,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "缓存优化器");
                 decision = 'accept';
             } else {
-                decision = await askUserForResetAsync(dropPercentStr, mapInfoText);
+                decision = await askUserForResetAsync(dropPercentStr, mapInfoText, causeText);
             }
         }
 
@@ -868,6 +899,24 @@ async function interceptAndRestructurePrompt(data) {
             // 抽空陣列並拋出異常，徹底打斷 ST 的發送 Promise 鏈
             stream.splice(0, stream.length); 
             throw new Error("Generation aborted by DeepSeek Cache Optimizer."); 
+        }
+
+        // 時空回溯：強行無視修改
+        if (decision === 'revert') {
+            Logger.warn('[时空回溯] 用户选择无视本次修改，强行使用旧版缓存。');
+            setTopBarStatus('#c678dd', '缓存: 强行冻结旧版');
+            
+            // 直接使用舊的 frozenSequence，完全拋棄這次的修改
+            const finalStream = [...state.frozenSequence];
+            if (currentTurn.user) finalStream.push(currentTurn.user);
+            for (const p of currentTurn.prefills) finalStream.push(p);
+
+            state.lastSentSequence = finalStream;
+            safeSave();
+
+            stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
+            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "缓存优化器");
+            return;
         }
 
         if (decision === 'bypass') {
@@ -994,7 +1043,7 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v27-opt-drawer">
+        <div class="inline-drawer" id="ds-v28-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b><span class="fa-solid fa-microchip"></span> DeepSeek 缓存优化器</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
@@ -1008,11 +1057,11 @@ async function setupUI() {
                     </div>
                     <div class="ds-opt-content">
                         <div class="ds-row">
-                            <label class="ds-row-left" style="color:#00e5ff; font-weight:bold;"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> ✅ 开启缓存优化 (核心功能)</label>
+                            <label class="ds-row-left" style="color:#00e5ff; font-weight:bold;"><input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 开启缓存优化 (核心功能)</label>
                         </div>
-                        <div class="ds-row"><label class="ds-row-left" style="color:#c678dd;"><input type="checkbox" id="ds-cache-zen" ${Settings.zenMode ? 'checked' : ''}> 🧘 免打扰模式 (隐藏所有屏幕右上角的黑色提示框)</label></div>
-                        <div class="ds-row"><label class="ds-row-left" style="color:#e5c07b;"><input type="checkbox" id="ds-cache-auto-accept" ${Settings.autoAccept ? 'checked' : ''}> ⚡ 自动修复缓存断层 (遇到冲突时，不弹窗询问直接后台修复并发送)</label></div>
-                        <div class="ds-row"><label class="ds-row-left" style="color:#98c379;"><input type="checkbox" id="ds-cache-hotkeys" ${Settings.hotkeysEnabled ? 'checked' : ''}> ⌨️ 启用快捷键 (Ctrl+Alt+C 开关 / R 重置 / Z 免打扰)</label></div>
+                        <div class="ds-row"><label class="ds-row-left" style="color:#c678dd;"><input type="checkbox" id="ds-cache-zen" ${Settings.zenMode ? 'checked' : ''}> 免打扰模式 (隐藏所有屏幕右上角的黑色提示框)</label></div>
+                        <div class="ds-row"><label class="ds-row-left" style="color:#e5c07b;"><input type="checkbox" id="ds-cache-auto-accept" ${Settings.autoAccept ? 'checked' : ''}> 自动修复缓存断层 (遇到冲突时，不弹窗询问直接后台修复并发送)</label></div>
+                        <div class="ds-row"><label class="ds-row-left" style="color:#98c379;"><input type="checkbox" id="ds-cache-hotkeys" ${Settings.hotkeysEnabled ? 'checked' : ''}> 启用快捷键 (Ctrl+Alt+C 开关 / R 重置 / Z 免打扰)</label></div>
                     </div>
                 </div>
 
@@ -1023,7 +1072,7 @@ async function setupUI() {
                     </div>
                     <div class="ds-opt-content">
                         <p style="font-size:12px; color:#abb2bf; margin:0;">如果你的缓存命中率一直很低，可能是因为预设中包含了每次都会改变的变量（如时间）。点击下方按钮进行诊断。</p>
-                        <button id="ds-btn-diagnostic" class="ds-btn ds-btn-blue" style="padding:8px;"><i class="fa-solid fa-magnifying-glass"></i> 扫描当前对话的动态提示词</button>
+                        <button id="ds-btn-diagnostic" class="ds-btn ds-btn-blue" style="padding:8px; justify-content:center;"><i class="fa-solid fa-magnifying-glass"></i> 扫描当前对话的动态提示词</button>
                         <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); width:100%; margin:2px 0;">
                         <div class="ds-row">
                             <span style="font-size:0.85em; color:#abb2bf;" title="当系统检测到每次都会改变的提示词时，该如何处理？">自动处理模式:</span>
@@ -1045,9 +1094,9 @@ async function setupUI() {
                         <span><i class="fa-solid fa-satellite-dish"></i> 提醒设置</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
-                        <div class="ds-row"><label class="ds-row-left" title="修改早期的对话会让大模型缓存失效"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 💬 当我修改或删除【历史聊天记录】时提醒我</label></div>
+                        <div class="ds-row"><label class="ds-row-left" title="修改早期的对话会让大模型缓存失效"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 当我修改或删除【历史聊天记录】时提醒我</label></div>
                         <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); width:100%; margin:2px 0;">
-                        <div class="ds-row"><label class="ds-row-left" style="color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 🛑 当发送可能导致大量缓存失效 (超过10%) 时，弹出确认警告窗口</label></div>
+                        <div class="ds-row"><label class="ds-row-left" style="color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 当发送可能导致大量缓存失效 (超过10%) 时，弹出确认警告窗口</label></div>
                     </div>
                 </div>
                 
@@ -1098,8 +1147,8 @@ async function setupUI() {
                     <div class="ds-opt-content">
                         <div id="ds-chat-list-container" class="ds-chat-container"></div>
                         <div class="ds-row">
-                            <button id="ds-btn-deep-clean" class="menu_button" style="flex:1; font-size:0.85em; color:#e5c07b; border:1px solid #e5c07b; background:none;" title="清理所有没被锁定，且超过30天没玩过的旧存档">🧹 深度清理无效存档</button>
-                            <button id="ds-cache-factory-reset" class="menu_button" style="flex:1; font-size:0.85em; color:#e06c75; border:1px solid #e06c75; background:none;" title="删掉所有记录，一切重来">💀 格式化</button>
+                            <button id="ds-btn-deep-clean" class="menu_button" style="flex:1; font-size:0.85em; color:#e5c07b; border:1px solid #e5c07b; background:none; justify-content:center;" title="清理所有没被锁定，且超过30天没玩过的旧存档">🧹 深度清理无效存档</button>
+                            <button id="ds-cache-factory-reset" class="menu_button" style="flex:1; font-size:0.85em; color:#e06c75; border:1px solid #e06c75; background:none; justify-content:center;" title="删掉所有记录，一切重来">💀 格式化</button>
                         </div>
                     </div>
                 </div>
@@ -1185,7 +1234,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v27_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v28_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("备份文件已导出！");
         });
@@ -1222,7 +1271,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ DeepSeek 缓存优化器 v27 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ DeepSeek 缓存优化器 v28 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
