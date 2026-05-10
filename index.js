@@ -93,9 +93,9 @@ const injectCSS = () => {
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v29 || extension_settings.ds_cache_v28 || {};
-    if (!extension_settings.ds_cache_v30) {
-        extension_settings.ds_cache_v30 = {
+    const oldSettings = extension_settings.ds_cache_v30 || extension_settings.ds_cache_v29 || {};
+    if (!extension_settings.ds_cache_v31) {
+        extension_settings.ds_cache_v31 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -111,7 +111,7 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v30;
+    Settings = extension_settings.ds_cache_v31;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -119,7 +119,7 @@ function initSettings() {
 function safeSave() {
     try { 
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v30_snapshot', JSON.stringify(Settings));
+        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v31_snapshot', JSON.stringify(Settings));
     } 
     catch (e) {}
 }
@@ -757,16 +757,30 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         // ---------------------------------------------------------
-        // 階段 3：嚴格排序追加 (修復：先追加系統提示詞，再追加歷史對話)
+        // 階段 3：嚴格排序追加 (修復：首次建檔與後續追加的自適應排序)
         // ---------------------------------------------------------
-        for (let sys of sysPool) {
-            newFrozenSequence.push(sys);
-            Logger.debug(`[追加至尾部] 新增设定/世界书/动态快照: ${truncateLog(sys.content)}`);
+        if (state.frozenSequence.length === 0) {
+            // 首次建檔 (Turn 1)：系統提示詞 -> 歷史對話
+            for (let sys of sysPool) {
+                newFrozenSequence.push(sys);
+                Logger.debug(`[首次建檔] 提示词/设定: ${truncateLog(sys.content)}`);
+            }
+            for (let h of remainingHistory) {
+                newFrozenSequence.push(h);
+                Logger.debug(`[首次建檔] 历史对话: ${truncateLog(h.content)}`);
+            }
+        } else {
+            // 後續追加 (Turn 2+)：新歷史對話 -> 新提示詞/世界書/動態快照
+            for (let h of remainingHistory) {
+                newFrozenSequence.push(h);
+                Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
+            }
+            for (let sys of sysPool) {
+                newFrozenSequence.push(sys);
+                Logger.debug(`[追加至尾部] 新增设定/世界书/动态快照: ${truncateLog(sys.content)}`);
+            }
         }
-        for (let h of remainingHistory) {
-            newFrozenSequence.push(h);
-            Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
-        }
+
         for (let dp of dynamicPromptsToSink) {
             newFrozenSequence.push(dp);
             Logger.debug(`[追加至尾部] 动态提示词锚定: ${truncateLog(dp.content)}`);
@@ -1028,7 +1042,7 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v30-opt-drawer">
+        <div class="inline-drawer" id="ds-v31-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b><span class="fa-solid fa-microchip"></span> DeepSeek 缓存优化器</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
@@ -1219,7 +1233,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v30_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v31_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("备份文件已导出！");
         });
@@ -1256,7 +1270,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ DeepSeek 缓存优化器 v30 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ DeepSeek 缓存优化器 v31 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
