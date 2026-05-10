@@ -90,9 +90,9 @@ const injectCSS = () => {
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v25 || extension_settings.ds_cache_v24 || {};
-    if (!extension_settings.ds_cache_v26) {
-        extension_settings.ds_cache_v26 = {
+    const oldSettings = extension_settings.ds_cache_v26 || extension_settings.ds_cache_v25 || {};
+    if (!extension_settings.ds_cache_v27) {
+        extension_settings.ds_cache_v27 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -103,12 +103,12 @@ function initSettings() {
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
             hotkeysEnabled: oldSettings.hotkeysEnabled ?? true,
             autoPinThreshold: oldSettings.autoPinThreshold ?? 0,
-            dynamicMode: oldSettings.dynamicMode ?? 0, // 0:詢問, 1:沉底, 2:原位, 3:凍結, 4:刪除, 5:智能忽略
+            dynamicMode: oldSettings.dynamicMode ?? 0, // 0:詢問, 1:快照歸檔, 2:沉底, 3:忽略, 4:原位, 5:刪除
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v26;
+    Settings = extension_settings.ds_cache_v27;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -116,7 +116,7 @@ function initSettings() {
 function safeSave() {
     try { 
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v26_snapshot', JSON.stringify(Settings));
+        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v27_snapshot', JSON.stringify(Settings));
     } 
     catch (e) {}
 }
@@ -180,7 +180,7 @@ function performGarbageCollection() {
 }
 
 // ==========================================
-// 3. 醫療級日誌系統 (增強版)
+// 3. 醫療級日誌系統
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3 };
 
@@ -257,7 +257,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理與擴充選單 (正規註冊)
+// 4. 狀態管理與擴充選單 (原生註冊法)
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -303,6 +303,28 @@ function ensureTopMenuButton() {
         else if ($('#right-nav-extensions').length > 0) $('#right-nav-extensions').append(btn);
     }
     updateTopBarState();
+}
+
+// 魔法棒選單原生註冊
+function addResetMenuEntry() {
+    const menu = document.getElementById('extensions_menu') || document.getElementById('extensionsMenu');
+    if (!menu) {
+        setTimeout(addResetMenuEntry, 300);
+        return;
+    }
+    if (document.getElementById('ds-bottom-reset-btn')) return;
+
+    const toggleBtn = document.createElement('li');
+    toggleBtn.id = 'ds-bottom-reset-btn';
+    toggleBtn.className = 'menu_button interactable';
+    toggleBtn.title = '清空当前聊天的缓存，让大模型完全重新阅读整个对话';
+    toggleBtn.innerHTML = '<span class="fa-solid fa-broom" style="color: #e06c75;"></span> 清空当前对话缓存';
+    toggleBtn.addEventListener('click', () => {
+        resetCurrentCache();
+        const menuJq = $('#extensions_menu');
+        if(menuJq.hasClass('open')) menuJq.removeClass('open').hide();
+    });
+    menu.appendChild(toggleBtn);
 }
 
 function resetCurrentCache() {
@@ -363,7 +385,6 @@ function getSimilarity(str1, str2) {
     return union <= 0 ? 1 : matchCount / union;
 }
 
-// 簡易的前後綴比對 Diff 演算法 (專門抓取中間變數改變)
 function simpleDiffHighlight(oldStr, newStr) {
     let start = 0;
     while(start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) start++;
@@ -433,7 +454,7 @@ function parseSTStream(stream) {
 }
 
 // ==========================================
-// 6. 診斷中心與攔截器 UI
+// 6. 診斷中心與小白友善攔截器 UI
 // ==========================================
 function showDiagnosticCenter() {
     const chatKeyInfo = getChatKey();
@@ -443,14 +464,13 @@ function showDiagnosticCenter() {
     if (!state || !state.dynamicAnomalies || state.dynamicAnomalies.length === 0) {
         contentHtml = `<div style="text-align:center; padding: 30px; color:#98c379;"><i class="fa-solid fa-check-circle" style="font-size:30px; margin-bottom:10px;"></i><br>太棒了！当前对话没有检测到任何会破坏缓存的动态提示词。</div>`;
     } else {
-        const anomaly = state.dynamicAnomalies[state.dynamicAnomalies.length - 1]; // 取最新的一筆
+        const anomaly = state.dynamicAnomalies[state.dynamicAnomalies.length - 1]; 
         const diffHtml = simpleDiffHighlight(anomaly.oldText, anomaly.newText);
         
         contentHtml = `
             <p style="color:#abb2bf; font-size:13px; line-height:1.5;">
-                系统在您的提示词中发现了<b>每次都会自动改变</b>的内容（如上方的红绿高亮处）。<br>
-                这通常是因为您在 ST 的预设或世界书中使用了 <code>{{time}}</code>、<code>{{lastMessage}}</code> 等动态宏变量。<br>
-                如果放任它在中间改变，会<b>导致每次发送都破坏大量缓存，浪费算力与等待时间</b>！
+                大模型就像看书，如果中间有一句话每次都在变（比如时间、最新对话），它每次都要把后面的内容全部重新读一遍！<br>
+                系统抓到了这个捣蛋鬼（如下方的红绿高亮处）。请在设置中选择一个一劳永逸的解决方案。
             </p>
             
             <div class="ds-map-box" style="background:#1e1e24; border:1px solid #e06c75; padding:15px; font-size:12px; line-height:1.6;">
@@ -462,18 +482,18 @@ function showDiagnosticCenter() {
                 <ul class="ds-guide-list">
                     <li><b>方法 1：修改 ST 预设</b> - 去 ST 的「高级格式化」或「系统提示词」中，删掉包含 <code>{{time}}</code> 或 <code>{{date}}</code> 的句子。</li>
                     <li><b>方法 2：关闭动态注入</b> - 检查是否有开启「注入最新聊天记录到系统提示词」的插件，将其关闭。</li>
-                    <li><b>方法 3：移至底部</b> - 如果你一定要用动态变量，请在 ST 设置中，将该提示词的插入位置改为 <b>"在用户输入之前 (Before User Input)"</b>，这样它就不会破坏上方的缓存了。</li>
+                    <li><b>方法 3：移至底部</b> - 如果你一定要用动态变量，请在 ST 设置中，将该提示词的插入位置改为 <b>"在用户输入之前 (Before User Input)"</b>。</li>
                 </ul>
             </div>
 
             <div class="ds-guide-box" style="border-left-color: #56b6c2;">
                 <div class="ds-guide-title"><i class="fa-solid fa-robot"></i> 插件自动处理方案 (治标，请在设置中选择)</div>
                 <ul class="ds-guide-list">
-                    <li><b>【方案 1】沉底更新 (强烈推荐)</b>：插件会自动把它抽出来，强行垫在最底部。牺牲1回合缓存，保住未来所有回合。</li>
-                    <li><b>【方案 2】原位更新 (费算力)</b>：插件不管它，让它在中间改变。<b>警告：每次都会破坏缓存！</b></li>
-                    <li><b>【方案 3】强制冻结</b>：插件会无视它的变化，永远锁定第一次生成的文字。</li>
-                    <li><b>【方案 4】彻底删除</b>：插件会在发送前直接把它删掉，AI 永远看不到这句话。</li>
-                    <li><b>【方案 5】智能忽略</b>：如果改变的字数极少（相似度>95%），插件当做没看见，直接冻结旧版。</li>
+                    <li><b>【方案 1】快照归档 (完美100%缓存)</b>：把它当做日记存下来，新的写在最后面。大模型能看到时间流逝，且完全不破坏缓存！</li>
+                    <li><b>【方案 2】沉底更新 (99%缓存)</b>：把它抽出来放在最后面。只会稍微影响一点点缓存。</li>
+                    <li><b>【方案 3】智能忽略 (100%缓存)</b>：如果只是时间变了，直接无视，永远用第一次的时间。</li>
+                    <li><b>【方案 4】原位更新 (极度费算力)</b>：让它在中间变。<b>警告：每次都会破坏大量缓存！</b></li>
+                    <li><b>【方案 5】彻底删除 (100%缓存)</b>：直接把这句话删掉，AI 永远看不到它。</li>
                 </ul>
             </div>
         `;
@@ -496,33 +516,32 @@ function askDynamicPromptStrategyAsync() {
         const html = `
             <div class="ds-overlay" id="ds-modal-dynamic">
                 <div class="ds-modal ds-modal-blue">
-                    <h2 class="ds-modal-title ds-blue"><span class="fa-solid fa-wand-magic-sparkles"></span> 发现「动态提示词」</h2>
+                    <h2 class="ds-modal-title ds-blue"><span class="fa-solid fa-wand-magic-sparkles"></span> 发现「会自己变的文字」(动态提示词)</h2>
                     <p class="ds-modal-text" style="line-height: 1.5;">
-                        系统检测到您的预设中包含<b>每次都会自动改变</b>的提示词。<br>
-                        如果放任它在中间改变，会<b>导致每次发送都破坏大量缓存</b>！<br>
-                        请选择一种修复方案（选择后将永久自动处理，不再弹窗）：
+                        大模型就像看书，如果中间有一句话每次都在变（比如时间、最新对话），它每次都要把后面的内容全部重新读一遍！<br>
+                        系统检测到了这种文字。请选择一个一劳永逸的解决方案（选择后将永久自动处理，不再弹窗）：
                     </p>
                     
                     <div class="ds-btn-col">
                         <button class="ds-btn ds-btn-blue" id="ds-btn-dyn-1" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-anchor"></i> <b>方案 1：沉底动态更新 (强烈推荐)</b><br>
-                            <span style="font-size:11px; font-weight:normal;">将其强制锁定在当前输入的前1位。本次会重算，但以后它的任何变化都不会再破坏上方的缓存！</span>
-                        </button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-5" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-brain"></i> <b>方案 5：智能忽略微小变化</b><br>
-                            <span style="font-size:11px; font-weight:normal;">如果只是时间数字变了，直接无视并冻结旧版。保持100%缓存。</span>
-                        </button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-3" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-snowflake"></i> <b>方案 3：原位强制冻结</b><br>
-                            <span style="font-size:11px; font-weight:normal;">无视它的变化，永远锁定第一次的内容。100%保持缓存，但动态功能会失效。</span>
+                            <i class="fa-solid fa-camera-retro"></i> <b>方案 1：快照归档 (完美100%缓存，强烈推荐)</b><br>
+                            <span style="font-size:11px; font-weight:normal;">把它当做日记存下来，新的写在最后面。大模型能看到时间流逝，且完全不破坏缓存！</span>
                         </button>
                         <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-2" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-rotate"></i> <b>方案 2：原位同步更新</b><br>
-                            <span style="font-size:11px; font-weight:normal;">在原来的位置更新它。警告：这会导致每次发送都破坏缓存！</span>
+                            <i class="fa-solid fa-anchor"></i> <b>方案 2：沉底更新 (99%缓存)</b><br>
+                            <span style="font-size:11px; font-weight:normal;">把它抽出来放在最后面。只会稍微影响一点点缓存。</span>
                         </button>
-                        <button class="ds-btn ds-btn-reset" id="ds-btn-dyn-4" style="justify-content:flex-start; text-align:left;">
-                            <i class="fa-solid fa-trash"></i> <b>方案 4：彻底删除</b><br>
-                            <span style="font-size:11px; font-weight:normal;">直接把这个烦人的提示词删掉。</span>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-3" style="justify-content:flex-start; text-align:left;">
+                            <i class="fa-solid fa-snowflake"></i> <b>方案 3：智能忽略 (100%缓存)</b><br>
+                            <span style="font-size:11px; font-weight:normal;">如果只是时间变了，直接无视，永远用第一次的时间。</span>
+                        </button>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-dyn-4" style="justify-content:flex-start; text-align:left;">
+                            <i class="fa-solid fa-rotate"></i> <b>方案 4：原位更新 (极度费算力)</b><br>
+                            <span style="font-size:11px; font-weight:normal;">让它在中间变。警告：每次都会破坏大量缓存！</span>
+                        </button>
+                        <button class="ds-btn ds-btn-reset" id="ds-btn-dyn-5" style="justify-content:flex-start; text-align:left;">
+                            <i class="fa-solid fa-trash"></i> <b>方案 5：彻底删除 (100%缓存)</b><br>
+                            <span style="font-size:11px; font-weight:normal;">直接把这句话删掉，AI 永远看不到它。</span>
                         </button>
                     </div>
                 </div>
@@ -549,20 +568,20 @@ function askUserForResetAsync(dropPercent, mapInfo) {
         const html = `
             <div class="ds-overlay" id="ds-modal-wrapper">
                 <div class="ds-modal">
-                    <h2 class="ds-modal-title"><span class="fa-solid fa-triangle-exclamation"></span> 缓存命中率警告</h2>
+                    <h2 class="ds-modal-title"><span class="fa-solid fa-triangle-exclamation"></span> ⚠️ 发现记忆断层 (缓存失效警告)</h2>
                     <p class="ds-modal-text" style="line-height: 1.5;">
-                        检测到您修改或删除了较早的文本内容。<br>
-                        由于大模型的严格缓存机制，发生断点<b>之后的所有内容</b>（约 <b style="color:${progColor}">${dropPercent}%</b> 的文本）都必须重新消耗算力计算。<br>
+                        大模型就像看书，如果中间有一页被修改了，它就要把那一页到结尾全部重新看一遍（这就是消耗算力和时间的原因）。<br>
+                        系统发现您修改了过去的聊天记录，导致约 <b style="color:${progColor}">${dropPercent}%</b> 的内容需要重新阅读。<br>
                         系统已在后台帮您完成了无缝修补，请问要如何处理本次发送？
                     </p>
                     <div class="ds-progress-container"><div class="ds-progress-bar" id="ds-prog-bar" style="background: ${progColor};"></div></div>
                     <div class="ds-map-box">${mapInfo}</div>
                     
                     <div class="ds-btn-grid">
-                        <button class="ds-btn ds-btn-accept" id="ds-btn-accept"><i class="fa-solid fa-check"></i> 同步修复并发送 (推荐)</button>
-                        <button class="ds-btn ds-btn-abort" id="ds-btn-abort"><i class="fa-solid fa-ban"></i> 拦截发送 (物理拔管，终止生成)</button>
-                        <button class="ds-btn ds-btn-bypass" id="ds-btn-bypass" title="关闭本次的优化，完全按ST原本的乱序发送"><i class="fa-solid fa-forward"></i> 临时放行 (按原样发送)</button>
-                        <button class="ds-btn ds-btn-reset" id="ds-btn-reset" title="清空当前缓存，完全重新开始建立缓存库"><i class="fa-solid fa-trash"></i> 清空当前缓存重来</button>
+                        <button class="ds-btn ds-btn-accept" id="ds-btn-accept"><i class="fa-solid fa-check"></i> 帮我无缝修补，继续发送 (推荐)</button>
+                        <button class="ds-btn ds-btn-abort" id="ds-btn-abort"><i class="fa-solid fa-ban"></i> 物理拔管！立刻停止发送 (让我退回去改改)</button>
+                        <button class="ds-btn ds-btn-bypass" id="ds-btn-bypass" title="关闭本次的优化，完全按ST原本的乱序发送"><i class="fa-solid fa-forward"></i> 不管缓存，按原样硬发</button>
+                        <button class="ds-btn ds-btn-reset" id="ds-btn-reset" title="清空当前缓存，完全重新开始建立缓存库"><i class="fa-solid fa-trash"></i> 撕掉整本书，让大模型从头重新读</button>
                     </div>
                 </div>
             </div>
@@ -638,7 +657,7 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         if (detectedAnomalies.length > 0) {
-            state.dynamicAnomalies = detectedAnomalies; // 儲存供診斷中心使用
+            state.dynamicAnomalies = detectedAnomalies; 
         }
 
         if (needsAsk) {
@@ -649,7 +668,7 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         // ---------------------------------------------------------
-        // 階段 2：原位更新與同步邏輯
+        // 階段 2：原位更新與同步邏輯 (支援快照歸檔)
         // ---------------------------------------------------------
         let dynamicPromptsToSink = [];
 
@@ -667,25 +686,27 @@ async function interceptAndRestructurePrompt(data) {
                     sysPool.splice(bestIdx, 1); 
                 } else if (bestScore > thresholds.sys) {
                     const matchedItem = sysPool[bestIdx];
-                    sysPool.splice(bestIdx, 1);
 
-                    if (Settings.dynamicMode === 5 && bestScore > 0.95) { // 智能忽略
+                    if (Settings.dynamicMode === 1) { 
+                        // 快照歸檔 (Snapshot Archive)：保留舊的，不消耗新的 (讓新的自然墊底)
                         newFrozenSequence.push(item);
-                        Logger.debug(`[动态提示词-智能忽略] 相似度极高(${bestScore.toFixed(2)})，强制冻结旧版: ${truncateLog(item.content)}`);
-                    } else if (Settings.dynamicMode === 1) { // 沉底更新
-                        dynamicPromptsToSink.push(matchedItem);
-                        Logger.debug(`[动态提示词-沉底锚定] 已抽离并准备移至尾部: ${truncateLog(matchedItem.content)}`);
-                    } else if (Settings.dynamicMode === 2) { // 原位更新
-                        newFrozenSequence.push(matchedItem);
-                        Logger.debug(`[动态提示词-原位更新] -> ${truncateLog(matchedItem.content)}`);
-                    } else if (Settings.dynamicMode === 3) { // 強制凍結
-                        newFrozenSequence.push(item); 
-                        Logger.debug(`[动态提示词-强制冻结] 忽略新变化，保留旧版: ${truncateLog(item.content)}`);
-                    } else if (Settings.dynamicMode === 4) { // 徹底刪除
-                        Logger.debug(`[动态提示词-彻底删除] 已移除: ${truncateLog(item.content)}`);
+                        Logger.debug(`[动态提示词-快照归档] 冻结历史快照: ${truncateLog(item.content)}`);
                     } else {
-                        // 預設 fallback (原位更新)
-                        newFrozenSequence.push(matchedItem);
+                        // 其他模式都需要消耗掉 sysPool 中的新項目
+                        sysPool.splice(bestIdx, 1);
+
+                        if (Settings.dynamicMode === 2) { // 沉底更新
+                            dynamicPromptsToSink.push(matchedItem);
+                            Logger.debug(`[动态提示词-沉底锚定] 已抽离并准备移至尾部: ${truncateLog(matchedItem.content)}`);
+                        } else if (Settings.dynamicMode === 3) { // 智能忽略
+                            newFrozenSequence.push(item);
+                            Logger.debug(`[动态提示词-智能忽略] 强制冻结旧版: ${truncateLog(item.content)}`);
+                        } else if (Settings.dynamicMode === 4) { // 原位更新
+                            newFrozenSequence.push(matchedItem);
+                            Logger.debug(`[动态提示词-原位更新] -> ${truncateLog(matchedItem.content)}`);
+                        } else if (Settings.dynamicMode === 5) { // 徹底刪除
+                            Logger.debug(`[动态提示词-彻底删除] 已移除: ${truncateLog(item.content)}`);
+                        }
                     }
                 } else {
                     Logger.debug(`[原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
@@ -722,7 +743,7 @@ async function interceptAndRestructurePrompt(data) {
         }
         for (let sys of sysPool) {
             newFrozenSequence.push(sys);
-            Logger.debug(`[追加至尾部] 新增设定/世界书: ${truncateLog(sys.content)}`);
+            Logger.debug(`[追加至尾部] 新增设定/世界书/动态快照: ${truncateLog(sys.content)}`);
         }
         for (let dp of dynamicPromptsToSink) {
             newFrozenSequence.push(dp);
@@ -887,7 +908,7 @@ async function interceptAndRestructurePrompt(data) {
         }
 
     } catch (err) {
-        if (err.message === "Generation aborted by DeepSeek Cache Optimizer.") throw err; // 允許物理攔截異常向上拋出
+        if (err.message === "Generation aborted by DeepSeek Cache Optimizer.") throw err; 
         setTopBarStatus('#e06c75', '缓存: 发生崩溃');
         Logger.error('核心运算崩溃', err);
         throw err;
@@ -973,7 +994,7 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v26-opt-drawer">
+        <div class="inline-drawer" id="ds-v27-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
                 <b><span class="fa-solid fa-microchip"></span> DeepSeek 缓存优化器</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
@@ -1008,11 +1029,11 @@ async function setupUI() {
                             <span style="font-size:0.85em; color:#abb2bf;" title="当系统检测到每次都会改变的提示词时，该如何处理？">自动处理模式:</span>
                             <select id="ds-cache-dynamic-mode" class="text_pole" style="width:140px; padding:2px;">
                                 <option value="0" ${Settings.dynamicMode===0?'selected':''}>0: 首次弹窗询问我</option>
-                                <option value="1" ${Settings.dynamicMode===1?'selected':''}>1: 沉底更新 (推荐)</option>
-                                <option value="5" ${Settings.dynamicMode===5?'selected':''}>5: 智能忽略微小变化</option>
-                                <option value="2" ${Settings.dynamicMode===2?'selected':''}>2: 原位更新 (费算力)</option>
-                                <option value="3" ${Settings.dynamicMode===3?'selected':''}>3: 强制冻结旧版</option>
-                                <option value="4" ${Settings.dynamicMode===4?'selected':''}>4: 彻底删除</option>
+                                <option value="1" ${Settings.dynamicMode===1?'selected':''}>1: 快照归档 (完美100%)</option>
+                                <option value="2" ${Settings.dynamicMode===2?'selected':''}>2: 沉底更新 (99%缓存)</option>
+                                <option value="3" ${Settings.dynamicMode===3?'selected':''}>3: 智能忽略 (100%缓存)</option>
+                                <option value="4" ${Settings.dynamicMode===4?'selected':''}>4: 原位更新 (极度费算力)</option>
+                                <option value="5" ${Settings.dynamicMode===5?'selected':''}>5: 彻底删除</option>
                             </select>
                         </div>
                     </div>
@@ -1108,11 +1129,6 @@ async function setupUI() {
         
         $('#extensions_settings').append(html);
 
-        // 正規註冊：將按鈕注入到 ST 原生魔杖選單
-        const wandBtn = $(`<li id="ds-bottom-reset-btn" class="menu_button interactable" title="清空当前聊天的缓存，让大模型完全重新阅读整个对话"><span class="fa-solid fa-broom" style="color: #e06c75;"></span> 清空当前对话缓存</li>`);
-        wandBtn.on('click', () => { resetCurrentCache(); $('#extensions_menu').hide(); });
-        $('#extensions_menu').append(wandBtn);
-
         // UI 事件綁定
         $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); updateTopBarState(); });
         $('#ds-cache-zen').on('change', function () { Settings.zenMode = $(this).is(':checked'); safeSave(); updateTopBarState(); });
@@ -1167,10 +1183,9 @@ async function setupUI() {
         });
 
         $('#ds-btn-export').on('click', () => {
-            const blob = new Blob
-            ([JSON.stringify(Settings, null, 2)], { type: "application/json" });
+            const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v26_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v27_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("备份文件已导出！");
         });
@@ -1197,6 +1212,7 @@ jQuery(async () => {
         setupGlobalHotkeys(); 
         
         setTimeout(() => { ensureTopMenuButton(); }, 2000);
+        addResetMenuEntry(); // 啟動原生魔法棒選單註冊
         
         if (eventSource) {
             eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); renderChatsUI(); });
@@ -1206,7 +1222,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ DeepSeek 缓存优化器 v26 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ DeepSeek 缓存优化器 v27 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
