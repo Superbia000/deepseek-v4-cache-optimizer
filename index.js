@@ -88,7 +88,7 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態設定與「30秒精準冷卻」通知引擎
+// 2. 狀態設定與 30秒絕對節流閥 (30s Throttle)
 // ==========================================
 let Settings = {};
 
@@ -105,7 +105,7 @@ function initSettings() {
             toastHistory: oldSettings.toastHistory ?? true,
             showResetPrompt: oldSettings.showResetPrompt ?? true,
             autoAccept: oldSettings.autoAccept ?? false,
-            logLevel: oldSettings.logLevel ?? 2, // 預設為 DETAILED (2)
+            logLevel: oldSettings.logLevel ?? 2,
             tolerance: oldSettings.tolerance ?? 1,
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
             hotkeysEnabled: oldSettings.hotkeysEnabled ?? true,
@@ -133,18 +133,18 @@ function getTolerance() {
     return { sys: 0.05, his: 0.1 }; 
 }
 
-// 核心修正：30 秒絕對冷卻引擎，真正做到「當時當刻」且不洗頻
-const notificationCooldowns = {};
+// 核心修正：30 秒絕對節流閥 (30000ms Throttle)
+const triggerThrottlers = {};
 function triggerWarningImmediate(key, msg, enabled) {
     if (!Settings.enabled || !enabled) return;
     const now = Date.now();
-    // 設定 30,000 毫秒 (30秒) 的冷卻時間
-    if (!notificationCooldowns[key] || now - notificationCooldowns[key] > 30000) {
-        notificationCooldowns[key] = now; 
+    // 如果從未觸發，或距離上次觸發超過 30 秒 (30000ms)，才執行並重設計時器
+    if (!triggerThrottlers[key] || now - triggerThrottlers[key] > 30000) {
+        triggerThrottlers[key] = now;
         if (Settings.zenMode) {
             Logger.log(`[禪模式靜默攔截] ${msg}`, LogLevels.BASIC);
         } else {
-            if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DeepSeek 缓存', { timeOut: 3000 });
+            if (typeof toastr !== 'undefined') toastr.warning(msg, '⚙️ DeepSeek 优化缓存命中', { timeOut: 3000 });
         }
     }
 }
@@ -227,14 +227,12 @@ function logAt(level, type, msg) {
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     
-    // 輸出到 Console
     if (type === 'warn') console.warn(`%c[DS v22] 🌪️ ${msg}`, 'color: #ffaa00;');
     else if (type === 'error') console.error(`[DS v22] 🔴 ${msg}`);
     else if (type === 'map') console.log(`%c[DS v22] 🗺️ ${msg}`, 'color: #00e5ff;');
     else if (type === 'debug') console.log(`%c[DS v22] 🐛 ${msg}`, 'color: #c678dd;');
     else console.log(`%c[DS v22] ✅ ${msg}`, 'color: #00ff00;');
     
-    // 輸出到 UI 終端機
     const container = document.getElementById('ds-cache-log-container');
     if (container) {
         const line = document.createElement('div');
@@ -261,7 +259,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理與動態選單注入
+// 4. 狀態管理與擴充選單 (永不消失雙重防護)
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -299,7 +297,7 @@ function ensureTopMenuButton() {
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
             safeSave(); updateTopBarState();
-            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "優化引擎已啟動" : "優化引擎已關閉", "DeepSeek 缓存");
+            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "優化引擎已啟動" : "優化引擎已關閉", "DeepSeek");
         });
         btn.on('contextmenu', (e) => { e.preventDefault(); resetCurrentCache(); });
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
@@ -308,28 +306,21 @@ function ensureTopMenuButton() {
     updateTopBarState();
 }
 
-// 核心修正：動態注入左下角選單，不再依賴固定綁定
+// 核心修正：確保選單永遠存活的注入器
 function ensureBottomLeftMenuButton() {
-    const menu = $('#extensions_menu');
-    if (menu.length > 0 && $('#ds-bottom-reset-btn').length === 0) {
-        menu.append(`
+    if ($('#extensions_menu').length > 0 && $('#ds-bottom-reset-btn').length === 0) {
+        const btn = $(`
             <li id="ds-bottom-reset-btn" class="menu_button interactable" title="清空當前聊天的 DeepSeek 快取池">
                 <span class="fa-solid fa-microchip"></span> 重置 DeepSeek 缓存
             </li>
         `);
+        btn.on('click', () => { 
+            resetCurrentCache(); 
+            if ($('#extensions_menu').hasClass('open')) $('#extensions_menu').removeClass('open').hide(); 
+        });
+        $('#extensions_menu').append(btn);
     }
 }
-
-// 全域代理 Click：不怕被 ST 刪除重建
-$(document).on('click', '#ds-bottom-reset-btn', function() {
-    resetCurrentCache();
-    $('#extensions_menu').removeClass('open').hide();
-});
-
-// 當滑鼠靠近擴充按鈕區，瞬間檢查並補齊按鈕
-$(document).on('mouseenter click', '#rm_button_panel_extension, #extensions_menu', function() {
-    ensureBottomLeftMenuButton();
-});
 
 function resetCurrentCache() {
     if(!confirm("確定要完全清空當前聊天的緩存狀態嗎？(回到 ST 預設頂部排序)")) return;
@@ -719,7 +710,7 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 8. UI 面板與強效事件綁定
+// 8. UI 面板
 // ==========================================
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
@@ -875,13 +866,13 @@ async function setupUI() {
                 <!-- 感知與通知 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-satellite-dish"></i> 感知與通知 (30秒冷卻防刷屏)</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-satellite-dish"></i> 感知與通知</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 📝 提示詞 (內容) 變更</label></div>
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys-toggle" ${Settings.toastSysToggle ? 'checked' : ''}> 🎚️ 提示詞 (開關) 切換</label></div>
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 📖 角色世界書變更</label></div>
-                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-global-lore" ${Settings.toastGlobalLore ? 'checked' : ''}> 🌍 全局世界書變更</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys" ${Settings.toastSys ? 'checked' : ''}> 📝 提示詞內容變更 (30s 節流)</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-sys-toggle" ${Settings.toastSysToggle ? 'checked' : ''}> 🎚️ 提示詞開關切換 (30s 節流)</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-lore" ${Settings.toastLore ? 'checked' : ''}> 📖 角色世界書變更 (30s 節流)</label></div>
+                        <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-global-lore" ${Settings.toastGlobalLore ? 'checked' : ''}> 🌍 全局世界書變更 (30s 節流)</label></div>
                         <div class="ds-row"><label class="ds-row-left"><input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 💬 歷史對話變更</label></div>
                         <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); width:100%; margin:2px 0;">
                         <div class="ds-row"><label class="ds-row-left" style="color:#e06c75;"><input type="checkbox" id="ds-toast-reset" ${Settings.showResetPrompt ? 'checked' : ''}> 🛑 啟用視覺化攔截預警</label></div>
@@ -997,7 +988,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_v22_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("備份檔案已匯出！");
         });
@@ -1024,48 +1015,57 @@ jQuery(async () => {
         await setupUI();
         setupGlobalHotkeys(); 
         
+        // 確保按鈕永遠存在的雙重防護
         setTimeout(() => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); }, 2000);
+        $(document).on('click', '#extensions_button', ensureBottomLeftMenuButton);
+        const observer = new MutationObserver(() => {
+            if ($('#extensions_menu').is(':visible') && $('#ds-bottom-reset-btn').length === 0) ensureBottomLeftMenuButton();
+        });
+        if (document.getElementById('extensions_menu')) observer.observe(document.getElementById('extensions_menu'), { childList: true, subtree: true });
         
         if (eventSource) {
             eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); ensureBottomLeftMenuButton(); renderChatsUI(); });
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningImmediate('his_del', '對話被刪除！準備原位補位', Settings.toastHistory));
-            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '對話被修改！準備原位更新', Settings.toastHistory));
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => triggerWarningImmediate('his_del', '歷史對話被刪除！', Settings.toastHistory));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '歷史對話被修改！', Settings.toastHistory));
         }
 
-        // ==============================================================
-        // 核心修正：全域委派 Input / Change / Click，做到「絕對即時」
-        // ==============================================================
+        // 強效事件委派 (Event Delegation) 擷取實際內容變更 (包含清空方塊)
+        $(document).on('input', function(e) {
+            const $t = $(e.target);
+            const tag = e.target.tagName.toLowerCase();
+            const id = $t.attr('id') || '';
+            const cls = $t.attr('class') || '';
 
-        // 1. 捕捉任何提示詞文字框的「實質」輸入變更
-        $(document).on('input', 'textarea[id*="prompt"], input[id*="prompt"], .prompt-text, textarea[id*="jailbreak"], textarea[id*="nsfw"], #rm_ch_sys_prompt', function() {
-            triggerWarningImmediate('sys_text', '提示詞內容變更！準備原位更新', Settings.toastSys);
-        });
-
-        // 2. 捕捉任何提示詞開關、下拉選單的切換
-        $(document).on('change', 'input[type="checkbox"][id*="prompt"], input[type="checkbox"][id*="jailbreak"], input[type="checkbox"][id*="nsfw"], .prompt_toggle, select[id*="preset"]', function() {
-            triggerWarningImmediate('sys_toggle', '預設提示詞或開關切換！準備原位更新', Settings.toastSysToggle);
-        });
-
-        // 3. 捕捉世界書(Lorebook)的內容輸入
-        $(document).on('input', '.world_info_entry textarea, .world_info_entry input, .lorebook_entry textarea, .lorebook_entry input, #world_info_settings_panel textarea, #world_info_panel textarea, #character_popup textarea', function() {
-            const isGlobal = $(this).closest('#world_info_panel, .world_info_manager, #extensions_settings').length > 0;
-            if (isGlobal) {
-                triggerWarningImmediate('lore_global', '全局世界書變更！準備原位附加', Settings.toastGlobalLore);
-            } else {
-                triggerWarningImmediate('lore_char', '角色專屬世界書變更！準備原位附加', Settings.toastLore);
+            if (tag === 'textarea' || (tag === 'input' && $t.attr('type') === 'text')) {
+                // 1. 預設提示詞變更 (包含刪除/清空)
+                if (id.includes('prompt') || cls.includes('prompt') || id.includes('rm_ch_sys')) {
+                    triggerWarningImmediate('sys_text', '預設提示詞內容已變更', Settings.toastSys);
+                } 
+                // 2. 世界書變更
+                else if ($t.closest('.world_info_entry, .lorebook_entry, #world_info_panel, #character_popup').length > 0) {
+                    if ($t.closest('#character_popup, .character_settings').length > 0) {
+                        triggerWarningImmediate('lore_char', '角色專屬世界書已變更', Settings.toastLore);
+                    } else {
+                        triggerWarningImmediate('lore_global', '全局世界書已變更', Settings.toastGlobalLore);
+                    }
+                }
             }
         });
 
-        // 4. 捕捉點擊垃圾桶圖示或刪除按鈕 (應對整個區塊被刪除的狀況)
-        $(document).on('click', '.fa-trash, .fa-trash-can, [title*="Delete"], [title*="Remove"]', function() {
-            const promptContainer = $(this).closest('.prompt-box, #advanced_formatting_panel');
-            const globalLoreContainer = $(this).closest('#world_info_panel, .world_info_manager');
-            const charLoreContainer = $(this).closest('#character_popup, .lorebook_entry');
+        $(document).on('change', function(e) {
+            const $t = $(e.target);
+            const tag = e.target.tagName.toLowerCase();
+            const id = $t.attr('id') || '';
+            const cls = $t.attr('class') || '';
 
-            if (promptContainer.length) triggerWarningImmediate('sys_text', '提示詞方塊被刪除！準備原位更新', Settings.toastSys);
-            else if (globalLoreContainer.length) triggerWarningImmediate('lore_global', '全局世界書條目被刪除！準備原位附加', Settings.toastGlobalLore);
-            else if (charLoreContainer.length) triggerWarningImmediate('lore_char', '角色世界書條目被刪除！準備原位附加', Settings.toastLore);
+            if (tag === 'input' && $t.attr('type') === 'checkbox') {
+                if (id.includes('prompt') || id.includes('jailbreak') || id.includes('nsfw') || cls.includes('prompt_toggle')) {
+                    triggerWarningImmediate('sys_toggle', '預設提示詞開關已切換', Settings.toastSysToggle);
+                }
+            } else if (tag === 'select' && (id.includes('preset') || id.includes('prompt'))) {
+                triggerWarningImmediate('sys_toggle', '預設提示詞預設檔已切換', Settings.toastSysToggle);
+            }
         });
 
         Logger.log('══════ DeepSeek 优化缓存命中 引擎上線 ══════', LogLevels.BASIC);
