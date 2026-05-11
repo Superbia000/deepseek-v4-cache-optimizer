@@ -191,9 +191,9 @@ function fastClone(obj) {
 }
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v52 || extension_settings.ds_cache_v51 || {};
-    if (!extension_settings.ds_cache_v53) {
-        extension_settings.ds_cache_v53 = {
+    const oldSettings = extension_settings.ds_cache_v53 || extension_settings.ds_cache_v52 || {};
+    if (!extension_settings.ds_cache_v54) {
+        extension_settings.ds_cache_v54 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -233,13 +233,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v53;
+    Settings = extension_settings.ds_cache_v54;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v53_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v54_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -255,7 +255,7 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v53_snapshot', dataStr);
+            localStorage.setItem('ds_cache_v54_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -280,7 +280,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v53_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v54_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -1234,10 +1234,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 let omniRenderTimeout = null;
 let omniMappings = [];
 let isSyncLocked = true;
-let isSyncing = false;
+let isSyncingLeft = false;
+let isSyncingRight = false;
 let isDrawingCanvas = false;
-let leftOffsetY = 0;
-let rightOffsetY = 0;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1248,6 +1247,7 @@ async function showOmniVisionUI() {
         return;
     }
 
+    // 注意：移除了 panel 的 open class，使其預設折疊
     const html = `
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
@@ -1264,7 +1264,7 @@ async function showOmniVisionUI() {
                     <div class="ds-health-bar" style="height:8px; border-radius:4px; background:rgba(224,108,117,0.3);"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);"></div></div>
                 </div>
 
-                <div class="ds-omni-panel open">
+                <div class="ds-omni-panel">
                     <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
                         <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (即时生效)</span>
                         <i class="fa-solid fa-chevron-down"></i>
@@ -1294,7 +1294,7 @@ async function showOmniVisionUI() {
                     </div>
                 </div>
 
-                <div class="ds-omni-panel open">
+                <div class="ds-omni-panel">
                     <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
                         <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试</span>
                         <i class="fa-solid fa-chevron-down"></i>
@@ -1361,7 +1361,13 @@ async function showOmniVisionUI() {
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-            syncScroll('left'); 
+            // 觸發一次同步
+            const leftPane = document.getElementById('omni-left-pane');
+            const rightPane = document.getElementById('omni-right-pane');
+            if (leftPane && rightPane) {
+                const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+                rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
+            }
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
         }
@@ -1370,13 +1376,13 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
+        setTimeout(() => { updateOmniCanvas(); }, 250);
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
+        setTimeout(() => { updateOmniCanvas(); }, 250);
     });
 
     let inputTimeout;
@@ -1394,28 +1400,37 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
+        setTimeout(() => { updateOmniCanvas(); }, 250);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 綁定滾動事件 (使用 passive 提升流暢度)
+    // 綁定滾動事件 (使用 passive 提升流暢度，並加入雙向互鎖機制)
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
     leftPane.addEventListener('scroll', () => {
-        if (isSyncLocked && !isSyncing) syncScroll('left');
+        if (!isSyncLocked) { requestCanvasUpdate(); return; }
+        if (isSyncingLeft) { isSyncingLeft = false; requestCanvasUpdate(); return; }
+        
+        isSyncingRight = true;
+        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
         requestCanvasUpdate();
     }, { passive: true });
     
     rightPane.addEventListener('scroll', () => {
-        if (isSyncLocked && !isSyncing) syncScroll('right');
+        if (!isSyncLocked) { requestCanvasUpdate(); return; }
+        if (isSyncingRight) { isSyncingRight = false; requestCanvasUpdate(); return; }
+        
+        isSyncingLeft = true;
+        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
+        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
         requestCanvasUpdate();
     }, { passive: true });
 
     window.addEventListener('resize', () => {
         resizeCanvas();
-        cacheOmniPositions();
         updateOmniCanvas();
     });
 
@@ -1426,22 +1441,6 @@ window.closeOmniVision = function() {
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
 };
-
-function syncScroll(source) {
-    const leftPane = document.getElementById('omni-left-pane');
-    const rightPane = document.getElementById('omni-right-pane');
-    if (!leftPane || !rightPane) return;
-
-    isSyncing = true;
-    if (source === 'left') {
-        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
-        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
-    } else {
-        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
-        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
-    }
-    setTimeout(() => { isSyncing = false; }, 50);
-}
 
 function requestCanvasUpdate() {
     if (!isDrawingCanvas) {
@@ -1611,10 +1610,14 @@ async function renderOmniVision(state) {
     rightContainer.innerHTML = '';
     rightContainer.appendChild(rightFrag);
 
-    // 4. 初始化 Canvas 並快取座標
+    // 4. 快取 DOM 元素並初始化 Canvas
+    omniMappings.forEach(m => {
+        if (m.left !== -1) m.lEl = document.getElementById(`omni-left-node-${m.left}`);
+        if (m.right !== -1) m.rEl = document.getElementById(`omni-right-node-${m.right}`);
+    });
+
     requestAnimationFrame(() => {
         resizeCanvas();
-        cacheOmniPositions();
         updateOmniCanvas();
     });
 }
@@ -1627,63 +1630,51 @@ function resizeCanvas() {
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
+    canvas.width = Math.floor(rect.width * dpr);
+    canvas.height = Math.floor(rect.height * dpr);
     
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 }
 
-function cacheOmniPositions() {
-    const canvas = document.getElementById('omni-canvas');
-    const leftPane = document.getElementById('omni-left-pane');
-    const rightPane = document.getElementById('omni-right-pane');
-    if (!canvas || !leftPane || !rightPane) return;
-
-    // 獲取絕對邊界，計算出滾動視窗相對於 Canvas 的 Y 軸偏移量
-    const cRect = canvas.getBoundingClientRect();
-    const lRect = leftPane.getBoundingClientRect();
-    const rRect = rightPane.getBoundingClientRect();
-
-    leftOffsetY = lRect.top - cRect.top;
-    rightOffsetY = rRect.top - cRect.top;
-
-    omniMappings.forEach(m => {
-        if (m.left !== -1) {
-            const el = document.getElementById(`omni-left-node-${m.left}`);
-            if (el) { m.lTop = el.offsetTop; m.lHeight = el.offsetHeight; }
-        }
-        if (m.right !== -1) {
-            const el = document.getElementById(`omni-right-node-${m.right}`);
-            if (el) { m.rTop = el.offsetTop; m.rHeight = el.offsetHeight; }
-        }
-    });
-}
-
 function updateOmniCanvas() {
     const canvas = document.getElementById('omni-canvas');
-    const leftPane = document.getElementById('omni-left-pane');
-    const rightPane = document.getElementById('omni-right-pane');
-    if (!canvas || !leftPane || !rightPane) return;
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     
+    // 處理 DPI 縮放，確保畫布清晰
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+        canvas.width = Math.floor(width * dpr);
+        canvas.height = Math.floor(height * dpr);
+        ctx.scale(dpr, dpr);
+    }
+
     ctx.clearRect(0, 0, width, height);
 
-    const lScroll = leftPane.scrollTop;
-    const rScroll = rightPane.scrollTop;
+    // 獲取 Canvas 的絕對邊界，作為所有計算的基準點
+    const cRect = canvas.getBoundingClientRect();
     const cpOffset = width / 2.5; // 動態控制點，讓 S 曲線更平滑
 
     omniMappings.forEach(m => {
         let startY = 0, endY = 0;
         let isVisible = false;
 
-        // 根據快取的 offsetTop、當前 scrollTop 以及絕對偏移量，計算出精準的 Y 座標
-        if (m.left !== -1) startY = m.lTop - lScroll + (m.lHeight / 2) + leftOffsetY;
-        if (m.right !== -1) endY = m.rTop - rScroll + (m.rHeight / 2) + rightOffsetY;
+        // 絕對視口映射：直接讀取卡片的絕對位置，減去 Canvas 的絕對位置
+        // 這樣無論 Padding、Header 還是滾動條在哪裡，座標都 100% 精準
+        if (m.lEl) {
+            const lRect = m.lEl.getBoundingClientRect();
+            startY = lRect.top - cRect.top + (lRect.height / 2);
+        }
+        if (m.rEl) {
+            const rRect = m.rEl.getBoundingClientRect();
+            endY = rRect.top - cRect.top + (rRect.height / 2);
+        }
 
+        // 視野剔除優化 (Frustum Culling)
         if (m.type === 'deleted') {
             if (startY > -50 && startY < height + 50) isVisible = true;
         } else if (m.type.startsWith('new_')) {
@@ -1962,9 +1953,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v53-opt-drawer">
+        <div class="inline-drawer" id="ds-v54-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v53)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v54)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -2489,7 +2480,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v53_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v54_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2557,7 +2548,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v53 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v54 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
