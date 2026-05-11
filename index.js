@@ -27,6 +27,8 @@ const injectCSS = () => {
         .ds-opt-group.open .ds-opt-content { display: flex; animation: dsFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
 
+        .ds-sub-header { font-size: 12px; color: var(--ds-cyan); font-weight: bold; margin-top: 10px; margin-bottom: -5px; padding-bottom: 5px; border-bottom: 1px dashed rgba(0,229,255,0.2); display: flex; align-items: center; gap: 8px; }
+
         .ds-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%; gap: 14px; }
         .ds-row-left { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; color: #abb2bf; font-size: 13px; flex: 1; line-height: 1.6; transition: color 0.2s; }
         .ds-row-left:hover { color: #fff; }
@@ -238,10 +240,13 @@ function initSettings() {
             autoBackup: oldSettings.autoBackup ?? true, 
             absoluteOrderMatrix: oldSettings.absoluteOrderMatrix ?? true, 
             vectorQuarantine: oldSettings.vectorQuarantine ?? true, 
+            cotIsolation: oldSettings.cotIsolation ?? true, // 新增：思維鏈隔離
+            timeVarNeutralizer: oldSettings.timeVarNeutralizer ?? true, // 新增：時序變量中和
+            overflowCompression: oldSettings.overflowCompression ?? true, // 新增：溢出記憶壓縮
             toastToggles: oldSettings.toastToggles || {
                 warp: true, multiverse: true, fuzzy: true, nano: true, hotreload: true, 
                 entropy: true, patch: true, prefix: true, retcon: true, flashback: true, 
-                chronos: true, vector: true, void: true
+                chronos: true, vector: true, void: true, amnesia: true
             },
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
@@ -250,7 +255,10 @@ function initSettings() {
     Settings = extension_settings.ds_cache_v52;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
-    if (!Settings.toastToggles) Settings.toastToggles = { warp: true, multiverse: true, fuzzy: true, nano: true, hotreload: true, entropy: true, patch: true, prefix: true, retcon: true, flashback: true, chronos: true, vector: true, void: true };
+    if (!Settings.toastToggles) Settings.toastToggles = { warp: true, multiverse: true, fuzzy: true, nano: true, hotreload: true, entropy: true, patch: true, prefix: true, retcon: true, flashback: true, chronos: true, vector: true, void: true, amnesia: true };
+    if (Settings.cotIsolation === undefined) Settings.cotIsolation = true;
+    if (Settings.timeVarNeutralizer === undefined) Settings.timeVarNeutralizer = true;
+    if (Settings.overflowCompression === undefined) Settings.overflowCompression = true;
     
     if (Settings.autoBackup) {
         try {
@@ -381,13 +389,13 @@ const QuantumToastAggregator = {
             else if (item.type === 'warning') toastr.warning(`${item.icon} ${item.msg}${countStr}`, '绝对真理协议');
             else toastr.info(`${item.icon} ${item.msg}${countStr}`, '绝对真理协议');
         } else {
-            let combinedMsg = `<div style="font-size:12px; margin-bottom:4px;">本次拦截触发了多项协议：</div><ul style="margin:0; padding-left:20px; font-size:11px;">`;
+            // 終極修復：使用純文本排版，徹底避免 HTML 代碼外洩
+            let combinedMsg = "本次拦截触发了多项协议：\n\n";
             this.queue.forEach(item => {
-                const countStr = item.count > 1 ? ` <b style="color:var(--ds-yellow);">(x${item.count})</b>` : '';
-                combinedMsg += `<li>${item.icon} ${item.msg}${countStr}</li>`;
+                const countStr = item.count > 1 ? ` (x${item.count})` : '';
+                combinedMsg += `• ${item.icon} ${item.msg}${countStr}\n`;
             });
-            combinedMsg += `</ul>`;
-            toastr.success(combinedMsg, '🛡️ 绝对真理多重防御');
+            toastr.success(combinedMsg.trim(), '🛡️ 绝对真理多重防御');
         }
         this.queue.clear();
     }
@@ -567,7 +575,13 @@ const Logger = {
     },
     fuzzyNormalize: (text) => {
         if (!text) return '';
-        return text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/gi, '').replace(/\s+/g, '').trim();
+        let t = text.toLowerCase();
+        // 時序變量中和器：在模糊比對時剔除時間與日期，防止時間改變導致快取斷裂
+        if (Settings.timeVarNeutralizer) {
+            t = t.replace(/\b\d{1,2}:\d{2}(?:\s?[ap]m)?\b/gi, '')
+                 .replace(/\b\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?\b/gi, '');
+        }
+        return t.replace(/[^\w\s\u4e00-\u9fa5]/gi, '').replace(/\s+/g, '').trim();
     }
 };
 
@@ -738,11 +752,19 @@ function getBigrams(str) {
 
 function createMsg(msg, tag) {
     const content = msg.content || '';
-    const norm = Logger.normalize(content);
-    const fuzzy = Logger.fuzzyNormalize(content);
+    let hashContent = content;
+    
+    // 思維鏈隔離協議：在計算 Hash 時剔除 <think> 標籤內容，防止 AI 思考過程的微小改變導致快取斷裂
+    if (Settings.cotIsolation) {
+        hashContent = hashContent.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    }
+    
+    const norm = Logger.normalize(hashContent);
+    const fuzzy = Logger.fuzzyNormalize(hashContent); // fuzzyNormalize 內部已包含 timeVarNeutralizer 邏輯
+    
     return { 
         role: msg.role, 
-        content: content, 
+        content: content, // 保持原始內容不變，僅 Hash 改變
         norm: norm, 
         hash: cyrb53(norm), 
         fuzzyHash: cyrb53(fuzzy), 
@@ -1073,6 +1095,17 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         if (!isDryRun) {
                             Logger.warn(`[⚓ 绝对前缀锚点] 强制保留被截断的头部。`);
                             QuantumToastAggregator.add('prefix', '前缀锚点：已强制保留被截断的头部', 'warning', '⚓');
+                        }
+                    } else if (isPrefix && Settings.overflowCompression) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        const patch = createMsg({role: 'system', content: `[系统提示：早期记忆已归档。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已转入潜意识。]`}, 'SYS');
+                        patch._omniCat = 'patch_amnesia';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🧠 溢出压缩] 生成早期记忆归档补丁。`);
+                            QuantumToastAggregator.add('amnesia', '记忆溢出压缩：已生成早期记忆归档补丁', 'info', '🧠');
                         }
                     } else if (Settings.retconProtocol) {
                         frozenItem._omniCat = 'frozen';
@@ -1423,6 +1456,9 @@ async function showOmniVisionUI() {
                             <div class="ds-omni-toggle ${Settings.retconProtocol?'active':''}" data-setting="retconProtocol" title="吃书协议"><i class="fa-solid fa-eraser"></i> 吃书协议</div>
                             <div class="ds-omni-toggle ${Settings.hotReloadPersona?'active':''}" data-setting="hotReloadPersona" title="角色卡热更新"><i class="fa-solid fa-fire"></i> 热更新</div>
                             <div class="ds-omni-toggle ${Settings.flashbackInsertion?'active':''}" data-setting="flashbackInsertion" title="闪回插入协议"><i class="fa-solid fa-backward-fast"></i> 闪回插入</div>
+                            <div class="ds-omni-toggle ${Settings.cotIsolation?'active':''}" data-setting="cotIsolation" title="思维链隔离协议"><i class="fa-solid fa-brain"></i> 思维链隔离</div>
+                            <div class="ds-omni-toggle ${Settings.timeVarNeutralizer?'active':''}" data-setting="timeVarNeutralizer" title="时序变量中和器"><i class="fa-solid fa-clock"></i> 时序中和</div>
+                            <div class="ds-omni-toggle ${Settings.overflowCompression?'active':''}" data-setting="overflowCompression" title="溢出记忆压缩"><i class="fa-solid fa-file-zipper"></i> 溢出压缩</div>
                         </div>
                     </div>
                 </div>
@@ -1759,6 +1795,7 @@ async function renderOmniVision(state) {
             else if (node._omniCat === 'patch_entropy') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TYPO PATCH)</span>'; }
             else if (node._omniCat === 'patch_history') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TIME PATCH)</span>'; }
             else if (node._omniCat === 'patch_chronos') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TIME SKIP)</span>'; }
+            else if (node._omniCat === 'patch_amnesia') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(AMNESIA)</span>'; }
             else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold; margin-left:6px;">(NEW SYS)</span>'; }
         } else if (node._omniCat && node._omniCat.startsWith('patch_')) {
             cardClass = 'ds-node-patch';
@@ -2104,6 +2141,9 @@ function applyOneClickOptimize() {
     Settings.semanticNormalize = true;
     Settings.absoluteOrderMatrix = true;
     Settings.vectorQuarantine = true;
+    Settings.cotIsolation = true;
+    Settings.timeVarNeutralizer = true;
+    Settings.overflowCompression = true;
     
     safeSave();
     
@@ -2128,6 +2168,9 @@ function applyOneClickOptimize() {
     $('#ds-cache-flashback').prop('checked', true);
     $('#ds-cache-matrix').prop('checked', true);
     $('#ds-cache-vector').prop('checked', true);
+    $('#ds-cache-cot').prop('checked', true);
+    $('#ds-cache-timevar').prop('checked', true);
+    $('#ds-cache-overflow').prop('checked', true);
     
     updateTopBarState();
     if (typeof toastr !== 'undefined') toastr.success("🌟 已成功套用 DeepSeek 最佳化设定！");
@@ -2192,22 +2235,14 @@ async function setupUI() {
                     <div class="ds-opt-content">
                         <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.6; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; border-left:3px solid var(--ds-cyan);">开启以下功能，即使你在聊天中途触发了世界书，或者往回修改、删除了旧对话，系统也能帮你<b style="color:var(--ds-cyan);">保住 100% 的缓存</b>！</p>
                         
+                        <div class="ds-sub-header"><i class="fa-solid fa-link"></i> [核心防断层] 基础排版与结构防御</div>
+                        
                         <div class="ds-row" style="margin-top:5px;">
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-matrix" ${Settings.absoluteOrderMatrix ? 'checked' : ''}> 
                                 <div class="ds-row-text">
                                     <b style="color:var(--ds-cyan);">🧊 绝对真理追加架构 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的系统提示词排序。过去不可变，所有新增加的世界书、动态变量都会被强制追加到最底部。这是 100% 缓存的终极奥义！">?</span></b>
                                     <span>(ST 乱序不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-vector" ${Settings.vectorQuarantine ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-purple);">🎯 向量隔离区 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别 RAG/向量数据库注入的随机记忆，并强制将它们关入最底部的隔离区，保住上方 99% 的主体缓存。">?</span></b>
-                                    <span>(随机记忆注入不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2231,13 +2266,13 @@ async function setupUI() {
                                 </div>
                             </label>
                         </div>
-
+                        
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-void" ${Settings.voidBridging ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-cot" ${Settings.cotIsolation ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某条系统设定或世界书，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
-                                    <span>(中间删除设定不破缓存)</span>
+                                    <b style="color:var(--ds-purple);">🧠 思维链隔离协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="专为 DeepSeek R1 设计！在比对历史记录时，自动忽略 <think> 标签内的所有内容差异。即使你微调了 AI 的思考过程，主体缓存依然 100% 命中！">?</span></b>
+                                    <span>(修改 AI 思考过程不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2254,10 +2289,62 @@ async function setupUI() {
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-multiverse" ${Settings.multiverseProtocol ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-dedup" ${Settings.absoluteDeduplication ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-purple);">🌌 平行宇宙协议 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你切换分支或疯狂撤销时，系统会自动跳跃到最匹配的平行宇宙，保住最大缓存。">?</span></b>
-                                    <span>(分支/撤销不破缓存)</span>
+                                    <b style="color:var(--ds-cyan);">🗜️ 绝对去重协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动压缩 ST 发送的重复系统提示词或世界书，节省 Token 并稳定缓存。">?</span></b>
+                                    <span>(重复设定不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-sub-header"><i class="fa-solid fa-wrench"></i> [智能修补与时空] 历史修改与删除防御</div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-nanopatch" ${Settings.nanoPatching ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-green);">🔬 量子微创手术 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你只修改了超大角色卡里的几个字，系统会提取差异做成纳米补丁，不重算整个卡。">?</span></b>
+                                    <span>(微小修改设定不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+                        
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-hotreload" ${Settings.hotReloadPersona ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你大幅修改了主角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
+                                    <span>(大幅修改主设定不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-void" ${Settings.voidBridging ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某条系统设定或世界书，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
+                                    <span>(中间删除设定不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-retcon" ${Settings.retconProtocol ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#ff8c94;">🗑️ 吃书协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你删除了旧对话，系统会保留它，并在底部告诉AI「刚才那件事被抹除了」。">?</span></b>
+                                    <span>(删除历史对话不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-flashback" ${Settings.flashbackInsertion ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#8be9fd;">⏪ 闪回插入协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在历史中间插入新对话，系统会把它抽到底部，告诉AI「这是闪回补充」。">?</span></b>
+                                    <span>(中间插话不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2271,13 +2358,35 @@ async function setupUI() {
                                 </div>
                             </label>
                         </div>
+                        
+                        <div class="ds-row" style="flex-direction:column; align-items:flex-start; gap:8px; background:rgba(0,0,0,0.3); padding:12px; border-radius:8px; border: 1px solid rgba(255,255,255,0.05);">
+                            <span style="font-size:13px; color:var(--ds-yellow); font-weight:bold;">当我修改了以前的旧对话时，系统该怎么做？</span>
+                            <select id="ds-cache-history-mode" class="ds-select-styled">
+                                <option value="1" ${Settings.historyEditMode===1?'selected':''}>🛡️ 方案 A：时空补丁 (强烈推荐！保住100%缓存，且AI知道你改了)</option>
+                                <option value="2" ${Settings.historyEditMode===2?'selected':''}>🙈 方案 B：幻象隐藏 (保住100%缓存，但AI不知道你改了)</option>
+                                <option value="0" ${Settings.historyEditMode===0?'selected':''}>💥 方案 C：真实修改 (极度不推荐！会破坏大量缓存，烧钱重算)</option>
+                            </select>
+                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*选择「时空补丁」时，系统会保留旧对话，并在最底部偷偷塞一张纸条告诉AI你修改了什么。</span>
+                        </div>
+
+                        <div class="ds-sub-header"><i class="fa-solid fa-bolt"></i> [动态与变量控制] 浮动与随机内容防御</div>
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-dedup" ${Settings.absoluteDeduplication ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-timevar" ${Settings.timeVarNeutralizer ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan);">🗜️ 绝对去重协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动压缩 ST 发送的重复系统提示词或世界书，节省 Token 并稳定缓存。">?</span></b>
-                                    <span>(重复设定不破缓存)</span>
+                                    <b style="color:var(--ds-yellow);">⏱️ 时序变量中和器 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别系统提示词中的时间 (如 10:00) 或日期。如果只有时间改变了，系统会将其视为模糊命中并冻结旧节点，彻底免疫时间流逝造成的缓存断裂！">?</span></b>
+                                    <span>(时间变量改变不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-vector" ${Settings.vectorQuarantine ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-purple);">🎯 向量隔离区 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别 RAG/向量数据库注入的随机记忆，并强制将它们关入最底部的隔离区，保住上方 99% 的主体缓存。">?</span></b>
+                                    <span>(随机记忆注入不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2294,10 +2403,30 @@ async function setupUI() {
 
                         <div class="ds-row">
                             <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-summary" ${Settings.summaryAnchor ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-yellow);">📜 摘要沉底锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别包含「总结、前情提要」的提示词，并强制将其沉底，防止动态总结破坏上方缓存。">?</span></b>
+                                    <span>(动态总结不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-imprint" ${Settings.permanentMemoryImprint ? 'checked' : ''}> 
                                 <div class="ds-row-text">
                                     <b style="color:var(--ds-yellow);">🖨️ 永久记忆烙印 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当世界书触发后，将其永久冻结在缓存中。即使 ST 移除了它，缓存也不会断裂。(会稍微增加 Token)">?</span></b>
                                     <span>(世界书忽隐忽现不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-multiverse" ${Settings.multiverseProtocol ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-purple);">🌌 平行宇宙协议 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你切换分支或疯狂撤销时，系统会自动跳跃到最匹配的平行宇宙，保住最大缓存。">?</span></b>
+                                    <span>(分支/撤销不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2314,72 +2443,22 @@ async function setupUI() {
 
                         <div class="ds-row">
                             <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-overflow" ${Settings.overflowCompression ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-green);">🗜️ 溢出记忆压缩 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长，最顶部的记忆被 ST 挤出上下文时，系统会自动在底部生成一个「早期记忆已归档」的微型补丁，完美衔接上下文并保住缓存。">?</span></b>
+                                    <span>(顶部记忆溢出不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-amnesia" ${Settings.amnesiaProtocol ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🧠 失忆症协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致头部记忆大面积丢失时，自动归档早期记忆，完美保护后续缓存。">?</span></b>
-                                    <span>(头部记忆截断不破缓存)</span>
+                                    <b style="color:var(--ds-green);">🧠 失忆症协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致头部记忆大面积丢失时，强制保留它们，完美保护后续缓存。">?</span></b>
+                                    <span>(头部记忆大面积截断不破缓存)</span>
                                 </div>
                             </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-nanopatch" ${Settings.nanoPatching ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🔬 量子微创手术 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你只修改了超大角色卡里的几个字，系统会提取差异做成纳米补丁，不重算整个卡。">?</span></b>
-                                    <span>(微小修改不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-summary" ${Settings.summaryAnchor ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-yellow);">📜 摘要沉底锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别包含「总结、前情提要」的提示词，并强制将其沉底，防止动态总结破坏上方缓存。">?</span></b>
-                                    <span>(动态总结不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-retcon" ${Settings.retconProtocol ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#ff8c94;">🗑️ 吃书协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你删除了旧对话，系统会保留它，并在底部告诉AI「刚才那件事被抹除了」。">?</span></b>
-                                    <span>(删除对话不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-hotreload" ${Settings.hotReloadPersona ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改了主角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
-                                    <span>(修改主设定不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-flashback" ${Settings.flashbackInsertion ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#8be9fd;">⏪ 闪回插入协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在历史中间插入新对话，系统会把它抽到底部，告诉AI「这是闪回补充」。">?</span></b>
-                                    <span>(中间插话不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-                        
-                        <div class="ds-row" style="flex-direction:column; align-items:flex-start; gap:8px; background:rgba(0,0,0,0.3); padding:12px; border-radius:8px; border: 1px solid rgba(255,255,255,0.05);">
-                            <span style="font-size:13px; color:var(--ds-yellow); font-weight:bold;">当我修改了以前的旧对话时，系统该怎么做？</span>
-                            <select id="ds-cache-history-mode" class="ds-select-styled">
-                                <option value="1" ${Settings.historyEditMode===1?'selected':''}>🛡️ 方案 A：时空补丁 (强烈推荐！保住100%缓存，且AI知道你改了)</option>
-                                <option value="2" ${Settings.historyEditMode===2?'selected':''}>🙈 方案 B：幻象隐藏 (保住100%缓存，但AI不知道你改了)</option>
-                                <option value="0" ${Settings.historyEditMode===0?'selected':''}>💥 方案 C：真实修改 (极度不推荐！会破坏大量缓存，烧钱重算)</option>
-                            </select>
-                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*选择「时空补丁」时，系统会保留旧对话，并在最底部偷偷塞一张纸条告诉AI你修改了什么。</span>
                         </div>
                     </div>
                 </div>
@@ -2464,6 +2543,7 @@ async function setupUI() {
                             <label><input type="checkbox" class="ds-toast-toggle" data-key="flashback" ${Settings.toastToggles.flashback ? 'checked' : ''}> 闪回插入协议</label>
                             <label><input type="checkbox" class="ds-toast-toggle" data-key="chronos" ${Settings.toastToggles.chronos ? 'checked' : ''}> 克罗诺斯(时间跳跃)</label>
                             <label><input type="checkbox" class="ds-toast-toggle" data-key="vector" ${Settings.toastToggles.vector ? 'checked' : ''}> 向量隔离区</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="amnesia" ${Settings.toastToggles.amnesia ? 'checked' : ''}> 溢出记忆压缩</label>
                         </div>
                     </div>
                 </div>
@@ -2613,6 +2693,9 @@ async function setupUI() {
         $('#ds-cache-matrix').on('change', function () { Settings.absoluteOrderMatrix = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-vector').on('change', function () { Settings.vectorQuarantine = $(this).is(':checked'); safeSave(); });
         $('#ds-log-autoscroll').on('change', function () { Settings.autoScrollLog = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-cot').on('change', function () { Settings.cotIsolation = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-timevar').on('change', function () { Settings.timeVarNeutralizer = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-overflow').on('change', function () { Settings.overflowCompression = $(this).is(':checked'); safeSave(); });
 
         $('.ds-toast-toggle').on('change', function() {
             const key = $(this).data('key');
