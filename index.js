@@ -1,7 +1,8 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
+
 // ==========================================
-// 1. 樣式注入 (Quantum Speed UI & Neural Links)
+// 1. 樣式注入 (Matrix Singularity UI)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -9,14 +10,16 @@ const injectCSS = () => {
     style.id = 'ds-cache-styles';
     style.innerHTML = `
         :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-bg: rgba(15, 20, 25, 0.6); --ds-border: rgba(0, 229, 255, 0.15); }
-        /* GPU 加速與嚴格包含，最大化渲染效能 */
+        
         .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
         .ds-virtual-list { content-visibility: auto; contain-intrinsic-size: 1px 60px; }
+        
         .ds-scroll::-webkit-scrollbar { width: 6px; }
         .ds-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
         .ds-scroll::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.3); border-radius: 4px; }
         .ds-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.6); }
+
         .ds-opt-group { margin-bottom: 15px; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--ds-bg); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); overflow: hidden; box-shadow: 0 8px 20px rgba(0,0,0,0.2); transition: all 0.3s ease; }
         .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.3); box-shadow: 0 8px 25px rgba(0, 229, 255, 0.05); }
         .ds-opt-header { padding: 14px 18px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.05) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 10px rgba(0,229,255,0.2); }
@@ -24,6 +27,7 @@ const injectCSS = () => {
         .ds-opt-content { padding: 18px; display: flex; flex-direction: column; gap: 14px; display: none; background: rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.02); }
         .ds-opt-group.open .ds-opt-content { display: flex; animation: dsFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
+
         .ds-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%; gap: 12px; }
         .ds-row-left { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; color: #abb2bf; font-size: 13px; flex: 1; line-height: 1.5; transition: color 0.2s; }
         .ds-row-left:hover { color: #fff; }
@@ -31,17 +35,21 @@ const injectCSS = () => {
         .ds-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; word-wrap: break-word; white-space: normal; }
         .ds-row-text b { color: var(--ds-yellow); font-weight: 600; letter-spacing: 0.5px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
         .ds-row-text span { font-size: 11px; color: rgba(171, 178, 191, 0.8); font-weight: normal; margin-top: 2px; line-height: 1.4; }
+        
         .ds-tooltip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--ds-cyan); background: rgba(0,229,255,0.1); border-radius: 50%; width: 14px; height: 14px; font-size: 10px; font-weight: bold; cursor: help; border: 1px solid rgba(0,229,255,0.3); flex-shrink: 0; }
         .ds-tooltip-icon:hover { background: var(--ds-cyan); color: #000; box-shadow: 0 0 8px var(--ds-cyan); }
         .ds-perf-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: bold; letter-spacing: 0.5px; }
         .ds-perf-low { background: rgba(152,195,121,0.15); color: var(--ds-green); border: 1px solid rgba(152,195,121,0.3); }
         .ds-perf-mid { background: rgba(229,192,123,0.15); color: var(--ds-yellow); border: 1px solid rgba(229,192,123,0.3); }
         .ds-perf-high { background: rgba(224,108,117,0.15); color: var(--ds-red); border: 1px solid rgba(224,108,117,0.3); }
+
         .ds-select-styled { background: rgba(0,0,0,0.4); color: var(--ds-cyan); border: 1px solid var(--ds-border); padding: 8px 12px; border-radius: 6px; font-weight: bold; cursor: pointer; outline: none; transition: all 0.2s; font-family: inherit; width: 100%; box-sizing: border-box; }
         .ds-select-styled:hover, .ds-select-styled:focus { border-color: var(--ds-cyan); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
         .ds-select-styled option { background: #1e1e24; color: #fff; }
+        
         .ds-input-styled { background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(255,255,255,0.1); padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; transition: all 0.2s; width: 100%; box-sizing: border-box; }
         .ds-input-styled:focus { border-color: var(--ds-cyan); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
+
         .ds-log-toolbar { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; background: rgba(0,0,0,0.3); padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
         .ds-log-filter { cursor: pointer; padding: 4px 12px; border-radius: 12px; font-size: 11px; background: rgba(255,255,255,0.05); color: #abb2bf; transition: all 0.2s; font-weight: 600; white-space: nowrap; }
         .ds-log-filter.active { background: var(--ds-cyan); color: #000; box-shadow: 0 0 10px rgba(0,229,255,0.4); }
@@ -57,16 +65,19 @@ const injectCSS = () => {
         .ds-log-map { color: var(--ds-cyan); font-weight: bold; }
         .ds-log-debug { color: var(--ds-purple); }
         .ds-log-divider { color: #4b5263; font-weight: bold; display: block; text-align: center; margin: 15px 0; border-top: 1px solid #2c313a; padding-top: 8px; letter-spacing: 1px; width: 100%; }
+        
         .ds-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: bold; background: rgba(255,255,255,0.05); margin-right: 6px; letter-spacing: 0.5px; }
         .ds-tag-SYS { color: #61afef; border-left: 3px solid #61afef; background: rgba(97,175,239,0.1); }
         .ds-tag-USER { color: var(--ds-green); border-left: 3px solid var(--ds-green); background: rgba(152,195,121,0.1); }
         .ds-tag-AI { color: var(--ds-yellow); border-left: 3px solid var(--ds-yellow); background: rgba(229,192,123,0.1); }
         .ds-tag-PREFILL { color: var(--ds-purple); border-left: 3px solid var(--ds-purple); background: rgba(198,120,221,0.1); }
         .ds-badge { background: rgba(0,229,255,0.1); padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-family: monospace; color: var(--ds-cyan); border: 1px solid rgba(0,229,255,0.3); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
+
         .ds-chat-container { max-height:280px; overflow-y:auto; border:1px solid rgba(255,255,255,0.05); padding:10px; border-radius:8px; background: rgba(0,0,0,0.3); }
         .ds-chat-item { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:12px; margin-bottom:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.05); transition: all 0.2s; }
         .ds-chat-item:hover { background:rgba(255,255,255,0.08); transform: translateX(4px); border-color: rgba(255,255,255,0.1); }
         .ds-chat-item.active-chat { background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 4px solid var(--ds-cyan); border-top: 1px solid var(--ds-border); border-bottom: 1px solid var(--ds-border); border-right: 1px solid var(--ds-border); box-shadow: inset 0 0 15px rgba(0,229,255,0.05); }
+        
         .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; cursor: pointer; }
         .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-red); padding: 35px; border-radius: 16px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; color: #fff; font-family: sans-serif; box-shadow: 0 30px 60px rgba(0,0,0,0.9), 0 0 30px rgba(224,108,117,0.2); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
         .ds-modal.ds-modal-blue { border-color: var(--ds-cyan); box-shadow: 0 30px 60px rgba(0,0,0,0.9), 0 0 30px rgba(0,229,255,0.15); }
@@ -75,49 +86,65 @@ const injectCSS = () => {
         .ds-progress-container { background: rgba(0,0,0,0.6); border-radius: 8px; height: 14px; margin: 25px 0; overflow: hidden; box-shadow: inset 0 2px 6px rgba(0,0,0,0.8); border: 1px solid rgba(255,255,255,0.05); }
         .ds-progress-bar { height: 100%; width: 0%; transition: width 1s cubic-bezier(0.22, 1, 0.36, 1), background 0.3s; position: relative; overflow: hidden; }
         .ds-progress-bar::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.2) 50%, rgba(255,255,255,0) 100%); animation: dsShimmer 2s infinite; }
-        .ds-map-box { background: rgba(0,0,0,0.5); padding: 18px; border-radius: 10px; font-family: 'Fira Code', Consolas, monospace; font-size: 13px; color: #abb2bf; margin: 20px 0; border: 1px solid rgba(255,255,255,0.08); max-height: 350px; overflow-y: auto; line-height: 1.7; box-shadow: inset 0 0 15px rgba(0,0,0,0.5); word-wrap: break-word; }
-        .ds-diff-del { background: rgba(224, 108, 117, 0.1); border-left: 4px solid var(--ds-red); padding: 10px 15px; margin-bottom: 8px; border-radius: 0 6px 6px 0; color: #ff8c94; word-wrap: break-word; }
-        .ds-diff-add { background: rgba(152, 195, 121, 0.1); border-left: 4px solid var(--ds-green); padding: 10px 15px; border-radius: 0 6px 6px 0; color: #b5e890; word-wrap: break-word; }
+        
         .ds-btn-col { display: flex; flex-direction: column; gap: 14px; margin-top: 30px; }
         .ds-btn { padding: 16px 20px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 15px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:15px; text-align:left; line-height: 1.5; background: rgba(255,255,255,0.05); color: #fff; }
         .ds-btn:hover { transform: translateY(-3px); box-shadow: 0 8px 20px rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); }
         .ds-btn:active { transform: translateY(0); }
         .ds-btn i { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
+        
         .ds-btn-accept { border-color: rgba(152,195,121,0.4); background: linear-gradient(90deg, rgba(152,195,121,0.15) 0%, rgba(0,0,0,0) 100%); }
         .ds-btn-accept:hover { border-color: var(--ds-green); box-shadow: 0 0 15px rgba(152,195,121,0.3); }
         .ds-btn-accept i { color: var(--ds-green); }
+        
         .ds-btn-revert { border-color: rgba(198,120,221,0.4); background: linear-gradient(90deg, rgba(198,120,221,0.15) 0%, rgba(0,0,0,0) 100%); }
         .ds-btn-revert:hover { border-color: var(--ds-purple); box-shadow: 0 0 15px rgba(198,120,221,0.3); }
         .ds-btn-revert i { color: var(--ds-purple); }
+        
         .ds-btn-abort { border-color: rgba(224,108,117,0.4); background: linear-gradient(90deg, rgba(224,108,117,0.15) 0%, rgba(0,0,0,0) 100%); }
         .ds-btn-abort:hover { border-color: var(--ds-red); box-shadow: 0 0 15px rgba(224,108,117,0.3); }
         .ds-btn-abort i { color: var(--ds-red); }
+        
         .ds-btn-blue { border-color: rgba(0,229,255,0.4); background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); }
         .ds-btn-blue:hover { border-color: var(--ds-cyan); box-shadow: 0 0 15px rgba(0,229,255,0.3); }
         .ds-btn-blue i { color: var(--ds-cyan); }
+
         .ds-btn-reset { border-color: rgba(224,108,117,0.2); background: rgba(224,108,117,0.05); }
         .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.15); }
         .ds-btn-reset i { color: var(--ds-red); }
+
         .ds-btn-magic { border-color: rgba(229,192,123,0.4); background: linear-gradient(90deg, rgba(229,192,123,0.15) 0%, rgba(0,0,0,0) 100%); color: var(--ds-yellow); margin-bottom: 15px; width: 100%; justify-content: center; }
         .ds-btn-magic:hover { border-color: var(--ds-yellow); box-shadow: 0 0 20px rgba(229,192,123,0.4); background: linear-gradient(90deg, rgba(229,192,123,0.25) 0%, rgba(0,0,0,0) 100%); color: #fff; }
+
         .ds-btn-omni { border-color: rgba(198,120,221,0.4); background: linear-gradient(90deg, rgba(198,120,221,0.15) 0%, rgba(0,0,0,0) 100%); color: var(--ds-purple); margin-bottom: 15px; width: 100%; justify-content: center; font-size: 16px; letter-spacing: 1px; }
         .ds-btn-omni:hover { border-color: var(--ds-purple); box-shadow: 0 0 20px rgba(198,120,221,0.4); background: linear-gradient(90deg, rgba(198,120,221,0.25) 0%, rgba(0,0,0,0) 100%); color: #fff; }
-        .ds-guide-box { background: rgba(0,0,0,0.3); padding: 20px; border-radius: 10px; margin-top: 20px; font-size: 14px; line-height: 1.7; border-left: 4px solid var(--ds-purple); box-shadow: inset 0 0 10px rgba(0,0,0,0.2); }
-        .ds-guide-title { color: var(--ds-purple); font-weight: bold; margin-bottom: 12px; font-size: 16px; letter-spacing: 0.5px; }
-        .ds-guide-list { margin: 0; padding-left: 22px; }
-        .ds-guide-list li { margin-bottom: 10px; }
+
         .ds-health-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.3s, background 0.3s; }
-        /* Omni-Vision UI Styles */
+
+        /* Omni-Vision UI Styles (Matrix Singularity) */
         .ds-omni-modal { max-width: 95vw !important; width: 1600px !important; height: 90vh !important; display: flex; flex-direction: column; padding: 25px !important; }
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
-        .ds-omni-body { display: flex; flex: 1; min-height: 0; position: relative; }
-        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); z-index: 2; }
-        .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; font-weight: bold; flex-shrink: 0; }
-        /* GPU 加速滾動容器 */
-        .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; position: relative; scroll-behavior: auto; will-change: scroll-position; }
-        .ds-node-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; }
+        
+        .ds-omni-toolbar { display: flex; flex-direction: column; gap: 10px; padding: 15px; background: rgba(0,0,0,0.5); border-bottom: 1px solid rgba(255,255,255,0.05); flex-shrink: 0; border-radius: 10px; margin-bottom: 15px; }
+        .ds-omni-actions { display: flex; gap: 10px; align-items: center; }
+        .ds-omni-action-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; }
+        .ds-omni-action-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+        
+        .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; max-height: 120px; overflow-y: auto; padding-right: 5px; }
+        .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 4px; transition: 0.2s; border: 1px solid transparent; user-select: none; }
+        .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
+        .ds-omni-toggle.active { background: rgba(0,229,255,0.1); color: var(--ds-cyan); border-color: rgba(0,229,255,0.3); }
+
+        /* 統一滾動容器與 Flexbox 橫列 */
+        .ds-omni-unified-scroll { flex: 1; overflow-y: auto; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; gap: 10px; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); will-change: scroll-position; }
+        .ds-omni-row { display: flex; width: 100%; align-items: center; gap: 10px; }
+        .ds-omni-cell { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .ds-omni-center { flex: 0 0 80px; display: flex; align-items: center; justify-content: center; height: 100%; }
+        
+        .ds-node-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
         .ds-node-card:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); z-index: 10; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
+        
         .ds-node-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.05) 0%, rgba(0,0,0,0) 100%); }
         .ds-node-miss { border-left: 4px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.05) 0%, rgba(0,0,0,0) 100%); }
         .ds-node-warn { border-left: 4px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.05) 0%, rgba(0,0,0,0) 100%); }
@@ -126,50 +153,41 @@ const injectCSS = () => {
         .ds-node-new-dyn { border-left: 4px solid var(--ds-orange); background: linear-gradient(90deg, rgba(209,154,102,0.05) 0%, rgba(0,0,0,0) 100%); }
         .ds-node-new-his { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.05) 0%, rgba(0,0,0,0) 100%); }
         .ds-node-patch { border-left: 4px solid var(--ds-purple); background: linear-gradient(90deg, rgba(198,120,221,0.05) 0%, rgba(0,0,0,0) 100%); }
+        
         .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 11px; color: #5c6370; border-bottom: 1px dashed rgba(255,255,255,0.1); padding-bottom: 4px; }
-        /* 智慧型文本摺疊 */
+        
         .ds-node-content-wrapper { position: relative; }
         .ds-node-content { line-height: 1.5; }
         .ds-node-content.collapsed { max-height: 60px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
         .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 4px; padding: 4px; background: rgba(0,229,255,0.05); border-radius: 4px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.1); }
         .ds-node-expand-btn:hover { background: rgba(0,229,255,0.15); border-color: rgba(0,229,255,0.3); }
-        .ds-omni-toolbar { display: flex; flex-direction: column; gap: 10px; padding: 15px; background: rgba(0,0,0,0.5); border-bottom: 1px solid rgba(255,255,255,0.05); flex-shrink: 0; border-radius: 10px; margin-bottom: 15px; }
-        .ds-omni-actions { display: flex; gap: 10px; align-items: center; }
-        .ds-omni-action-btn { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; }
-        .ds-omni-action-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
-        .ds-omni-action-btn.active { background: rgba(0,229,255,0.1); color: var(--ds-cyan); border-color: rgba(0,229,255,0.3); }
-        .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; max-height: 120px; overflow-y: auto; padding-right: 5px; }
-        .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 4px 8px; border-radius: 4px; transition: 0.2s; border: 1px solid transparent; user-select: none; }
-        .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
-        .ds-omni-toggle.active { background: rgba(0,229,255,0.1); color: var(--ds-cyan); border-color: rgba(0,229,255,0.3); }
-        /* 神經網路連線畫布 (GPU 加速) */
-        .ds-omni-svg-container { width: 100px; position: relative; flex-shrink: 0; z-index: 1; contain: strict; }
-        #omni-lines-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-        #omni-lines-svg path { will-change: d; } /* 提示瀏覽器 d 屬性會頻繁改變 */
+
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes dsShimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
     `;
     document.head.appendChild(style);
 };
+
 // ==========================================
 // 2. 狀態設定與磁碟 I/O 降載 (Quantum Storage)
 // ==========================================
 let Settings = {};
 let sessionSnoozeReset = false; 
 let backupVault = []; 
-let cachedStorageBytes = 0; // 磁碟 I/O 降載快取
-// 原生結構化深拷貝 (極速)
+let cachedStorageBytes = 0; 
+
 function fastClone(obj) {
     if (typeof structuredClone === 'function') {
         try { return structuredClone(obj); } catch(e) {}
     }
     return JSON.parse(JSON.stringify(obj));
 }
+
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v48 || extension_settings.ds_cache_v47 || {};
-    if (!extension_settings.ds_cache_v49) {
-        extension_settings.ds_cache_v49 = {
+    const oldSettings = extension_settings.ds_cache_v49 || extension_settings.ds_cache_v48 || {};
+    if (!extension_settings.ds_cache_v50) {
+        extension_settings.ds_cache_v50 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -209,32 +227,37 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v49;
+    Settings = extension_settings.ds_cache_v50;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
+    
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v49_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v50_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
     }
 }
+
 let saveTimeout = null;
 let pendingSave = false;
+
 function flushSaveSync() {
     if (pendingSave) {
         try { 
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
-            cachedStorageBytes = dataStr.length * 2; // 更新快取
-            localStorage.setItem('ds_cache_v49_snapshot', dataStr);
+            cachedStorageBytes = dataStr.length * 2; 
+            localStorage.setItem('ds_cache_v50_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
     }
 }
+
 window.addEventListener('beforeunload', flushSaveSync);
+
 function safeSave() {
     pendingSave = true;
     if (saveTimeout) return;
@@ -242,6 +265,7 @@ function safeSave() {
     if ('requestIdleCallback' in window) saveTimeout = requestIdleCallback(saveTask, { timeout: 2000 });
     else saveTimeout = setTimeout(saveTask, 1000);
 }
+
 function createVaultBackup(label = "手动备份") {
     const snapshot = {
         time: new Date().toLocaleString(),
@@ -250,9 +274,10 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v49_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v50_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
+
 function restoreVaultBackup(index = 0) {
     if (!backupVault[index]) return;
     try {
@@ -263,11 +288,13 @@ function restoreVaultBackup(index = 0) {
         if (typeof toastr !== 'undefined') toastr.success(`⏪ 时光机启动！已恢复至: ${backupVault[index].time}`);
     } catch(e) { Logger.error("恢复快照失败", e); }
 }
+
 function getTolerance() {
     if (Settings.tolerance === 0) return { sys: 0.5, his: 0.6 }; 
     if (Settings.tolerance === 1) return { sys: 0.2, his: 0.3 }; 
     return { sys: 0.05, his: 0.1 }; 
 }
+
 const triggerThrottlers = {};
 function triggerToast(key, msg, type = 'info', icon = '💡') {
     if (!Settings.enabled || !Settings.toastHistory || Settings.zenMode) return;
@@ -275,12 +302,13 @@ function triggerToast(key, msg, type = 'info', icon = '💡') {
     if (!triggerThrottlers[key] || now - triggerThrottlers[key] > 5000) {
         triggerThrottlers[key] = now;
         if (typeof toastr !== 'undefined') {
-            if (type === 'success') toastr.success(`${icon} ${msg}`, '量子神速协议');
-            else if (type === 'warning') toastr.warning(`${icon} ${msg}`, '量子神速协议');
-            else toastr.info(`${icon} ${msg}`, '量子神速协议');
+            if (type === 'success') toastr.success(`${icon} ${msg}`, '终极矩阵协议');
+            else if (type === 'warning') toastr.warning(`${icon} ${msg}`, '终极矩阵协议');
+            else toastr.info(`${icon} ${msg}`, '终极矩阵协议');
         }
     }
 }
+
 function escapeHtml(text) { return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
 function stripHtml(html) { return html ? html.replace(/<[^>]+>/g, '') : ''; }
 function truncateLog(str, len = 50) {
@@ -288,19 +316,21 @@ function truncateLog(str, len = 50) {
     const s = String(str).replace(/\n/g, ' ↵ ');
     return s.length > len ? s.substring(0, len) + '...' : s;
 }
-// 磁碟 I/O 降載：直接讀取快取
+
 function getStorageSize() {
     if (cachedStorageBytes === 0) {
         cachedStorageBytes = JSON.stringify(Settings).length * 2;
     }
     return cachedStorageBytes;
 }
+
 function formatBytes(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024; const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
+
 function performGarbageCollection() {
     const unpinnedKeys = Object.keys(Settings.chats).filter(k => !Settings.pinnedChats[k]);
     if (unpinnedKeys.length <= Settings.maxCacheSize) return;
@@ -311,6 +341,7 @@ function performGarbageCollection() {
     Logger.warn(`[自动清理] 垃圾车出动！已清理 ${toRemove.length} 个很久没碰过的旧存档，释放空间。`);
     renderChatsUI();
 }
+
 // ==========================================
 // 3. Omni-Log 全知日誌系統
 // ==========================================
@@ -319,23 +350,25 @@ let logQueue = [];
 let isLogRendering = false;
 let isLogPaused = false; 
 let isLogVisible = true; 
+
 function updateTopBarState() {
     const dot = $('#ds-top-status-dot');
     if (!dot.length) return;
     if (!Settings.enabled) {
         dot.css('color', '#5c6370');
-        $('#ds-top-reset-btn').attr('title', '量子神速缓存: 已停用 (大模型每次都会重读所有内容)');
+        $('#ds-top-reset-btn').attr('title', '终极矩阵缓存: 已停用 (大模型每次都会重读所有内容)');
         dot.html('<i class="fa-solid fa-circle"></i>');
     } else if (Settings.zenMode) {
         dot.css('color', '#c678dd');
-        $('#ds-top-reset-btn').attr('title', '量子神速缓存: 运作中 [沉浸免打扰模式]');
+        $('#ds-top-reset-btn').attr('title', '终极矩阵缓存: 运作中 [沉浸免打扰模式]');
         dot.html('<i class="fa-solid fa-yin-yang ds-zen-icon"></i>');
     } else {
         dot.css('color', '#00e5ff');
-        $('#ds-top-reset-btn').attr('title', '量子神速缓存: 运作中 (正在为您省钱省算力)');
+        $('#ds-top-reset-btn').attr('title', '终极矩阵缓存: 运作中 (正在为您省钱省算力)');
         dot.html('<i class="fa-solid fa-circle" style="text-shadow: 0 0 5px #00e5ff;"></i>');
     }
 }
+
 function setTopBarStatus(color, title) {
     if (!Settings.enabled) return;
     const dot = $('#ds-top-status-dot');
@@ -347,58 +380,72 @@ function setTopBarStatus(color, title) {
         $('#ds-top-reset-btn').attr('title', title + ' (左键开关 / 右键清空)');
     }
 }
+
 function processLogQueue() {
     if (logQueue.length === 0 || isLogPaused || !isLogVisible) {
         isLogRendering = false;
         return;
     }
+    
     const container = document.getElementById('ds-cache-log-container');
     if (!container) {
         logQueue = [];
         isLogRendering = false;
         return;
     }
+
     const fragment = document.createDocumentFragment();
     const activeFilter = $('.ds-log-filter.active').data('filter') || 'all';
     const searchTerm = ($('#ds-log-search').val() || '').toLowerCase();
+
     while (logQueue.length > 0) {
         const logData = logQueue.shift();
         const line = document.createElement('div');
         line.className = 'ds-log-line ds-virtual-list'; 
         line.setAttribute('data-type', logData.type === 'divider' ? 'info' : logData.type);
+        
         if (logData.type === 'divider') {
             line.innerHTML = `<span class="ds-log-divider">${logData.msg}</span>`;
         } else {
             line.innerHTML = `<span class="ds-log-time">[${logData.time}]</span> <span class="ds-log-content ds-log-${logData.type}">${logData.msg.replace(/\n/g, '<br>')}</span>`;
         }
+        
         const text = line.innerText.toLowerCase();
         let typeMatch = (activeFilter === 'all' || logData.type === activeFilter || logData.type === 'divider');
         let searchMatch = (searchTerm === '' || text.includes(searchTerm));
         if (!(typeMatch && searchMatch)) line.classList.add('hide');
+        
         fragment.appendChild(line);
     }
+
     container.appendChild(fragment);
     while (container.childNodes.length > 800) container.removeChild(container.firstChild);
     if (Settings.autoScrollLog && !isLogPaused) container.scrollTop = container.scrollHeight;
+    
     isLogRendering = false;
 }
+
 function logAt(level, type, msg) {
     if (Settings.logLevel < level) return;
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
-    if (type === 'warn') console.warn(`%c[量子日志] 🌪️ ${msg}`, 'color: #e5c07b;');
-    else if (type === 'error') console.error(`[量子日志] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[量子日志] 🗺️ ${msg}`, 'color: #00e5ff;');
-    else if (type === 'debug') console.log(`%c[量子日志] 🐛 ${msg}`, 'color: #c678dd;');
+    
+    if (type === 'warn') console.warn(`%c[矩阵日志] 🌪️ ${msg}`, 'color: #e5c07b;');
+    else if (type === 'error') console.error(`[矩阵日志] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[矩阵日志] 🗺️ ${msg}`, 'color: #00e5ff;');
+    else if (type === 'debug') console.log(`%c[矩阵日志] 🐛 ${msg}`, 'color: #c678dd;');
     else if (type === 'divider') console.log(`%c${msg}`, 'color: #4b5263; font-weight: bold;');
-    else console.log(`%c[量子日志] ✅ ${msg}`, 'color: #98c379;');
+    else console.log(`%c[矩阵日志] ✅ ${msg}`, 'color: #98c379;');
+    
     logQueue.push({ time, type, msg });
     if (logQueue.length > 500) logQueue.shift();
+
     if (!isLogRendering && !isLogPaused && isLogVisible) {
         isLogRendering = true;
         requestAnimationFrame(processLogQueue);
     }
 }
+
 const Logger = {
     log: (msg, level = LogLevels.DETAILED) => logAt(level, 'info', msg),
     warn: (msg, level = LogLevels.BASIC) => logAt(level, 'warn', msg),
@@ -425,6 +472,7 @@ const Logger = {
         return text.toLowerCase().replace(/[^\w\s\u4e00-\u9fa5]/gi, '').replace(/\s+/g, '').trim();
     }
 };
+
 // ==========================================
 // 4. 狀態管理與擴充選單
 // ==========================================
@@ -439,6 +487,7 @@ function getChatKey() {
     if (groupId) return { key: `group_${groupId}_${chatId}`, label: `群聊: ${chatId}` };
     return { key: `char_${context.characterId}_${chatId}`, label: `${charName} | 存档: ${chatId}` };
 }
+
 function getChatState(chatKeyInfo) {
     if (!Settings.chats[chatKeyInfo.key]) {
         Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, frozenSequence: [], multiverse: [], lastSentSequence: [], lastRawStream: [], lastPrefills: [], lastAccessed: Date.now(), dynamicAnomalies: [] };
@@ -452,10 +501,11 @@ function getChatState(chatKeyInfo) {
     }
     return Settings.chats[chatKeyInfo.key];
 }
+
 function ensureTopMenuButton() {
     if ($('#ds-top-reset-btn').length === 0) {
         const btn = $(`
-            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 量子神速缓存优化器">
+            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 终极矩阵缓存优化器">
                 <span class="fa-solid fa-microchip"></span>
                 <span id="ds-top-status-dot" style="font-size:0.7em; margin-left:2px; vertical-align:top;"></span>
             </li>
@@ -465,7 +515,7 @@ function ensureTopMenuButton() {
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
             safeSave(); updateTopBarState();
-            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 量子神速缓存已启动！" : "💤 量子神速缓存已关闭。", "DeepSeek");
+            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 终极矩阵缓存已启动！" : "💤 终极矩阵缓存已关闭。", "DeepSeek");
         });
         btn.on('contextmenu', (e) => { e.preventDefault(); resetCurrentCache(); });
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
@@ -473,9 +523,11 @@ function ensureTopMenuButton() {
     }
     updateTopBarState();
 }
+
 function addResetMenuEntry() {
     const menu = document.getElementById('extensionsMenu') || document.getElementById('extensions_menu');
     if (!menu) { setTimeout(addResetMenuEntry, 300); return; }
+    
     if (!document.getElementById('ds-bottom-omni-btn')) {
         const omniBtn = document.createElement('div');
         omniBtn.id = 'ds-bottom-omni-btn';
@@ -489,6 +541,7 @@ function addResetMenuEntry() {
         });
         menu.appendChild(omniBtn);
     }
+
     if (!document.getElementById('ds-bottom-reset-btn')) {
         const toggleBtn = document.createElement('div');
         toggleBtn.id = 'ds-bottom-reset-btn';
@@ -503,6 +556,7 @@ function addResetMenuEntry() {
         menu.appendChild(toggleBtn);
     }
 }
+
 function resetCurrentCache() {
     if(!confirm("⚠️ 确定要「撕书重来」吗？\n\n这会清空当前对话的所有缓存，大模型下次回复时会把整个故事从头到尾重新看一遍。\n(这会消耗较多算力和时间，通常只在 AI 逻辑严重混乱，或者你大改了设定时才使用)")) return;
     const key = getChatKey().key;
@@ -513,18 +567,20 @@ function resetCurrentCache() {
     if (typeof toastr !== 'undefined') toastr.success("📚 撕书成功！下次发送时，AI 将重新阅读整个故事。");
     Logger.warn(`手动清空了当前对话缓存: ${key}`);
 }
+
 function setupGlobalHotkeys() {
     document.addEventListener('keydown', (e) => {
         if (!Settings.hotkeysEnabled) return;
         const tag = e.target.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
+        
         if (e.ctrlKey && e.altKey) {
             if (e.key.toLowerCase() === 'c') {
                 e.preventDefault();
                 Settings.enabled = !Settings.enabled;
                 $('#ds-cache-enable').prop('checked', Settings.enabled);
                 safeSave(); updateTopBarState();
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 量子神速已启动" : "💤 量子神速已关闭", "快捷键");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 终极矩阵已启动" : "💤 终极矩阵已关闭", "快捷键");
             }
             if (e.key.toLowerCase() === 'r') { e.preventDefault(); resetCurrentCache(); }
             if (e.key.toLowerCase() === 'z') { 
@@ -538,9 +594,11 @@ function setupGlobalHotkeys() {
         }
     });
 }
+
 // ==========================================
 // 5. 核心邏輯工具與 Diff 演算法
 // ==========================================
+
 function cyrb53(str, seed = 0) {
     let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
     for (let i = 0, ch; i < str.length; i++) {
@@ -552,6 +610,7 @@ function cyrb53(str, seed = 0) {
     h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return 4294967296 * (2097151 & h2) + (h1 >>> 0);
 }
+
 class LRUCache {
     constructor(maxSize) { this.cache = new Map(); this.maxSize = maxSize; }
     get(key) {
@@ -567,7 +626,9 @@ class LRUCache {
     }
     clear() { this.cache.clear(); }
 }
+
 const bigramCache = new LRUCache(2000);
+
 function getBigrams(str) {
     const cached = bigramCache.get(str);
     if (cached) return cached;
@@ -576,6 +637,7 @@ function getBigrams(str) {
     bigramCache.set(str, bigrams);
     return bigrams;
 }
+
 function createMsg(msg, tag) {
     const content = msg.content || '';
     const norm = Logger.normalize(content);
@@ -591,27 +653,34 @@ function createMsg(msg, tag) {
         _omniCat: '' 
     };
 }
+
 function getSimilarity(msg1, msg2) {
     if (msg1.hash === msg2.hash) return 1;
     if (msg1.fuzzyHash === msg2.fuzzyHash) return 0.99; 
+    
     const str1 = msg1.norm; const str2 = msg2.norm;
     if (Math.abs(str1.length - str2.length) > Math.max(str1.length, str2.length) * 0.5) return 0;
+    
     const clean1 = stripHtml(str1); const clean2 = stripHtml(str2);
     if (clean1 === clean2) return 1;
+    
     const s1 = clean1.length < clean2.length ? clean1 : clean2;
     const s2 = clean1.length < clean2.length ? clean2 : clean1;
     if (s1.length === 0) return 0;
     if (s2.includes(s1) && s1.length > 10) return 0.95;
+
     const bigrams1 = getBigrams(s1);
     let matchCount = 0;
     for (let i = 0; i < s2.length - 1; i++) { if (bigrams1.has(s2.substring(i, i+2))) matchCount++; }
     const union = (s1.length - 1) + (s2.length - 1) - matchCount;
     return union <= 0 ? 1 : matchCount / union;
 }
+
 function extractAddedText(oldStr, newStr) {
     const cleanOld = stripHtml(oldStr); const cleanNew = stripHtml(newStr);
     if (cleanNew.length < cleanOld.length) return null; 
     if (cleanNew.length - cleanOld.length > 300) return null; 
+    
     const oldSentences = cleanOld.split(/([。！？.!?\n]+)/);
     const newSentences = cleanNew.split(/([。！？.!?\n]+)/);
     const oldSet = new Set(oldSentences.map(s => s.trim()).filter(s => s.length > 2));
@@ -622,6 +691,7 @@ function extractAddedText(oldStr, newStr) {
     }
     return added.length > 0 ? added.join(' ') : null;
 }
+
 function stripPrefillFromAssistant(assistantObj, prefills) {
     if (!assistantObj || !prefills || prefills.length === 0) return assistantObj;
     let content = assistantObj.content || '';
@@ -641,6 +711,7 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
     }
     return assistantObj;
 }
+
 // ==========================================
 // 7. 🧊 絕對真理追加架構 (Append-Only Interceptor)
 // ==========================================
@@ -648,24 +719,29 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
     if (!Settings.enabled && !isDryRun) return;
     const startTime = performance.now();
     const chatKeyInfo = getChatKey();
+
     try {
         let state = getChatState(chatKeyInfo);
         if (isDryRun) {
-            state = fastClone(state); // 量子深拷貝
+            state = fastClone(state); 
         }
+
         if (!data?.chat?.length) return;
         const stream = data.chat;
+        
         if (!isDryRun) {
             state.lastRawStream = fastClone(stream);
             safeSave();
             Logger.divider(`===== 🚀 启动绝对真理拦截: ${chatKeyInfo.label} =====`);
         }
+
         const topSysMsgs = []; 
         const bottomSysMsgs = []; 
         const chatMsgs = [];
         let hasSeenUserOrAi = false;
         const timeSkipRegex = /(later|next day|第二天|几个小时后|一段时间后|meanwhile|之后|随后|时光飞逝|转眼间)/i;
         const vectorRegex = /(retrieved context|search results|vector database|相关记忆|检索到的内容|记忆库片段)/i;
+
         for (const msg of stream) {
             if (!msg.content) continue;
             if (Settings.warpDriveFilter && msg.content.replace(/[\s\*\.\-]/g, '').length === 0) {
@@ -675,12 +751,14 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 }
                 continue;
             }
+            
             const isSys = (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant'));
             if (isSys) {
                 const sysNode = createMsg(msg, 'SYS');
                 const isSummary = Settings.summaryAnchor && /(summary|previously on|摘要|前情提要|总结|回顾)/i.test(sysNode.content);
                 const isTimeSkip = Settings.chronosProtocol && sysNode.content.length < 150 && timeSkipRegex.test(sysNode.content);
                 const isVector = Settings.vectorQuarantine && vectorRegex.test(sysNode.content);
+                
                 if (isSummary || isTimeSkip || isVector || (Settings.anchorStabilization && hasSeenUserOrAi) || (Settings.gravityProtocol && hasSeenUserOrAi)) {
                     if (isTimeSkip) sysNode.isTimeSkip = true; 
                     if (isVector) sysNode.isVector = true;
@@ -694,8 +772,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 chatMsgs.push(createMsg(msg, msg.role === 'user' ? 'USER' : 'AI'));
             }
         }
+
         let lastUserIdx = -1;
         for (let i = chatMsgs.length - 1; i >= 0; i--) { if (chatMsgs[i].tag === 'USER') { lastUserIdx = i; break; } }
+
         let historyTurns = []; let currentTurn = { user: null, prefills: [] };
         if (lastUserIdx === -1) {
             currentTurn.prefills = chatMsgs.filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
@@ -704,6 +784,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             const cMsgs = chatMsgs.slice(lastUserIdx);
             currentTurn.user = cMsgs[0];
             currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
+
             let curUser = null; let curAiContents = [];
             for (const msg of hMsgs) {
                 if (msg.tag === 'USER') {
@@ -713,16 +794,19 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             }
             if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
         }
+
         const incomingSysPool = [...topSysMsgs, ...bottomSysMsgs];
         const incomingHistoryPool = [];
         for(let t of historyTurns) {
             incomingHistoryPool.push(t.user);
             if(t.assistant) incomingHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
         }
+
         if (Settings.multiverseProtocol && state.multiverse && state.multiverse.length > 0) {
             let bestUniverse = state.frozenSequence;
             let bestMatchCount = -1;
             const currentStreamNorms = [...incomingSysPool, ...incomingHistoryPool].map(m => m.norm);
+            
             for (let i = 0; i < state.multiverse.length; i++) {
                 const universe = state.multiverse[i];
                 let matchCount = 0;
@@ -740,14 +824,18 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 state.frozenSequence = bestUniverse;
             }
         }
+
         let newFrozenSequence = []; 
         let newAdditions = { history: [], sys: [], lorebooks: [], dynamic: [], patches: [] };
         const thresholds = getTolerance();
+        
         const handledIncomingSys = new Set();
         const handledIncomingHis = new Set();
+
         // 階段 1：遍歷凍結的過去
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const frozenItem = state.frozenSequence[i];
+
             if (frozenItem.tag === 'SYS') {
                 let bestIdx = -1, bestScore = 0;
                 for (let j = 0; j < incomingSysPool.length; j++) {
@@ -755,6 +843,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     const score = getSimilarity(frozenItem, incomingSysPool[j]);
                     if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
+
                 if (bestScore === 1 || (bestIdx !== -1 && frozenItem.fuzzyHash === incomingSysPool[bestIdx].fuzzyHash)) {
                     newFrozenSequence.push(frozenItem);
                     handledIncomingSys.add(bestIdx);
@@ -766,6 +855,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     const incomingItem = incomingSysPool[bestIdx];
                     newFrozenSequence.push(frozenItem); 
                     handledIncomingSys.add(bestIdx);
+
                     if (Settings.nanoPatching && bestScore > 0.85) {
                         let addedText = extractAddedText(frozenItem.content, incomingItem.content);
                         if (addedText) {
@@ -811,12 +901,14 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     const score = getSimilarity(frozenItem, incomingHistoryPool[j]);
                     if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
+
                 if (bestScore === 1 || (bestIdx !== -1 && frozenItem.fuzzyHash === incomingHistoryPool[bestIdx].fuzzyHash)) {
                     newFrozenSequence.push(frozenItem);
                     handledIncomingHis.add(bestIdx);
                 } else if (bestScore > thresholds.his) {
                     const incomingItem = incomingHistoryPool[bestIdx];
                     handledIncomingHis.add(bestIdx);
+
                     if (Settings.entropyShield && bestScore > 0.99) {
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(frozenItem.content, 15)}" 已修正为 "${truncateLog(incomingItem.content, 15)}"]`}, 'SYS');
@@ -862,6 +954,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 }
             }
         }
+
         // 階段 2：處理未匹配的全新內容
         for (let j = 0; j < incomingHistoryPool.length; j++) {
             if (!handledIncomingHis.has(j)) {
@@ -880,6 +973,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 }
             }
         }
+
         for (let j = 0; j < incomingSysPool.length; j++) {
             if (!handledIncomingSys.has(j)) {
                 const sys = incomingSysPool[j];
@@ -906,12 +1000,14 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 }
             }
         }
+
         // 階段 3：嚴格按照 Append-Only 順序組裝
         for (let h of newAdditions.history) newFrozenSequence.push(h);
         for (let sys of newAdditions.sys) newFrozenSequence.push(sys);
         for (let lb of newAdditions.lorebooks) newFrozenSequence.push(lb);
         for (let dyn of newAdditions.dynamic) newFrozenSequence.push(dyn);
         for (let patch of newAdditions.patches) newFrozenSequence.push(patch);
+
         // 階段 4：分類去重隔離 (絕對不碰動態變數與補丁)
         let dedupedSequence = [];
         const seenSysNorms = new Set();
@@ -924,12 +1020,15 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             }
             dedupedSequence.push(item);
         }
+
         const proposedStream = [...dedupedSequence];
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
+
         if (Settings.logLevel >= LogLevels.DEBUG && !isDryRun) {
             Logger.debug(`[最终追加发送阵列] 总节点数: ${proposedStream.length}`);
         }
+
         // ==========================================
         // 5. 精準流失率演算法
         // ==========================================
@@ -940,13 +1039,16 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         let breakIndex = -1;
         let preservedTokens = 0;
         let recomputeTokens = 0;
+
         if (state.lastSentSequence && state.lastSentSequence.length > 0) {
             const L = state.lastSentSequence;
             const P = proposedStream;
+
             for (let i = 0; i < Math.min(L.length, P.length); i++) {
                 if (L[i].role !== P[i].role || L[i].hash !== P[i].hash) { breakIndex = i; break; }
             }
             if (breakIndex === -1) breakIndex = Math.min(L.length, P.length);
+
             let preservedLen = 0;
             let recomputeLen = 0;
             for (let i = 0; i < P.length; i++) {
@@ -954,10 +1056,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 if (i < breakIndex) preservedLen += len;
                 else recomputeLen += len;
             }
+
             let totalLen = preservedLen + recomputeLen;
             let recomputeRatio = breakIndex === L.length ? 0 : (totalLen === 0 ? 0 : (recomputeLen / totalLen));
+            
             preservedTokens = Math.floor(preservedLen / 3.5);
             recomputeTokens = Math.floor(recomputeLen / 3.5);
+            
             let isTailEndMutation = false;
             if (Settings.tailEndExemption && breakIndex >= L.length - 2) {
                 if (P[breakIndex]?.tag !== 'SYS' && L[breakIndex]?.tag !== 'SYS') {
@@ -965,17 +1070,22 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     if (!isDryRun) Logger.log(`[👯 二重身协议] 检测到仅修改了最后回合对话，已自动放行。`);
                 }
             }
+            
             dropPercentStr = (recomputeRatio * 100).toFixed(1);
+
             if (recomputeRatio >= 0.10 && Settings.showResetPrompt && !isTailEndMutation && !sessionSnoozeReset) {
                 requireResetConfirm = true;
+                
                 if (P[breakIndex]?.tag === 'SYS' || L[breakIndex]?.tag === 'SYS') {
                     causeText = "大幅修改或删除了【设定 / 世界书 / 预设提示词】";
                 } else {
                     causeText = "修改或删除了【历史聊天记录】";
                 }
+                
                 const tagHtml = `<span class="ds-tag ds-tag-${P[breakIndex]?.tag || L[breakIndex]?.tag}">[${P[breakIndex]?.tag || L[breakIndex]?.tag}]</span>`;
                 const oldContent = escapeHtml(L[breakIndex]?.content || '∅').substring(0, 100).replace(/\n/g, ' ↵ ');
                 const newContent = escapeHtml(P[breakIndex]?.content || '∅').substring(0, 100).replace(/\n/g, ' ↵ ');
+                
                 mapInfoText = `
                     <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
                         <span style="color:var(--ds-cyan);"><i class="fa-solid fa-location-crosshairs"></i> 缓存断裂点位置:</span> <b>[索引 ${breakIndex}]</b> ${tagHtml}
@@ -989,6 +1099,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 `;
             }
         }
+
         if (isDryRun) {
             return {
                 proposedStream: proposedStream,
@@ -998,61 +1109,78 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 recomputeTokens: recomputeTokens
             };
         }
+
         let decision = 'accept';
         setTopBarStatus('#00ff00', '缓存: 健康');
+
         if (requireResetConfirm) {
             setTopBarStatus('#e5c07b', `缓存: 等待确认`);
             if (Settings.autoAccept) {
                 Logger.warn(`[自动修复] 已放行断层重组 (需重算 ${dropPercentStr}%)`);
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "量子神速");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "终极矩阵");
                 decision = 'accept';
             } else {
                 decision = await askUserForResetAsync(dropPercentStr, mapInfoText, causeText);
             }
         }
+
         if (decision === 'abort') {
             Logger.error('[物理拦截] 已拦截本次发送，强制中止生成。', null, LogLevels.BASIC);
             setTopBarStatus('#e06c75', '缓存: 已拦截发送');
-            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "量子神速");
+            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "终极矩阵");
+            
             data.chat.length = 0; 
             data.chat.push({ role: "invalid_abort_role", content: "ABORT_GENERATION" });
+            
             setTimeout(() => {
                 if (typeof StopGenerating === 'function') StopGenerating();
                 const stopBtn = document.getElementById('stop_generating_button') || document.getElementById('send_but');
                 if (stopBtn) stopBtn.click();
             }, 10);
+            
             throw new Error("Generation aborted by DeepSeek Cache Optimizer."); 
         }
+
         if (decision === 'revert') {
             Logger.warn('[时空回溯] 用户选择无视本次修改，强行使用旧版缓存。');
             setTopBarStatus('#c678dd', '缓存: 强行冻结旧版');
+            
             const finalStream = [...state.frozenSequence];
             if (currentTurn.user) finalStream.push(currentTurn.user);
             for (const p of currentTurn.prefills) finalStream.push(p);
+
             state.lastSentSequence = fastClone(finalStream);
             safeSave();
+
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "量子神速");
+            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "终极矩阵");
             return;
         }
+
         if (decision === 'bypass') {
             Logger.warn('[临时放行] 用户选择跳过本次优化，按 ST 原样乱序发送。');
             setTopBarStatus('#e5c07b', '缓存: 临时放行');
             return; 
         }
+
         if (decision === 'accept') {
             state.frozenSequence = dedupedSequence;
             state.lastPrefills = currentTurn.prefills;
+
             const finalStream = [...state.frozenSequence];
             if (currentTurn.user) finalStream.push(currentTurn.user);
             for (const p of currentTurn.prefills) finalStream.push(p);
+
             state.lastSentSequence = fastClone(finalStream);
+            
             if (Settings.multiverseProtocol) {
                 if (!state.multiverse) state.multiverse = [];
                 state.multiverse.unshift([...state.frozenSequence]);
                 if (state.multiverse.length > 5) state.multiverse.pop();
             }
+
             safeSave();
+
             if (Settings.autoPinThreshold > 0 && finalStream.length >= Settings.autoPinThreshold) {
                 if (!Settings.pinnedChats[chatKeyInfo.key]) {
                     Settings.pinnedChats[chatKeyInfo.key] = true;
@@ -1060,9 +1188,11 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     Logger.map(`[自动保护] 节点数(${finalStream.length})达标，已锁定当前存档。`);
                 }
             }
+
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
             Logger.log(`✅ 追加排序完成，拦截器授权发送。耗时: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
         }
+
     } catch (err) {
         if (err.message === "Generation aborted by DeepSeek Cache Optimizer.") throw err; 
         setTopBarStatus('#e06c75', '缓存: 发生崩溃');
@@ -1070,28 +1200,29 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         throw err;
     }
 }
+
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Optimized)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Matrix Singularity)
 // ==========================================
 let omniRenderTimeout = null;
-let omniMappings = []; 
-let isSyncScroll = true;
-let isScrollingLeft = false;
-let isScrollingRight = false;
+
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
     const state = Settings.chats[chatKeyInfo.key];
+    
     if (!state || !state.lastSentSequence || state.lastSentSequence.length === 0) {
         if (typeof toastr !== 'undefined') toastr.warning("当前对话还没有发送过任何内容，无法开启全视之眼。请先发送一次对话！");
         return;
     }
+
     const html = `
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 量子神速沙盒</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 终极矩阵沙盒</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
+                
                 <div style="background:rgba(0,0,0,0.5); padding:15px; border-radius:10px; margin-bottom:15px; border:1px solid rgba(255,255,255,0.05); flex-shrink:0;">
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; font-weight:bold;">
                         <span style="color:var(--ds-green);"><i class="fa-solid fa-shield-halved"></i> 预计缓存命中率: <span id="omni-hit-rate">计算中...</span></span>
@@ -1099,12 +1230,13 @@ async function showOmniVisionUI() {
                     </div>
                     <div class="ds-health-bar" style="height:8px; border-radius:4px; background:rgba(224,108,117,0.3);"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);"></div></div>
                 </div>
+
                 <div class="ds-omni-toolbar">
                     <div class="ds-omni-actions">
-                        <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
                         <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
                         <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
                     </div>
+                    
                     <div style="font-size:11px; color:var(--ds-purple); font-weight:bold; margin-top:5px; border-bottom:1px dashed rgba(255,255,255,0.1); padding-bottom:5px;">⚙️ 核心协议控制台 (即时生效)</div>
                     <div class="ds-omni-toggles-container ds-scroll">
                         <div class="ds-omni-toggle ${Settings.dynamicMode===1?'active':''}" data-setting="dynamicMode" data-val="1" title="写日记模式"><i class="fa-solid fa-book-journal-whills"></i> 日记模式</div>
@@ -1127,59 +1259,21 @@ async function showOmniVisionUI() {
                         <div class="ds-omni-toggle ${Settings.hotReloadPersona?'active':''}" data-setting="hotReloadPersona" title="角色卡热更新"><i class="fa-solid fa-fire"></i> 热更新</div>
                         <div class="ds-omni-toggle ${Settings.flashbackInsertion?'active':''}" data-setting="flashbackInsertion" title="闪回插入协议"><i class="fa-solid fa-backward-fast"></i> 闪回插入</div>
                     </div>
+                    
                     <div style="width: 100%; display: flex; gap: 10px; margin-top: 10px;">
-                        <textarea id="omni-simulated-input" class="ds-input-styled ds-scroll" placeholder="✍️ 模拟用户即将发送的输入 (输入后会自动触发右侧沙盒重算)..." style="height: 40px; resize: vertical;"></textarea>
+                        <textarea id="omni-simulated-input" class="ds-input-styled ds-scroll" placeholder="✍️ 模拟用户即将发送的输入 (输入后会自动触发下方沙盒重算)..." style="height: 40px; resize: vertical;"></textarea>
                     </div>
                 </div>
-                <div class="ds-omni-body" id="ds-omni-body-container">
-                    <!-- 左視窗：歷史觀測 -->
-                    <div class="ds-omni-pane" id="omni-left-pane">
-                        <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (上一次真实发送的阵列)</span>
-                            <span style="font-size:11px; color:#abb2bf; font-weight:normal;">*已绝对锁定，不受当前聊天修改影响</span>
-                        </div>
-                        <div id="omni-left-content" class="ds-omni-pane-content ds-scroll ds-strict-contain">
-                            <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
-                        </div>
-                    </div>
-                    <!-- 神經網路連線畫布 -->
-                    <div class="ds-omni-svg-container">
-                        <svg id="omni-lines-svg">
-                            <defs>
-                                <linearGradient id="grad-red" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(224,108,117,0.8)" />
-                                    <stop offset="100%" stop-color="rgba(224,108,117,0)" />
-                                </linearGradient>
-                                <linearGradient id="grad-blue" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(0,229,255,0)" />
-                                    <stop offset="100%" stop-color="rgba(0,229,255,0.8)" />
-                                </linearGradient>
-                                <linearGradient id="grad-cyan" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(86,182,194,0)" />
-                                    <stop offset="100%" stop-color="rgba(86,182,194,0.8)" />
-                                </linearGradient>
-                                <linearGradient id="grad-orange" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(209,154,102,0)" />
-                                    <stop offset="100%" stop-color="rgba(209,154,102,0.8)" />
-                                </linearGradient>
-                                <linearGradient id="grad-green" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(152,195,121,0)" />
-                                    <stop offset="100%" stop-color="rgba(152,195,121,0.8)" />
-                                </linearGradient>
-                            </defs>
-                        </svg>
-                    </div>
 
-                    <!-- 右視窗：即時沙盒預覽 -->
-                    <div class="ds-omni-pane" id="omni-right-pane">
-                        <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用当前设定后)</span>
-                            <span style="font-size:11px; color:#abb2bf; font-weight:normal;">*修改上方设定或输入文字会即时重算</span>
-                        </div>
-                        <div id="omni-right-content" class="ds-omni-pane-content ds-scroll ds-strict-contain">
-                            <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
-                        </div>
-                    </div>
+                <div style="display: flex; padding: 0 15px; margin-bottom: 10px; font-weight: bold; flex-shrink: 0;">
+                    <div style="flex: 1; color: var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (绝对锁定)</div>
+                    <div style="flex: 0 0 80px;"></div>
+                    <div style="flex: 1; color: var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用设定后)</div>
+                </div>
+
+                <!-- 統一滾動容器 (Flexbox Rows) -->
+                <div id="omni-unified-scroll" class="ds-omni-unified-scroll ds-scroll ds-strict-contain">
+                    <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                 </div>
             </div>
         </div>
@@ -1201,32 +1295,14 @@ async function showOmniVisionUI() {
         triggerOmniRender(state);
     });
 
-    $('#omni-btn-sync').on('click', function() {
-        isSyncScroll = !isSyncScroll;
-        $(this).toggleClass('active', isSyncScroll);
-        if (isSyncScroll) {
-            $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-        } else {
-            $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
-        }
-    });
-
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(() => {
-            cacheOmniNodePositions();
-            requestAnimationFrame(updateOmniLines);
-        }, 250);
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(() => {
-            cacheOmniNodePositions();
-            requestAnimationFrame(updateOmniLines);
-        }, 250);
     });
 
     let inputTimeout;
@@ -1235,28 +1311,7 @@ async function showOmniVisionUI() {
         inputTimeout = setTimeout(() => triggerOmniRender(state), 500);
     });
 
-    // 量子滾動：只更新屬性，不觸發 Reflow
-    $('#omni-left-content').on('scroll', function() {
-        if (!isSyncScroll || isScrollingRight) { requestAnimationFrame(updateOmniLines); return; }
-        isScrollingLeft = true;
-        const pct = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
-        const right = document.getElementById('omni-right-content');
-        if (right) right.scrollTop = pct * (right.scrollHeight - right.clientHeight);
-        requestAnimationFrame(updateOmniLines);
-        setTimeout(() => isScrollingLeft = false, 50);
-    });
-
-    $('#omni-right-content').on('scroll', function() {
-        if (!isSyncScroll || isScrollingLeft) { requestAnimationFrame(updateOmniLines); return; }
-        isScrollingRight = true;
-        const pct = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
-        const left = document.getElementById('omni-left-content');
-        if (left) left.scrollTop = pct * (left.scrollHeight - left.clientHeight);
-        requestAnimationFrame(updateOmniLines);
-        setTimeout(() => isScrollingRight = false, 50);
-    });
-
-    $('#ds-omni-body-container').on('click', '.ds-node-expand-btn', function() {
+    $('#ds-omni-modal-wrapper').on('click', '.ds-node-expand-btn', function() {
         const contentDiv = $(this).siblings('.ds-node-content');
         if (contentDiv.hasClass('collapsed')) {
             contentDiv.removeClass('collapsed');
@@ -1265,10 +1320,6 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(() => {
-            cacheOmniNodePositions();
-            requestAnimationFrame(updateOmniLines);
-        }, 250);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
@@ -1278,8 +1329,6 @@ async function showOmniVisionUI() {
 
 window.closeOmniVision = function() {
     $('#ds-omni-modal-wrapper').remove();
-    omniMappings.forEach(m => { m.pathEl = null; }); // 釋放記憶體
-    omniMappings = [];
 };
 
 function triggerOmniRender(state) {
@@ -1288,9 +1337,8 @@ function triggerOmniRender(state) {
 }
 
 async function renderOmniVision(state) {
-    const leftContainer = document.getElementById('omni-left-content');
-    const rightContainer = document.getElementById('omni-right-content');
-    if (!leftContainer || !rightContainer) return;
+    const scrollContainer = document.getElementById('omni-unified-scroll');
+    if (!scrollContainer) return;
 
     const leftArray = fastClone(state.lastSentSequence || []);
     
@@ -1326,10 +1374,8 @@ async function renderOmniVision(state) {
     $('#omni-tokens-saved').text(preservedTokens);
     $('#omni-tokens-lost').text(recomputeTokens);
 
-    omniMappings = [];
-    const leftMatched = new Set();
-    const rightMatched = new Set();
-
+    // 1. 建立基礎映射
+    let omniMappings = [];
     rightArray.forEach((rNode, rIdx) => {
         let bestMatchIdx = -1;
         let bestScore = 0;
@@ -1343,183 +1389,148 @@ async function renderOmniVision(state) {
         });
 
         if (bestMatchIdx !== -1) {
-            leftMatched.add(bestMatchIdx);
-            rightMatched.add(rIdx);
             let type = bestScore === 1 ? 'perfect' : 'fuzzy';
             if (rNode._omniCat === 'patch') type = 'patch_link';
             omniMappings.push({ left: bestMatchIdx, right: rIdx, type: type });
+        }
+    });
+
+    // 2. LCS 演算法構建對齊的 Rows
+    let rows = [];
+    let l = 0, r = 0;
+    while (l < leftArray.length || r < rightArray.length) {
+        let lMappedTo = omniMappings.find(m => m.left === l)?.right ?? -1;
+        let rMappedTo = omniMappings.find(m => m.right === r)?.left ?? -1;
+
+        if (l < leftArray.length && r < rightArray.length && lMappedTo === r && rMappedTo === l) {
+            let mapping = omniMappings.find(m => m.left === l && m.right === r);
+            rows.push({ leftNode: leftArray[l], rightNode: rightArray[r], type: mapping.type, lIdx: l, rIdx: r });
+            l++; r++;
+        } else if (l < leftArray.length && r < rightArray.length && lMappedTo === -1 && rMappedTo === -1) {
+            rows.push({ leftNode: leftArray[l], rightNode: null, type: 'deleted', lIdx: l, rIdx: -1 });
+            l++;
+        } else if (l < leftArray.length && lMappedTo > r) {
+            let type = getNewNodeType(rightArray[r]);
+            rows.push({ leftNode: null, rightNode: rightArray[r], type: type, lIdx: -1, rIdx: r });
+            r++;
+        } else if (r < rightArray.length && rMappedTo > l) {
+            rows.push({ leftNode: leftArray[l], rightNode: null, type: 'deleted', lIdx: l, rIdx: -1 });
+            l++;
+        } else if (l < leftArray.length && lMappedTo === -1) {
+            rows.push({ leftNode: leftArray[l], rightNode: null, type: 'deleted', lIdx: l, rIdx: -1 });
+            l++;
+        } else if (r < rightArray.length && rMappedTo === -1) {
+            let type = getNewNodeType(rightArray[r]);
+            rows.push({ leftNode: null, rightNode: rightArray[r], type: type, lIdx: -1, rIdx: r });
+            r++;
         } else {
-            let type = 'new_sys';
-            if (rNode._omniCat === 'lorebook') type = 'new_lorebook';
-            else if (rNode._omniCat === 'dynamic') type = 'new_dynamic';
-            else if (rNode._omniCat === 'history') type = 'new_history';
-            else if (rNode._omniCat === 'patch') type = 'new_patch';
-            omniMappings.push({ left: -1, right: rIdx, type: type });
-        }
-    });
-
-    leftArray.forEach((lNode, lIdx) => {
-        if (!leftMatched.has(lIdx)) {
-            omniMappings.push({ left: lIdx, right: -1, type: 'deleted' });
-        }
-    });
-
-    const leftFrag = document.createDocumentFragment();
-    leftArray.forEach((node, idx) => {
-        const isDeleted = !leftMatched.has(idx);
-        const el = document.createElement('div');
-        el.className = `ds-node-card ds-virtual-list ${isDeleted ? 'ds-node-miss' : 'ds-node-hit'}`;
-        el.id = `omni-left-node-${idx}`;
-        el.innerHTML = `
-            <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx} ${isDeleted ? '<span style="color:var(--ds-red); font-weight:bold;">(DELETED)</span>' : ''}</span>
-                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
-            </div>
-            <div class="ds-node-content-wrapper">
-                <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
-                <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
-            </div>
-        `;
-        leftFrag.appendChild(el);
-    });
-    leftContainer.innerHTML = '';
-    leftContainer.appendChild(leftFrag);
-
-    const rightFrag = document.createDocumentFragment();
-    rightArray.forEach((node, idx) => {
-        const isMiss = breakIndex !== -1 && idx >= breakIndex;
-        const isNew = !rightMatched.has(idx);
-        
-        let cardClass = isMiss ? 'ds-node-warn' : 'ds-node-hit';
-        let newLabel = '';
-        
-        if (isNew) {
-            if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; font-weight:bold;">(NEW LORE)</span>'; }
-            else if (node._omniCat === 'dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold;">(NEW DYN)</span>'; }
-            else if (node._omniCat === 'history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); font-weight:bold;">(NEW HIS)</span>'; }
-            else if (node._omniCat === 'patch') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold;">(PATCH)</span>'; }
-            else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold;">(NEW SYS)</span>'; }
-        } else if (node._omniCat === 'patch') {
-            cardClass = 'ds-node-patch';
-        }
-
-        const el = document.createElement('div');
-        el.className = `ds-node-card ds-virtual-list ${cardClass}`;
-        el.id = `omni-right-node-${idx}`;
-        el.innerHTML = `
-            <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx} ${newLabel}</span>
-                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
-            </div>
-            <div class="ds-node-content-wrapper">
-                <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
-                <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
-            </div>
-        `;
-        rightFrag.appendChild(el);
-    });
-    rightContainer.innerHTML = '';
-    rightContainer.appendChild(rightFrag);
-
-    // 量子渲染：等待 DOM 繪製完成後，快取座標並初始化 SVG
-    requestAnimationFrame(() => {
-        cacheOmniNodePositions();
-        initOmniSVGPaths();
-        updateOmniLines();
-    });
-}
-
-// 座標快取矩陣 (消除 Layout Thrashing)
-function cacheOmniNodePositions() {
-    omniMappings.forEach(m => {
-        if (m.left !== -1) {
-            const el = document.getElementById(`omni-left-node-${m.left}`);
-            if (el) { m.lTop = el.offsetTop; m.lHeight = el.offsetHeight; }
-        }
-        if (m.right !== -1) {
-            const el = document.getElementById(`omni-right-node-${m.right}`);
-            if (el) { m.rTop = el.offsetTop; m.rHeight = el.offsetHeight; }
-        }
-    });
-}
-
-// 初始化 SVG 路徑池
-function initOmniSVGPaths() {
-    const svg = document.getElementById('omni-lines-svg');
-    if (!svg) return;
-    const defs = svg.querySelector('defs');
-    svg.innerHTML = '';
-    if (defs) svg.appendChild(defs);
-
-    omniMappings.forEach(m => {
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        let color, dash = '', strokeWidth = '2';
-
-        if (m.type === 'deleted') { color = 'url(#grad-red)'; strokeWidth = '1.5'; dash = '4,4'; } 
-        else if (m.type.startsWith('new_')) {
-            if (m.type === 'new_lorebook') color = 'url(#grad-cyan)';
-            else if (m.type === 'new_dynamic') color = 'url(#grad-orange)';
-            else if (m.type === 'new_history') color = 'url(#grad-green)';
-            else color = 'url(#grad-blue)';
-            strokeWidth = '1.5'; dash = '4,4';
-        } 
-        else {
-            if (m.type === 'perfect') color = 'rgba(152,195,121,0.6)'; 
-            else if (m.type === 'fuzzy') { color = 'rgba(229,192,123,0.8)'; dash = '5,5'; } 
-            else if (m.type === 'patch_link') color = 'rgba(198,120,221,0.8)'; 
-        }
-
-        path.setAttribute('stroke', color);
-        path.setAttribute('stroke-width', strokeWidth);
-        path.setAttribute('fill', 'none');
-        if (dash) path.setAttribute('stroke-dasharray', dash);
-        
-        svg.appendChild(path);
-        m.pathEl = path; // 儲存 DOM 參考，後續只改 d 屬性
-    });
-}
-
-// 量子畫線：純數學運算，零 DOM 重排
-function updateOmniLines() {
-    const svg = document.getElementById('omni-lines-svg');
-    const lContainer = document.getElementById('omni-left-content');
-    const rContainer = document.getElementById('omni-right-content');
-    if (!svg || !lContainer || !rContainer) return;
-
-    const svgHeight = svg.clientHeight;
-    const svgWidth = svg.clientWidth;
-    const lScroll = lContainer.scrollTop;
-    const rScroll = rContainer.scrollTop;
-
-    omniMappings.forEach(m => {
-        if (!m.pathEl) return;
-        let startX, startY, endX, endY;
-
-        if (m.type === 'deleted') {
-            if (m.lTop === undefined) return;
-            startY = m.lTop - lScroll + (m.lHeight / 2);
-            if (startY < -50 || startY > svgHeight + 50) { m.pathEl.setAttribute('d', ''); return; }
-            startX = 0; endX = svgWidth / 2; endY = startY;
-        } 
-        else if (m.type.startsWith('new_')) {
-            if (m.rTop === undefined) return;
-            startY = m.rTop - rScroll + (m.rHeight / 2);
-            if (startY < -50 || startY > svgHeight + 50) { m.pathEl.setAttribute('d', ''); return; }
-            startX = svgWidth / 2; endX = svgWidth; endY = startY;
-        } 
-        else {
-            if (m.lTop === undefined || m.rTop === undefined) return;
-            startY = m.lTop - lScroll + (m.lHeight / 2);
-            endY = m.rTop - rScroll + (m.rHeight / 2);
-            if ((startY < -50 || startY > svgHeight + 50) && (endY < -50 || endY > svgHeight + 50)) {
-                m.pathEl.setAttribute('d', ''); return;
+            if (l < leftArray.length) {
+                rows.push({ leftNode: leftArray[l], rightNode: null, type: 'deleted', lIdx: l, rIdx: -1 });
+                l++;
+            } else if (r < rightArray.length) {
+                let type = getNewNodeType(rightArray[r]);
+                rows.push({ leftNode: null, rightNode: rightArray[r], type: type, lIdx: -1, rIdx: r });
+                r++;
             }
-            startX = 0; endX = svgWidth;
         }
+    }
 
-        const d = `M ${startX} ${startY} C ${startX + 40} ${startY}, ${endX - 40} ${endY}, ${endX} ${endY}`;
-        m.pathEl.setAttribute('d', d);
+    function getNewNodeType(node) {
+        if (node._omniCat === 'lorebook') return 'new_lorebook';
+        if (node._omniCat === 'dynamic') return 'new_dynamic';
+        if (node._omniCat === 'history') return 'new_history';
+        if (node._omniCat === 'patch') return 'new_patch';
+        return 'new_sys';
+    }
+
+    // 3. 渲染 DOM
+    const fragment = document.createDocumentFragment();
+    
+    rows.forEach(row => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'ds-omni-row ds-virtual-list';
+
+        // Left Cell
+        const leftCell = document.createElement('div');
+        leftCell.className = 'ds-omni-cell';
+        if (row.leftNode) {
+            const isDeleted = row.type === 'deleted';
+            leftCell.innerHTML = `
+                <div class="ds-node-card ${isDeleted ? 'ds-node-miss' : 'ds-node-hit'}">
+                    <div class="ds-node-header">
+                        <span><span class="ds-tag ds-tag-${row.leftNode.tag}">[${row.leftNode.tag}]</span> Index: ${row.lIdx} ${isDeleted ? '<span style="color:var(--ds-red); font-weight:bold;">(DELETED)</span>' : ''}</span>
+                        <span>Hash: ${row.leftNode.hash.toString(16).substring(0,8)}</span>
+                    </div>
+                    <div class="ds-node-content-wrapper">
+                        <div class="ds-node-content collapsed">${escapeHtml(row.leftNode.content).replace(/\n/g, '<br>')}</div>
+                        <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
+                    </div>
+                </div>
+            `;
+        }
+        rowEl.appendChild(leftCell);
+
+        // Center Cell (Pure CSS Line)
+        const centerCell = document.createElement('div');
+        centerCell.className = 'ds-omni-center';
+        let lineStyle = '';
+        if (row.type === 'deleted') {
+            lineStyle = 'width: 50%; background: linear-gradient(90deg, rgba(224,108,117,0.8) 0%, rgba(224,108,117,0) 100%); margin-right: auto;';
+        } else if (row.type.startsWith('new_')) {
+            let color = 'rgba(0,229,255,'; // sys
+            if (row.type === 'new_lorebook') color = 'rgba(86,182,194,';
+            else if (row.type === 'new_dynamic') color = 'rgba(209,154,102,';
+            else if (row.type === 'new_history') color = 'rgba(152,195,121,';
+            else if (row.type === 'new_patch') color = 'rgba(198,120,221,';
+            lineStyle = `width: 50%; background: linear-gradient(90deg, ${color}0) 0%, ${color}0.8) 100%); margin-left: auto;`;
+        } else if (row.type === 'perfect') {
+            lineStyle = 'width: 100%; background: rgba(152,195,121,0.6);';
+        } else if (row.type === 'fuzzy') {
+            lineStyle = 'width: 100%; background: repeating-linear-gradient(90deg, rgba(229,192,123,0.8) 0, rgba(229,192,123,0.8) 5px, transparent 5px, transparent 10px);';
+        } else if (row.type === 'patch_link') {
+            lineStyle = 'width: 100%; background: rgba(198,120,221,0.8);';
+        }
+        centerCell.innerHTML = `<div style="height: 2px; border-radius: 1px; ${lineStyle}"></div>`;
+        rowEl.appendChild(centerCell);
+
+        // Right Cell
+        const rightCell = document.createElement('div');
+        rightCell.className = 'ds-omni-cell';
+        if (row.rightNode) {
+            const isMiss = breakIndex !== -1 && row.rIdx >= breakIndex;
+            let cardClass = isMiss ? 'ds-node-warn' : 'ds-node-hit';
+            let newLabel = '';
+            
+            if (row.type.startsWith('new_')) {
+                if (row.type === 'new_lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; font-weight:bold;">(NEW LORE)</span>'; }
+                else if (row.type === 'new_dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold;">(NEW DYN)</span>'; }
+                else if (row.type === 'new_history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); font-weight:bold;">(NEW HIS)</span>'; }
+                else if (row.type === 'new_patch') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold;">(PATCH)</span>'; }
+                else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold;">(NEW SYS)</span>'; }
+            } else if (row.type === 'patch_link') {
+                cardClass = 'ds-node-patch';
+            }
+
+            rightCell.innerHTML = `
+                <div class="ds-node-card ${cardClass}">
+                    <div class="ds-node-header">
+                        <span><span class="ds-tag ds-tag-${row.rightNode.tag}">[${row.rightNode.tag}]</span> Index: ${row.rIdx} ${newLabel}</span>
+                        <span>Hash: ${row.rightNode.hash.toString(16).substring(0,8)}</span>
+                    </div>
+                    <div class="ds-node-content-wrapper">
+                        <div class="ds-node-content collapsed">${escapeHtml(row.rightNode.content).replace(/\n/g, '<br>')}</div>
+                        <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
+                    </div>
+                </div>
+            `;
+        }
+        rowEl.appendChild(rightCell);
+
+        fragment.appendChild(rowEl);
     });
+
+    scrollContainer.innerHTML = '';
+    scrollContainer.appendChild(fragment);
 }
 
 // ==========================================
@@ -1530,7 +1541,7 @@ function renderChatsUI() {
     if (container.length === 0) return;
     container.empty();
     
-    const totalBytes = getStorageSize(); // 讀取快取，不阻塞 UI
+    const totalBytes = getStorageSize(); 
     $('#ds-storage-badge').text(formatBytes(totalBytes));
     
     const maxStorage = 5 * 1024 * 1024; 
@@ -1616,7 +1627,7 @@ function generateDiagnosticReport() {
     const chatKeyInfo = getChatKey();
     const state = Settings.chats[chatKeyInfo.key] || {};
     
-    let report = `=== DeepSeek Quantum Speed Diagnostic Report ===\n`;
+    let report = `=== DeepSeek Matrix Singularity Diagnostic Report ===\n`;
     report += `Generated: ${new Date().toISOString()}\n`;
     report += `User Agent: ${navigator.userAgent}\n\n`;
     
@@ -1729,14 +1740,14 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v49-opt-drawer">
+        <div class="inline-drawer" id="ds-v50-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 量子神速优化器 (v49)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 终极矩阵优化器 (v50)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
                 
-                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 量子神速沙盒 (即时预览)</button>
+                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 终极矩阵沙盒 (即时预览)</button>
                 <button id="ds-btn-one-click" class="ds-btn ds-btn-magic"><i class="fa-solid fa-wand-magic-sparkles"></i> 🌟 一键套用 DeepSeek 100% 缓存最佳设定</button>
 
                 <!-- 1. 核心开关 -->
@@ -1749,7 +1760,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动量子神速引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
+                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动终极矩阵引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
                                     <span>(核心功能！让回复变秒回，大幅节省 Token 和 API 费用)</span>
                                 </div>
                             </label>
@@ -2256,7 +2267,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v49_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v50_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2324,7 +2335,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 量子神速优化器 v49 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 终极矩阵优化器 v50 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
