@@ -180,7 +180,6 @@ const Detectors = {
         return n.includes('lorebook') || n.includes('world');
     },
     
-    // 深度偵測來源與創造者
     getOriginInfo: (msg, type) => {
         if (type === 'current_user') return { source: '用戶輸入', creator: '用戶', category: 'USER' };
         if (type === 'prefill') return { source: 'AI回覆(預填充)', creator: '大模型', category: 'PREFILL' };
@@ -227,7 +226,6 @@ async function interceptAndRestructurePrompt(data) {
 
             const origin = Detectors.getOriginInfo(msg, type);
             
-            // 偵測其他插件的動作
             if (origin.source === '其他插件') {
                 otherPluginActions.push(`- 偵測到其他插件 (**${origin.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
             }
@@ -255,16 +253,7 @@ async function interceptAndRestructurePrompt(data) {
             });
         }
 
-        // --- 階段 2：提取臨時態 ---
-        let ephemeralZone = [];
-        incomingPool = incomingPool.filter(msg => {
-            if (Detectors.isEphemeral(msg.norm) || (Settings.floatingAnchor && msg.role === 'system' && msg.name === "Author's Note")) {
-                ephemeralZone.push(msg);
-                ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '繼承', action: '隔離沉底', proto: '協議2/15/19', status: '未凍結' });
-                return false;
-            }
-            return true;
-        });
+        // ⚠️ 階段 2 (提取臨時態) 已被徹底廢除！所有提示詞都必須進入凍結池以保證 100% 快取命中！
 
         // --- 階段 3：絕對秩序矩陣 (比對凍結池) ---
         const nextFrozenSequence = [];
@@ -317,12 +306,13 @@ async function interceptAndRestructurePrompt(data) {
                 }
                 missingHistoryCount = 0;
             }
-            else if (Settings.timeSpacePatch && bestSim > 0.5) {
+            // ⚠️ 修復：協議 9 現在只對用戶和 AI 的歷史對話生效，防止系統提示詞微調產生垃圾補丁
+            else if (Settings.timeSpacePatch && bestSim > 0.5 && frozenMsg.role !== 'system') {
                 const matched = incomingPool.splice(bestMatchIdx, 1)[0];
                 ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '修改', action: '原位凍結', proto: '協議9', status: '已凍結' });
                 createPatch(`[時空修正] 之前的事件已發生改變，最新情況為：\n${matched.content}`, '協議9');
                 missingHistoryCount = 0;
-                if (frozenMsg.role === 'user' || frozenMsg.role === 'assistant') maxMatchedHistoryIdx = Math.max(maxMatchedHistoryIdx, matched.originalIndex);
+                maxMatchedHistoryIdx = Math.max(maxMatchedHistoryIdx, matched.originalIndex);
             }
             else {
                 ledger.push({ ref: frozenMsg, origIdx: '-', ...origin, gen: '消失', action: '強制保留', proto: '協議3/16', status: '已凍結' });
@@ -349,7 +339,11 @@ async function interceptAndRestructurePrompt(data) {
             }
 
             if (msg.role === 'system') {
-                if (Settings.diaryMode && Detectors.isDynamicPrompt(msg.content)) {
+                // ⚠️ 修復：將原本不凍結的 RAG/Author's Note 轉化為動態提示詞，徹底凍結在底部！
+                if (Detectors.isEphemeral(msg.norm) || (Settings.floatingAnchor && msg.name === "Author's Note")) {
+                    dynamicPrompts.push(msg);
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '協議2/15/19', status: '將凍結' });
+                } else if (Settings.diaryMode && Detectors.isDynamicPrompt(msg.content)) {
                     const p = { role: 'system', content: `[狀態更新] ${msg.content}`, isDSPatch: true };
                     dynamicPrompts.push(p);
                     ledger.push({ ref: p, origIdx: msg.originalIndex, source: '本插件', creator: 'DS Cache', category: 'SYS', gen: '轉換', action: '追加凍結', proto: '協議14', status: '將凍結' });
@@ -394,7 +388,6 @@ async function interceptAndRestructurePrompt(data) {
         safeSave();
 
         const finalStream = [...state.frozenSequence];
-        ephemeralZone.forEach(m => finalStream.push({ role: m.role, content: m.content }));
         if (currentUserMsg) finalStream.push(currentUserMsg);
         prefills.forEach(p => finalStream.push(p));
 
@@ -421,7 +414,6 @@ async function interceptAndRestructurePrompt(data) {
             mdLog += `| 最終排序 | 原始排序 | 分類 | 來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 提示詞內容摘要 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
             
-            // 嚴格按照最終排序輸出，被刪除的沉底
             ledger.sort((a, b) => {
                 if (a.finalIdx === '-' && b.finalIdx === '-') return (a.origIdx === '-' ? 999 : a.origIdx) - (b.origIdx === '-' ? 999 : b.origIdx);
                 if (a.finalIdx === '-') return 1;
@@ -435,7 +427,7 @@ async function interceptAndRestructurePrompt(data) {
 
             Logger.write(mdLog, LogLevels.DETAILED);
         } else if (Settings.logLevel >= LogLevels.STANDARD) {
-            Logger.write(`✅ 處理完成。凍結池: ${state.frozenSequence.length} | 臨時區: ${ephemeralZone.length} | 補丁生成: ${patches.length}`, LogLevels.STANDARD);
+            Logger.write(`✅ 處理完成。凍結池: ${state.frozenSequence.length} | 補丁生成: ${patches.length}`, LogLevels.STANDARD);
         }
 
     } catch (err) {
@@ -501,7 +493,6 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
-    // 注入商業級 Markdown 表格 CSS
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
@@ -529,7 +520,7 @@ async function setupUI() {
             </div>
 
             ${createCategory('core', '🧱', '核心架構與防禦矩陣', 
-                createToggle('vectorQuarantine', '2. 向量隔離區 (Vector Quarantine)', '將 RAG 檢索的隨機記憶關入底部隔離區，不寫入永久凍結序列，保住主體快取。', Settings.vectorQuarantine) +
+                createToggle('vectorQuarantine', '2. 向量隔離區 (Vector Quarantine)', '將 RAG 檢索的隨機記憶轉化為動態提示詞追加於底部並徹底凍結，確保主體快取絕對連續。', Settings.vectorQuarantine) +
                 createToggle('prefixAnchor', '3. 絕對前綴錨點 (Absolute Prefix Anchor)', '攔截 ST 的頭部截斷刪除，強制保留最舊的第一句話，完美保住前綴快取。', Settings.prefixAnchor) +
                 createToggle('semanticNorm', '4. 語義正規化引擎 (Semantic Normalization)', '在底層統一空格與引號排版，只要語義沒變，系統就會視為相同並繼續使用快取。', Settings.semanticNorm) +
                 createToggle('deduplication', '5. 絕對去重協議 (Absolute Deduplication)', '計算提示詞的量子哈希值，遇到完全相同的內容直接在底層抹除，節省 Token。', Settings.deduplication) +
@@ -547,11 +538,11 @@ async function setupUI() {
 
             ${createCategory('dynamic', '📜', '動態提示詞與設定管理', 
                 createToggle('diaryMode', '14. 寫日記模式 (Diary Mode)', '將動態變化的時間當作新的日記條目追加在最底部，大模型會感受到時間流逝且快取 100%。', Settings.diaryMode) +
-                createToggle('floatingAnchor', '15. 浮動錨點穩定協議 (Floating Anchor)', '剝奪 Author\'s Note 的浮動權，強制將其鎖死在最底部隔離區。', Settings.floatingAnchor) +
+                createToggle('floatingAnchor', '15. 浮動錨點穩定協議 (Floating Anchor)', '剝奪 Author\'s Note 的浮動權，強制將其鎖死在底部並徹底凍結。', Settings.floatingAnchor) +
                 createToggle('memoryImprint', '16. 永久記憶烙印 (Memory Imprint)', '無視 ST 移除不再觸發的世界書指令，讓其幽靈永久烙印在凍結序列中。', Settings.memoryImprint) +
                 createToggle('nanoPatching', '17. 量子微創手術 (Nano-Patching)', '微調角色卡時，精準提取新增的字做成納米補丁放在底部，不重讀整張卡。', Settings.nanoPatching) +
                 createToggle('hotReload', '18. 提示詞熱更新 (Persona Hot-Reload)', '大幅度重寫提示詞時，凍結舊設定並在底部追加熱更新聲明。', Settings.hotReload) +
-                createToggle('summarySink', '19. 摘要沉底錨點 (Summary Sink Anchor)', '識別 ST 的自動總結，並強制將其作為臨時態沉入對話最底部。', Settings.summarySink) +
+                createToggle('summarySink', '19. 摘要沉底錨點 (Summary Sink Anchor)', '識別 ST 的自動總結，並強制將其作為動態節點沉入底部凍結。', Settings.summarySink) +
                 createToggle('chronos', '20. 克羅諾斯協議 (Chronos Protocol)', '將簡短的時間跳躍旁白轉化為底部的敘事過渡補丁，不打斷歷史快取。', Settings.chronos)
             )}
 
@@ -631,7 +622,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (Cache-100% 修復版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
