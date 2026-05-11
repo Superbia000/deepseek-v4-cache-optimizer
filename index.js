@@ -2,28 +2,28 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Quantum Matrix UI)
+// 1. 樣式注入 (Ultimate Truth UI - v54 Flow)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
     const style = document.createElement('style');
     style.id = 'ds-cache-styles';
     style.innerHTML = `
-        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-blue: #61afef; --ds-bg: rgba(15, 20, 25, 0.7); --ds-border: rgba(0, 229, 255, 0.2); }
+        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-blue: #61afef; --ds-bg: rgba(15, 20, 25, 0.75); --ds-border: rgba(0, 229, 255, 0.25); }
         
         .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
         
         .ds-scroll::-webkit-scrollbar { width: 6px; }
-        .ds-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); border-radius: 4px; }
-        .ds-scroll::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.4); border-radius: 4px; }
-        .ds-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.8); box-shadow: 0 0 10px var(--ds-cyan); }
+        .ds-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.4); border-radius: 4px; }
+        .ds-scroll::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.5); border-radius: 4px; }
+        .ds-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.9); box-shadow: 0 0 12px var(--ds-cyan); }
 
-        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.3); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-        .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.4); box-shadow: 0 8px 30px rgba(0, 229, 255, 0.1); }
-        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.08) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 12px rgba(0,229,255,0.3); letter-spacing: 0.5px; }
-        .ds-opt-header:hover { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); color: #fff; }
-        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.25); border-top: 1px solid rgba(255,255,255,0.03); }
+        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.4); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.5); box-shadow: 0 8px 30px rgba(0, 229, 255, 0.15); }
+        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 12px rgba(0,229,255,0.4); letter-spacing: 0.5px; }
+        .ds-opt-header:hover { background: linear-gradient(90deg, rgba(0,229,255,0.2) 0%, rgba(0,0,0,0) 100%); color: #fff; }
+        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.3); border-top: 1px solid rgba(255,255,255,0.05); }
         .ds-opt-group.open .ds-opt-content { display: flex; animation: dsFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
 
@@ -42,136 +42,141 @@ const injectCSS = () => {
         .ds-perf-mid { background: rgba(229,192,123,0.15); color: var(--ds-yellow); border: 1px solid rgba(229,192,123,0.3); }
         .ds-perf-high { background: rgba(224,108,117,0.15); color: var(--ds-red); border: 1px solid rgba(224,108,117,0.3); }
 
-        .ds-select-styled { background: rgba(0,0,0,0.5); color: var(--ds-cyan); border: 1px solid var(--ds-border); padding: 10px 14px; border-radius: 8px; font-weight: bold; cursor: pointer; outline: none; transition: all 0.2s; font-family: inherit; width: 100%; box-sizing: border-box; }
-        .ds-select-styled:hover, .ds-select-styled:focus { border-color: var(--ds-cyan); box-shadow: 0 0 12px rgba(0,229,255,0.2); }
+        .ds-select-styled { background: rgba(0,0,0,0.6); color: var(--ds-cyan); border: 1px solid var(--ds-border); padding: 10px 14px; border-radius: 8px; font-weight: bold; cursor: pointer; outline: none; transition: all 0.2s; font-family: inherit; width: 100%; box-sizing: border-box; }
+        .ds-select-styled:hover, .ds-select-styled:focus { border-color: var(--ds-cyan); box-shadow: 0 0 12px rgba(0,229,255,0.3); }
         .ds-select-styled option { background: #1e1e24; color: #fff; }
         
-        .ds-input-styled { background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 8px; font-size: 12px; outline: none; transition: all 0.2s; width: 100%; box-sizing: border-box; }
-        .ds-input-styled:focus { border-color: var(--ds-cyan); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+        .ds-input-styled { background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.2); padding: 8px 12px; border-radius: 8px; font-size: 12px; outline: none; transition: all 0.2s; width: 100%; box-sizing: border-box; }
+        .ds-input-styled:focus { border-color: var(--ds-cyan); box-shadow: 0 0 10px rgba(0,229,255,0.3); }
 
-        .ds-log-toolbar { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; background: rgba(0,0,0,0.4); padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); flex-wrap: wrap; }
+        .ds-log-toolbar { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; background: rgba(0,0,0,0.5); padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; }
         .ds-log-filter { cursor: pointer; padding: 6px 14px; border-radius: 14px; font-size: 11px; background: rgba(255,255,255,0.05); color: #abb2bf; transition: all 0.2s; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
         .ds-log-filter.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 12px rgba(0,229,255,0.2); }
-        .ds-log-filter:hover:not(.active) { background: rgba(255,255,255,0.1); color: #fff; }
-        .ds-log-terminal { background: #0a0c10; color: #a9b7c6; font-family: 'Fira Code', Consolas, monospace; font-size: 12px; height: 350px; overflow-y: auto; border-radius: 10px; padding: 18px; border: 1px solid rgba(0,229,255,0.2); box-shadow: inset 0 0 25px rgba(0,0,0,0.9); line-height: 1.7; position: relative; }
-        .ds-log-line { margin-bottom: 8px; word-wrap: break-word; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 8px; display: flex; align-items: flex-start; }
+        .ds-log-filter:hover:not(.active) { background: rgba(255,255,255,0.15); color: #fff; }
+        .ds-log-terminal { background: #0a0c10; color: #a9b7c6; font-family: 'Fira Code', Consolas, monospace; font-size: 12px; height: 350px; overflow-y: auto; border-radius: 10px; padding: 18px; border: 1px solid rgba(0,229,255,0.3); box-shadow: inset 0 0 25px rgba(0,0,0,0.9); line-height: 1.7; position: relative; }
+        .ds-log-line { margin-bottom: 8px; word-wrap: break-word; border-bottom: 1px dashed rgba(255,255,255,0.08); padding-bottom: 8px; display: flex; align-items: flex-start; }
         .ds-log-line.hide { display: none !important; }
         .ds-log-time { color: #5c6370; margin-right: 12px; user-select: none; font-size: 10px; flex-shrink: 0; margin-top: 3px; }
         .ds-log-content { flex: 1; min-width: 0; }
         .ds-log-info { color: var(--ds-green); }
         .ds-log-warn { color: var(--ds-yellow); font-weight: bold; }
-        .ds-log-error { color: var(--ds-red); font-weight: bold; text-shadow: 0 0 8px rgba(224,108,117,0.5); }
+        .ds-log-error { color: var(--ds-red); font-weight: bold; text-shadow: 0 0 8px rgba(224,108,117,0.6); }
         .ds-log-map { color: var(--ds-cyan); font-weight: bold; }
         .ds-log-debug { color: var(--ds-purple); }
         .ds-log-divider { color: #4b5263; font-weight: bold; display: block; text-align: center; margin: 18px 0; border-top: 1px solid #2c313a; padding-top: 10px; letter-spacing: 1.5px; width: 100%; }
         
-        .ds-tag { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: bold; background: rgba(255,255,255,0.05); margin-right: 8px; letter-spacing: 0.5px; }
-        .ds-tag-SYS { color: #61afef; border-left: 3px solid #61afef; background: rgba(97,175,239,0.1); }
-        .ds-tag-USER { color: var(--ds-green); border-left: 3px solid var(--ds-green); background: rgba(152,195,121,0.1); }
-        .ds-tag-AI { color: var(--ds-yellow); border-left: 3px solid var(--ds-yellow); background: rgba(229,192,123,0.1); }
-        .ds-tag-PREFILL { color: var(--ds-purple); border-left: 3px solid var(--ds-purple); background: rgba(198,120,221,0.1); }
-        .ds-badge { background: rgba(0,229,255,0.1); padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-family: monospace; color: var(--ds-cyan); border: 1px solid rgba(0,229,255,0.3); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
+        .ds-tag { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: bold; background: rgba(255,255,255,0.08); margin-right: 8px; letter-spacing: 0.5px; }
+        .ds-tag-SYS { color: #61afef; border-left: 3px solid #61afef; background: rgba(97,175,239,0.15); }
+        .ds-tag-USER { color: var(--ds-green); border-left: 3px solid var(--ds-green); background: rgba(152,195,121,0.15); }
+        .ds-tag-AI { color: var(--ds-yellow); border-left: 3px solid var(--ds-yellow); background: rgba(229,192,123,0.15); }
+        .ds-tag-PREFILL { color: var(--ds-purple); border-left: 3px solid var(--ds-purple); background: rgba(198,120,221,0.15); }
+        .ds-badge { background: rgba(0,229,255,0.15); padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-family: monospace; color: var(--ds-cyan); border: 1px solid rgba(0,229,255,0.4); box-shadow: 0 0 8px rgba(0,229,255,0.3); }
 
-        .ds-chat-container { max-height:300px; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); padding:12px; border-radius:10px; background: rgba(0,0,0,0.4); }
-        .ds-chat-item { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:14px; margin-bottom:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05); transition: all 0.2s; }
-        .ds-chat-item:hover { background:rgba(255,255,255,0.08); transform: translateX(5px); border-color: rgba(255,255,255,0.15); }
-        .ds-chat-item.active-chat { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); border-left: 4px solid var(--ds-cyan); border-top: 1px solid var(--ds-border); border-bottom: 1px solid var(--ds-border); border-right: 1px solid var(--ds-border); box-shadow: inset 0 0 20px rgba(0,229,255,0.1); }
+        .ds-chat-container { max-height:300px; overflow-y:auto; border:1px solid rgba(255,255,255,0.1); padding:12px; border-radius:10px; background: rgba(0,0,0,0.5); }
+        .ds-chat-item { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); padding:14px; margin-bottom:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.08); transition: all 0.2s; }
+        .ds-chat-item:hover { background:rgba(255,255,255,0.1); transform: translateX(5px); border-color: rgba(255,255,255,0.2); }
+        .ds-chat-item.active-chat { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); border-left: 4px solid var(--ds-cyan); border-top: 1px solid var(--ds-border); border-bottom: 1px solid var(--ds-border); border-right: 1px solid var(--ds-border); box-shadow: inset 0 0 20px rgba(0,229,255,0.15); }
         
-        .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; cursor: pointer; }
-        .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-cyan); padding: 30px; border-radius: 20px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; color: #fff; font-family: sans-serif; box-shadow: 0 40px 80px rgba(0,0,0,0.9), 0 0 40px rgba(0,229,255,0.2); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
-        .ds-modal-title { color: var(--ds-cyan); margin: 0 0 20px 0; display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.4); flex-wrap: wrap; }
+        .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.92); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; cursor: pointer; }
+        .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-cyan); padding: 30px; border-radius: 20px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; color: #fff; font-family: sans-serif; box-shadow: 0 40px 80px rgba(0,0,0,0.95), 0 0 40px rgba(0,229,255,0.25); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
+        .ds-modal-title { color: var(--ds-cyan); margin: 0 0 20px 0; display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.5); flex-wrap: wrap; }
         
         .ds-btn-col { display: flex; flex-direction: column; gap: 16px; margin-top: 35px; }
-        .ds-btn { padding: 18px 24px; border: 1px solid transparent; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 15px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:16px; text-align:left; line-height: 1.5; background: rgba(255,255,255,0.05); color: #fff; }
-        .ds-btn:hover { transform: translateY(-3px); box-shadow: 0 10px 25px rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); }
+        .ds-btn { padding: 18px 24px; border: 1px solid transparent; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 15px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:16px; text-align:left; line-height: 1.5; background: rgba(255,255,255,0.08); color: #fff; }
+        .ds-btn:hover { transform: translateY(-3px); box-shadow: 0 10px 25px rgba(0,0,0,0.6); border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.15); }
         .ds-btn:active { transform: translateY(0); }
         .ds-btn i { font-size: 20px; width: 26px; text-align: center; flex-shrink: 0; }
         
-        .ds-btn-accept { border-color: rgba(152,195,121,0.5); background: linear-gradient(90deg, rgba(152,195,121,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-accept:hover { border-color: var(--ds-green); box-shadow: 0 0 20px rgba(152,195,121,0.4); }
+        .ds-btn-accept { border-color: rgba(152,195,121,0.6); background: linear-gradient(90deg, rgba(152,195,121,0.25) 0%, rgba(0,0,0,0) 100%); }
+        .ds-btn-accept:hover { border-color: var(--ds-green); box-shadow: 0 0 20px rgba(152,195,121,0.5); }
         .ds-btn-accept i { color: var(--ds-green); }
         
-        .ds-btn-revert { border-color: rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-revert:hover { border-color: var(--ds-purple); box-shadow: 0 0 20px rgba(198,120,221,0.4); }
+        .ds-btn-revert { border-color: rgba(198,120,221,0.6); background: linear-gradient(90deg, rgba(198,120,221,0.25) 0%, rgba(0,0,0,0) 100%); }
+        .ds-btn-revert:hover { border-color: var(--ds-purple); box-shadow: 0 0 20px rgba(198,120,221,0.5); }
         .ds-btn-revert i { color: var(--ds-purple); }
         
-        .ds-btn-abort { border-color: rgba(224,108,117,0.5); background: linear-gradient(90deg, rgba(224,108,117,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-abort:hover { border-color: var(--ds-red); box-shadow: 0 0 20px rgba(224,108,117,0.4); }
+        .ds-btn-abort { border-color: rgba(224,108,117,0.6); background: linear-gradient(90deg, rgba(224,108,117,0.25) 0%, rgba(0,0,0,0) 100%); }
+        .ds-btn-abort:hover { border-color: var(--ds-red); box-shadow: 0 0 20px rgba(224,108,117,0.5); }
         .ds-btn-abort i { color: var(--ds-red); }
         
-        .ds-btn-blue { border-color: rgba(0,229,255,0.5); background: linear-gradient(90deg, rgba(0,229,255,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-blue:hover { border-color: var(--ds-cyan); box-shadow: 0 0 20px rgba(0,229,255,0.4); }
+        .ds-btn-blue { border-color: rgba(0,229,255,0.6); background: linear-gradient(90deg, rgba(0,229,255,0.25) 0%, rgba(0,0,0,0) 100%); }
+        .ds-btn-blue:hover { border-color: var(--ds-cyan); box-shadow: 0 0 20px rgba(0,229,255,0.5); }
         .ds-btn-blue i { color: var(--ds-cyan); }
 
-        .ds-btn-reset { border-color: rgba(224,108,117,0.3); background: rgba(224,108,117,0.08); }
-        .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.2); }
+        .ds-btn-reset { border-color: rgba(224,108,117,0.4); background: rgba(224,108,117,0.1); }
+        .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.25); }
         .ds-btn-reset i { color: var(--ds-red); }
 
-        .ds-btn-magic { border-color: rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-yellow); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 16px; letter-spacing: 1px; }
-        .ds-btn-magic:hover { border-color: var(--ds-yellow); box-shadow: 0 0 25px rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.3) 0%, rgba(0,0,0,0) 100%); color: #fff; }
+        .ds-btn-magic { border-color: rgba(229,192,123,0.6); background: linear-gradient(90deg, rgba(229,192,123,0.25) 0%, rgba(0,0,0,0) 100%); color: var(--ds-yellow); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 16px; letter-spacing: 1px; }
+        .ds-btn-magic:hover { border-color: var(--ds-yellow); box-shadow: 0 0 25px rgba(229,192,123,0.6); background: linear-gradient(90deg, rgba(229,192,123,0.35) 0%, rgba(0,0,0,0) 100%); color: #fff; }
 
-        .ds-btn-omni { border-color: rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-purple); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 16px; letter-spacing: 1px; }
-        .ds-btn-omni:hover { border-color: var(--ds-purple); box-shadow: 0 0 25px rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.3) 0%, rgba(0,0,0,0) 100%); color: #fff; }
+        .ds-btn-omni { border-color: rgba(198,120,221,0.6); background: linear-gradient(90deg, rgba(198,120,221,0.25) 0%, rgba(0,0,0,0) 100%); color: var(--ds-purple); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 16px; letter-spacing: 1px; }
+        .ds-btn-omni:hover { border-color: var(--ds-purple); box-shadow: 0 0 25px rgba(198,120,221,0.6); background: linear-gradient(90deg, rgba(198,120,221,0.35) 0%, rgba(0,0,0,0) 100%); color: #fff; }
 
-        .ds-health-bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; margin-top: 6px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); }
+        .ds-health-bar { height: 6px; background: rgba(255,255,255,0.15); border-radius: 3px; margin-top: 6px; overflow: hidden; box-shadow: inset 0 1px 4px rgba(0,0,0,0.6); }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s; }
 
         /* ==========================================
-           Omni-Vision v52 Quantum Matrix Styles
+           Omni-Vision v54 Quantum Flow Styles
            ========================================== */
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 25px !important; overflow: hidden; }
         
         /* 控制台區域 */
-        .ds-omni-control-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); transition: max-height 0.3s ease; overflow: hidden; }
-        .ds-omni-control-header { padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .ds-omni-control-header:hover { background: rgba(255,255,255,0.06); }
+        .ds-omni-control-panel { background: rgba(0,0,0,0.7); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 25px rgba(0,0,0,0.6); transition: max-height 0.3s ease; overflow: hidden; }
+        .ds-omni-control-header { padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .ds-omni-control-header:hover { background: rgba(255,255,255,0.08); }
         .ds-omni-control-body { padding: 15px 18px; display: flex; flex-direction: column; gap: 15px; }
         .ds-omni-control-panel.collapsed .ds-omni-control-body { display: none; }
         .ds-omni-control-panel.collapsed .ds-omni-control-header i.fa-chevron-up { transform: rotate(180deg); }
 
         .ds-omni-actions-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-        .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 8px 16px; border-radius: 8px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; font-weight: bold; }
-        .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
-        .ds-omni-action-btn.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+        .ds-omni-action-btn { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: #abb2bf; padding: 8px 16px; border-radius: 8px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; font-weight: bold; }
+        .ds-omni-action-btn:hover { background: rgba(255,255,255,0.2); color: #fff; border-color: rgba(255,255,255,0.4); }
+        .ds-omni-action-btn.active { background: rgba(0,229,255,0.2); color: var(--ds-cyan); border-color: rgba(0,229,255,0.5); box-shadow: 0 0 12px rgba(0,229,255,0.3); }
         
         .ds-omni-toggles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; max-height: 150px; overflow-y: auto; padding-right: 5px; }
-        .ds-omni-toggle { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 6px 10px; border-radius: 6px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
-        .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+        .ds-omni-toggle { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.08); padding: 6px 10px; border-radius: 6px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ds-omni-toggle:hover { background: rgba(255,255,255,0.15); color: #fff; }
+        .ds-omni-toggle.active { background: rgba(0,229,255,0.2); color: var(--ds-cyan); border-color: rgba(0,229,255,0.5); box-shadow: 0 0 12px rgba(0,229,255,0.3); }
+
+        /* 圖例區域 (Legend) */
+        .ds-omni-legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 15px; background: rgba(0,0,0,0.4); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); font-size: 11px; color: #abb2bf; margin-bottom: 10px; }
+        .ds-legend-item { display: flex; align-items: center; gap: 6px; }
+        .ds-legend-color { width: 12px; height: 12px; border-radius: 3px; }
 
         /* 矩陣視窗區域 (Quantum Matrix Layout) */
-        .ds-omni-matrix-container { display: flex; flex: 1; min-height: 0; position: relative; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); }
+        .ds-omni-matrix-container { display: flex; flex: 1; min-height: 0; position: relative; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 35px rgba(0,0,0,0.9); }
         
-        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; position: relative; z-index: 2; width: 45%; }
-        .ds-omni-pane-header { padding: 12px 20px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; font-weight: bold; flex-shrink: 0; font-size: 14px; }
+        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; position: relative; z-index: 2; width: 50%; }
+        .ds-omni-pane-header { padding: 12px 20px; background: rgba(255,255,255,0.08); border-bottom: 1px solid rgba(255,255,255,0.15); display: flex; justify-content: space-between; align-items: center; font-weight: bold; flex-shrink: 0; font-size: 14px; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; position: relative; scroll-behavior: auto; will-change: scroll-position; }
         
-        /* 畫布橋樑 (Canvas Bridge) */
-        .ds-omni-bridge { position: absolute; top: 0; left: 45%; width: 10%; height: 100%; z-index: 1; pointer-events: none; overflow: hidden; }
+        /* 100% 全覆蓋畫布橋樑 (Full-Overlay Canvas Bridge) */
+        .ds-omni-bridge { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: hidden; }
         #omni-svg-canvas { width: 100%; height: 100%; position: absolute; top: 0; left: 0; overflow: visible; }
-        #omni-svg-canvas path { will-change: d; transition: stroke 0.3s; }
+        #omni-svg-canvas path { will-change: d; transition: stroke 0.3s; filter: drop-shadow(0 0 3px rgba(255,255,255,0.15)); }
 
         /* 卡片樣式 */
-        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
-        .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
+        .ds-node-card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
+        .ds-node-card:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); z-index: 10; box-shadow: 0 0 25px rgba(0,0,0,0.7); transform: translateY(-2px); }
         
         /* 9 維度色彩定義 */
-        .ds-node-frozen { border-left: 5px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-deleted { border-left: 5px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.08) 0%, rgba(0,0,0,0) 100%); opacity: 0.7; }
-        .ds-node-fuzzy { border-left: 5px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-sys { border-left: 5px solid var(--ds-blue); background: linear-gradient(90deg, rgba(97,175,239,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-lore { border-left: 5px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-dyn { border-left: 5px solid var(--ds-orange); background: linear-gradient(90deg, rgba(209,154,102,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-his { border-left: 5px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-patch { border-left: 5px solid var(--ds-purple); background: linear-gradient(90deg, rgba(198,120,221,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-frozen { border-left: 5px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.1) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-deleted { border-left: 5px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.1) 0%, rgba(0,0,0,0) 100%); opacity: 0.6; }
+        .ds-node-fuzzy { border-left: 5px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.1) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-sys { border-left: 5px solid var(--ds-blue); background: linear-gradient(90deg, rgba(97,175,239,0.1) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-lore { border-left: 5px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-dyn { border-left: 5px solid var(--ds-orange); background: linear-gradient(90deg, rgba(209,154,102,0.1) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-his { border-left: 5px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.1) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-patch { border-left: 5px solid var(--ds-purple); background: linear-gradient(90deg, rgba(198,120,221,0.1) 0%, rgba(0,0,0,0) 100%); }
         
-        .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; color: #7f848e; border-bottom: 1px dashed rgba(255,255,255,0.15); padding-bottom: 6px; }
+        .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; color: #8b92a5; border-bottom: 1px dashed rgba(255,255,255,0.2); padding-bottom: 6px; }
         
         .ds-node-content-wrapper { position: relative; }
-        .ds-node-content { line-height: 1.6; }
+        .ds-node-content { line-height: 1.6; transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .ds-node-content.collapsed { max-height: 70px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
-        .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 6px; background: rgba(0,229,255,0.08); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.2); font-weight: bold; }
-        .ds-node-expand-btn:hover { background: rgba(0,229,255,0.2); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+        .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 6px; background: rgba(0,229,255,0.1); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.25); font-weight: bold; }
+        .ds-node-expand-btn:hover { background: rgba(0,229,255,0.25); border-color: rgba(0,229,255,0.5); box-shadow: 0 0 12px rgba(0,229,255,0.3); }
 
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -196,9 +201,9 @@ function fastClone(obj) {
 }
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v51 || extension_settings.ds_cache_v50 || {};
-    if (!extension_settings.ds_cache_v52) {
-        extension_settings.ds_cache_v52 = {
+    const oldSettings = extension_settings.ds_cache_v53 || extension_settings.ds_cache_v52 || {};
+    if (!extension_settings.ds_cache_v54) {
+        extension_settings.ds_cache_v54 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -238,13 +243,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v52;
+    Settings = extension_settings.ds_cache_v54;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v52_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v54_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -260,7 +265,7 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v52_snapshot', dataStr);
+            localStorage.setItem('ds_cache_v54_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -285,7 +290,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v52_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v54_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -306,18 +311,55 @@ function getTolerance() {
     return { sys: 0.05, his: 0.1 }; 
 }
 
-const triggerThrottlers = {};
-function triggerToast(key, msg, type = 'info', icon = '💡') {
-    if (!Settings.enabled || !Settings.toastHistory || Settings.zenMode) return;
-    const now = Date.now();
-    if (!triggerThrottlers[key] || now - triggerThrottlers[key] > 5000) {
-        triggerThrottlers[key] = now;
-        if (typeof toastr !== 'undefined') {
-            if (type === 'success') toastr.success(`${icon} ${msg}`, '量子矩阵协议');
-            else if (type === 'warning') toastr.warning(`${icon} ${msg}`, '量子矩阵协议');
-            else toastr.info(`${icon} ${msg}`, '量子矩阵协议');
+// ==========================================
+// 2.5 量子態彈窗聚合引擎 (ToastManager)
+// ==========================================
+const ToastManager = {
+    queue: {},
+    timer: null,
+    trigger: function(key, msg, type = 'info', icon = '💡') {
+        if (!Settings.enabled || !Settings.toastHistory || Settings.zenMode) return;
+        
+        if (!this.queue[key]) {
+            this.queue[key] = { count: 1, msg: msg, type: type, icon: icon };
+        } else {
+            this.queue[key].count++;
         }
+
+        if (!this.timer) {
+            this.timer = setTimeout(() => this.flush(), 800);
+        }
+    },
+    flush: function() {
+        if (typeof toastr === 'undefined') {
+            this.queue = {}; this.timer = null; return;
+        }
+
+        const keys = Object.keys(this.queue);
+        if (keys.length === 0) return;
+
+        if (keys.length === 1) {
+            const item = this.queue[keys[0]];
+            const text = item.count > 1 ? `${item.icon} ${item.msg} (x${item.count})` : `${item.icon} ${item.msg}`;
+            if (item.type === 'success') toastr.success(text, '终极真理协议');
+            else if (item.type === 'warning') toastr.warning(text, '终极真理协议');
+            else toastr.info(text, '终极真理协议');
+        } else {
+            let summary = [];
+            for (let k of keys) {
+                const item = this.queue[k];
+                summary.push(`${item.icon} ${item.msg.split('：')[0]} (x${item.count})`);
+            }
+            toastr.success(`⚡ 矩阵协议批量触发:<br>${summary.join('<br>')}`, '终极真理协议');
+        }
+
+        this.queue = {};
+        this.timer = null;
     }
+};
+
+function triggerToast(key, msg, type = 'info', icon = '💡') {
+    ToastManager.trigger(key, msg, type, icon);
 }
 
 function escapeHtml(text) { return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
@@ -367,15 +409,15 @@ function updateTopBarState() {
     if (!dot.length) return;
     if (!Settings.enabled) {
         dot.css('color', '#5c6370');
-        $('#ds-top-reset-btn').attr('title', '量子矩阵缓存: 已停用 (大模型每次都会重读所有内容)');
+        $('#ds-top-reset-btn').attr('title', '终极真理缓存: 已停用 (大模型每次都会重读所有内容)');
         dot.html('<i class="fa-solid fa-circle"></i>');
     } else if (Settings.zenMode) {
         dot.css('color', '#c678dd');
-        $('#ds-top-reset-btn').attr('title', '量子矩阵缓存: 运作中 [沉浸免打扰模式]');
+        $('#ds-top-reset-btn').attr('title', '终极真理缓存: 运作中 [沉浸免打扰模式]');
         dot.html('<i class="fa-solid fa-yin-yang ds-zen-icon"></i>');
     } else {
         dot.css('color', '#00e5ff');
-        $('#ds-top-reset-btn').attr('title', '量子矩阵缓存: 运作中 (正在为您省钱省算力)');
+        $('#ds-top-reset-btn').attr('title', '终极真理缓存: 运作中 (正在为您省钱省算力)');
         dot.html('<i class="fa-solid fa-circle" style="text-shadow: 0 0 5px #00e5ff;"></i>');
     }
 }
@@ -441,12 +483,12 @@ function logAt(level, type, msg) {
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     
-    if (type === 'warn') console.warn(`%c[矩阵日志] 🌪️ ${msg}`, 'color: #e5c07b;');
-    else if (type === 'error') console.error(`[矩阵日志] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[矩阵日志] 🗺️ ${msg}`, 'color: #00e5ff;');
-    else if (type === 'debug') console.log(`%c[矩阵日志] 🐛 ${msg}`, 'color: #c678dd;');
+    if (type === 'warn') console.warn(`%c[真理日志] 🌪️ ${msg}`, 'color: #e5c07b;');
+    else if (type === 'error') console.error(`[真理日志] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[真理日志] 🗺️ ${msg}`, 'color: #00e5ff;');
+    else if (type === 'debug') console.log(`%c[真理日志] 🐛 ${msg}`, 'color: #c678dd;');
     else if (type === 'divider') console.log(`%c${msg}`, 'color: #4b5263; font-weight: bold;');
-    else console.log(`%c[矩阵日志] ✅ ${msg}`, 'color: #98c379;');
+    else console.log(`%c[真理日志] ✅ ${msg}`, 'color: #98c379;');
     
     logQueue.push({ time, type, msg });
     if (logQueue.length > 500) logQueue.shift();
@@ -516,7 +558,7 @@ function getChatState(chatKeyInfo) {
 function ensureTopMenuButton() {
     if ($('#ds-top-reset-btn').length === 0) {
         const btn = $(`
-            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 量子矩阵缓存优化器">
+            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 终极真理缓存优化器">
                 <span class="fa-solid fa-microchip"></span>
                 <span id="ds-top-status-dot" style="font-size:0.7em; margin-left:2px; vertical-align:top;"></span>
             </li>
@@ -526,7 +568,7 @@ function ensureTopMenuButton() {
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
             safeSave(); updateTopBarState();
-            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 量子矩阵缓存已启动！" : "💤 量子矩阵缓存已关闭。", "DeepSeek");
+            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 终极真理缓存已启动！" : "💤 终极真理缓存已关闭。", "DeepSeek");
         });
         btn.on('contextmenu', (e) => { e.preventDefault(); resetCurrentCache(); });
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
@@ -591,7 +633,7 @@ function setupGlobalHotkeys() {
                 Settings.enabled = !Settings.enabled;
                 $('#ds-cache-enable').prop('checked', Settings.enabled);
                 safeSave(); updateTopBarState();
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 量子矩阵已启动" : "💤 量子矩阵已关闭", "快捷键");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 终极真理已启动" : "💤 终极真理已关闭", "快捷键");
             }
             if (e.key.toLowerCase() === 'r') { e.preventDefault(); resetCurrentCache(); }
             if (e.key.toLowerCase() === 'z') { 
@@ -724,7 +766,7 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
 }
 
 // ==========================================
-// 7. 🧊 絕對真理追加架構 (Append-Only Interceptor)
+// 7. 🧊 絕對領域排序法則 (Absolute Truth Interceptor)
 // ==========================================
 async function interceptAndRestructurePrompt(data, isDryRun = false) {
     if (!Settings.enabled && !isDryRun) return;
@@ -837,7 +879,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         let newFrozenSequence = []; 
-        let newAdditions = { history: [], sys: [], lorebooks: [], dynamic: [], patches: [] };
+        let newAdditions = { history: [], sys_default: [], sys_lore: [], sys_other: [], dynamic: [], patches: [] };
         const thresholds = getTolerance();
         
         const handledIncomingSys = new Set();
@@ -1020,21 +1062,26 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     sys._omniCat = 'dynamic';
                     newAdditions.dynamic.push(sys);
                 } else {
-                    if (sys.content.length < 500) {
+                    // 嚴格分類：預設提示詞 vs 世界書 vs 其他
+                    if (sys.content.length < 500 && !sys.content.includes("Write the next reply")) {
                         sys._omniCat = 'lorebook';
-                        newAdditions.lorebooks.push(sys);
+                        newAdditions.sys_lore.push(sys);
+                    } else if (j === 0 || sys.content.includes("Write the next reply")) {
+                        sys._omniCat = 'sys_default';
+                        newAdditions.sys_default.push(sys);
                     } else {
-                        sys._omniCat = 'sys';
-                        newAdditions.sys.push(sys);
+                        sys._omniCat = 'sys_other';
+                        newAdditions.sys_other.push(sys);
                     }
                 }
             }
         }
 
-        // 階段 3：嚴格按照 Append-Only 順序組裝
+        // 階段 3：嚴格按照 Append-Only 順序組裝 (絕對領域排序法則)
         for (let h of newAdditions.history) newFrozenSequence.push(h);
-        for (let sys of newAdditions.sys) newFrozenSequence.push(sys);
-        for (let lb of newAdditions.lorebooks) newFrozenSequence.push(lb);
+        for (let sys of newAdditions.sys_default) newFrozenSequence.push(sys);
+        for (let lb of newAdditions.sys_lore) newFrozenSequence.push(lb);
+        for (let other of newAdditions.sys_other) newFrozenSequence.push(other);
         for (let dyn of newAdditions.dynamic) newFrozenSequence.push(dyn);
         for (let patch of newAdditions.patches) newFrozenSequence.push(patch);
 
@@ -1043,7 +1090,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const seenSysNorms = new Set();
         for (const item of newFrozenSequence) {
             if (item.tag === 'SYS' && Settings.absoluteDeduplication) {
-                if (item._omniCat === 'sys' || item._omniCat === 'lorebook' || item._omniCat === 'frozen') {
+                if (item._omniCat === 'sys_default' || item._omniCat === 'sys_lore' || item._omniCat === 'sys_other' || item._omniCat === 'frozen') {
                     if (seenSysNorms.has(item.hash)) continue;
                     seenSysNorms.add(item.hash);
                 }
@@ -1057,6 +1104,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 
         if (Settings.logLevel >= LogLevels.DEBUG && !isDryRun) {
             Logger.debug(`[最终追加发送阵列] 总节点数: ${proposedStream.length}`);
+            if (Settings.logLevel === LogLevels.TRACE) {
+                proposedStream.forEach((n, i) => Logger.trace(`[${i}] [${n.tag}] [${n._omniCat}] Hash:${n.hash}`));
+            }
         }
 
         // ==========================================
@@ -1103,7 +1153,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             
             dropPercentStr = (recomputeRatio * 100).toFixed(1);
 
-            if (recomputeRatio >= 0.10 && Settings.showResetPrompt && !isTailEndMutation && !sessionSnoozeReset) {
+            // 減少彈窗：只有當重算 Token 超過 500 且比例大於 10% 時才彈窗
+            if (recomputeRatio >= 0.10 && recomputeTokens > 500 && Settings.showResetPrompt && !isTailEndMutation && !sessionSnoozeReset) {
                 requireResetConfirm = true;
                 
                 if (P[breakIndex]?.tag === 'SYS' || L[breakIndex]?.tag === 'SYS') {
@@ -1147,7 +1198,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             setTopBarStatus('#e5c07b', `缓存: 等待确认`);
             if (Settings.autoAccept) {
                 Logger.warn(`[自动修复] 已放行断层重组 (需重算 ${dropPercentStr}%)`);
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "量子矩阵");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "终极真理");
                 decision = 'accept';
             } else {
                 decision = await askUserForResetAsync(dropPercentStr, mapInfoText, causeText);
@@ -1157,7 +1208,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (decision === 'abort') {
             Logger.error('[物理拦截] 已拦截本次发送，强制中止生成。', null, LogLevels.BASIC);
             setTopBarStatus('#e06c75', '缓存: 已拦截发送');
-            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "量子矩阵");
+            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "终极真理");
             
             data.chat.length = 0; 
             data.chat.push({ role: "invalid_abort_role", content: "ABORT_GENERATION" });
@@ -1183,7 +1234,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             safeSave();
 
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "量子矩阵");
+            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "终极真理");
             return;
         }
 
@@ -1232,14 +1283,18 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Matrix)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Flow)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = []; 
 let isSyncScroll = true;
 let isSyncingLeft = false;
 let isSyncingRight = false;
-let positionCache = []; // 零重排繪圖引擎核心
+let positionCache = []; 
+let resizeObserver = null;
+let matrixRect = null;
+let lPaneRect = null;
+let rPaneRect = null;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1254,7 +1309,7 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 量子矩阵沙盒</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 量子流体沙盒</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
@@ -1277,6 +1332,7 @@ async function showOmniVisionUI() {
                             <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
                             <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
                             <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
+                            <button id="omni-btn-export-matrix" class="ds-omni-action-btn" title="导出当前矩阵状态以供排错"><i class="fa-solid fa-bug"></i> 导出矩阵状态</button>
                         </div>
                         
                         <div class="ds-omni-toggles-grid ds-scroll">
@@ -1305,19 +1361,35 @@ async function showOmniVisionUI() {
                     </div>
                 </div>
 
-                <!-- 矩陣視窗 -->
+                <!-- 9 維度神經連線圖例 -->
+                <div class="ds-omni-legend">
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:rgba(152,195,121,0.8);"></div> 完美冻结 (Perfect)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:repeating-linear-gradient(90deg, rgba(229,192,123,0.8) 0, rgba(229,192,123,0.8) 4px, transparent 4px, transparent 8px);"></div> 模糊命中 (Fuzzy)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:rgba(198,120,221,0.8);"></div> 时空补丁连结 (Patch Link)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:linear-gradient(90deg, rgba(224,108,117,0.8) 0%, rgba(224,108,117,0) 100%);"></div> 节点被删除 (Deleted)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:linear-gradient(90deg, rgba(97,175,239,0) 0%, rgba(97,175,239,0.8) 100%);"></div> 全新预设提示词 (New Sys)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:linear-gradient(90deg, rgba(0,229,255,0) 0%, rgba(0,229,255,0.8) 100%);"></div> 全新世界书 (New Lore)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:linear-gradient(90deg, rgba(209,154,102,0) 0%, rgba(209,154,102,0.8) 100%);"></div> 全新动态变量 (New Dyn)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:linear-gradient(90deg, rgba(152,195,121,0) 0%, rgba(152,195,121,0.8) 100%);"></div> 全新历史对话 (New His)</div>
+                    <div class="ds-legend-item"><div class="ds-legend-color" style="background:linear-gradient(90deg, rgba(160,82,45,0) 0%, rgba(160,82,45,0.8) 100%);"></div> 向量隔离区 (Vector)</div>
+                </div>
+
+                <div style="display: flex; padding: 0 15px; margin-bottom: 10px; font-weight: bold; flex-shrink: 0;">
+                    <div style="flex: 1; color: var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (绝对锁定)</div>
+                    <div style="flex: 0 0 80px;"></div>
+                    <div style="flex: 1; color: var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用设定后)</div>
+                </div>
+
+                <!-- 統一滾動容器 (Flexbox Rows) -->
                 <div class="ds-omni-matrix-container">
                     <!-- 左視窗：歷史觀測 -->
                     <div class="ds-omni-pane">
-                        <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (绝对锁定)</span>
-                        </div>
                         <div id="omni-left-content" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
                     </div>
 
-                    <!-- 畫布橋樑 (Canvas Bridge) -->
+                    <!-- 100% 全覆蓋畫布橋樑 (Full-Overlay Canvas Bridge) -->
                     <div class="ds-omni-bridge">
                         <svg id="omni-svg-canvas">
                             <defs>
@@ -1351,9 +1423,6 @@ async function showOmniVisionUI() {
 
                     <!-- 右視窗：即時沙盒預覽 -->
                     <div class="ds-omni-pane">
-                        <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用设定后)</span>
-                        </div>
                         <div id="omni-right-content" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
@@ -1394,13 +1463,21 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(recalcOmniPositions, 250);
+        animateLines();
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(recalcOmniPositions, 250);
+        animateLines();
+    });
+    
+    $('#omni-btn-export-matrix').on('click', function() {
+        const blob = new Blob([JSON.stringify({left: state.lastSentSequence, right: state.lastRawStream}, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob); const a = document.createElement("a");
+        a.href = url; a.download = `DS_Matrix_State_${new Date().getTime()}.json`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+        if (typeof toastr !== 'undefined') toastr.success("💾 矩阵状态已导出！");
     });
 
     let inputTimeout;
@@ -1418,34 +1495,38 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(recalcOmniPositions, 250);
+        animateLines();
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 零重排滾動監聽
+    // 零重排滾動監聽 (硬體級防回音鎖)
     const lPane = document.getElementById('omni-left-content');
     const rPane = document.getElementById('omni-right-content');
     
     lPane.addEventListener('scroll', () => {
-        if (isSyncingRight) return;
-        if (isSyncScroll) {
-            isSyncingLeft = true;
-            syncScrollPositions(lPane, rPane);
-            setTimeout(() => isSyncingLeft = false, 20);
-        }
+        if (!isSyncScroll) { requestAnimationFrame(drawOmniLinesFast); return; }
+        if (isSyncingRight) { isSyncingRight = false; return; }
+        isSyncingLeft = true;
+        syncScrollPositions(lPane, rPane);
         requestAnimationFrame(drawOmniLinesFast);
     }, { passive: true });
 
     rPane.addEventListener('scroll', () => {
-        if (isSyncingLeft) return;
-        if (isSyncScroll) {
-            isSyncingRight = true;
-            syncScrollPositions(rPane, lPane);
-            setTimeout(() => isSyncingRight = false, 20);
-        }
+        if (!isSyncScroll) { requestAnimationFrame(drawOmniLinesFast); return; }
+        if (isSyncingLeft) { isSyncingLeft = false; return; }
+        isSyncingRight = true;
+        syncScrollPositions(rPane, lPane);
         requestAnimationFrame(drawOmniLinesFast);
     }, { passive: true });
+
+    // 監聽容器尺寸變化
+    if (window.ResizeObserver) {
+        resizeObserver = new ResizeObserver(() => {
+            requestAnimationFrame(recalcOmniPositions);
+        });
+        resizeObserver.observe(document.querySelector('.ds-omni-matrix-container'));
+    }
 
     triggerOmniRender(state);
 }
@@ -1455,6 +1536,7 @@ window.closeOmniVision = function() {
     omniMappings.forEach(m => { m.pathEl = null; }); 
     omniMappings = [];
     positionCache = [];
+    if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
 };
 
 function syncScrollPositions(source, target) {
@@ -1463,6 +1545,18 @@ function syncScrollPositions(source, target) {
     if (sourceMax <= 0 || targetMax <= 0) return;
     const ratio = source.scrollTop / sourceMax;
     target.scrollTop = ratio * targetMax;
+}
+
+// 動態黏滯動畫：在卡片展開/摺疊期間，連續 300ms 重新計算座標
+function animateLines() {
+    let start = performance.now();
+    function step(time) {
+        recalcOmniPositions();
+        if (time - start < 300) {
+            requestAnimationFrame(step);
+        }
+    }
+    requestAnimationFrame(step);
 }
 
 function triggerOmniRender(state) {
@@ -1519,7 +1613,6 @@ async function renderOmniVision(state) {
         let bestScore = 0;
         
         if (rNode._omniCat === 'patch' && rNode._patchedOldHash) {
-            // 精準補丁追蹤
             bestMatchIdx = leftArray.findIndex(l => l.hash === rNode._patchedOldHash);
             if (bestMatchIdx !== -1) bestScore = 1;
         } else {
@@ -1660,19 +1753,37 @@ function initOmniSVGPaths() {
     });
 }
 
-// 重新計算並快取所有卡片的絕對 Y 座標 (只在佈局改變時呼叫)
+// 重新計算並快取所有卡片的絕對座標 (100% 全覆蓋畫布演算法)
 function recalcOmniPositions() {
+    const matrix = document.querySelector('.ds-omni-matrix-container');
+    const lPane = document.getElementById('omni-left-content');
+    const rPane = document.getElementById('omni-right-content');
+    if(!matrix || !lPane || !rPane) return;
+    
+    matrixRect = matrix.getBoundingClientRect();
+    lPaneRect = lPane.getBoundingClientRect();
+    rPaneRect = rPane.getBoundingClientRect();
+    
     positionCache = [];
     omniMappings.forEach(m => {
-        let cache = { pathEl: m.pathEl, type: m.type, lY: null, rY: null };
+        let cache = { pathEl: m.pathEl, type: m.type, lX: null, lY: null, rX: null, rY: null };
         
         if (m.left !== -1) {
             const el = document.getElementById(`omni-left-node-${m.left}`);
-            if (el) cache.lY = el.offsetTop + (el.offsetHeight / 2);
+            if (el) {
+                // X 是相對於矩陣容器的絕對座標 (左卡片的右邊緣)
+                cache.lX = (lPaneRect.left - matrixRect.left) + el.offsetLeft + el.offsetWidth;
+                // Y 是相對於滾動內容頂部的座標
+                cache.lY = el.offsetTop + (el.offsetHeight / 2);
+            }
         }
         if (m.right !== -1) {
             const el = document.getElementById(`omni-right-node-${m.right}`);
-            if (el) cache.rY = el.offsetTop + (el.offsetHeight / 2);
+            if (el) {
+                // X 是相對於矩陣容器的絕對座標 (右卡片的左邊緣)
+                cache.rX = (rPaneRect.left - matrixRect.left) + el.offsetLeft;
+                cache.rY = el.offsetTop + (el.offsetHeight / 2);
+            }
         }
         positionCache.push(cache);
     });
@@ -1683,13 +1794,11 @@ function recalcOmniPositions() {
 function drawOmniLinesFast() {
     const lPane = document.getElementById('omni-left-content');
     const rPane = document.getElementById('omni-right-content');
-    const svg = document.getElementById('omni-svg-canvas');
-    if (!lPane || !rPane || !svg) return;
+    if (!lPane || !rPane || !matrixRect) return;
 
     const lScroll = lPane.scrollTop;
     const rScroll = rPane.scrollTop;
-    const svgWidth = svg.clientWidth;
-    const svgHeight = svg.clientHeight;
+    const svgHeight = matrixRect.height;
 
     positionCache.forEach(c => {
         if (!c.pathEl) return;
@@ -1699,13 +1808,19 @@ function drawOmniLinesFast() {
             if (c.lY === null) return;
             startY = c.lY - lScroll;
             if (startY < -50 || startY > svgHeight + 50) { c.pathEl.setAttribute('d', ''); return; }
-            startX = 0; endX = svgWidth / 2; endY = startY;
+            startX = c.lX; 
+            endX = c.lX + 60; // 向右延伸並漸隱
+            endY = startY;
+            c.pathEl.setAttribute('d', `M ${startX} ${startY} L ${endX} ${endY}`);
         } 
         else if (c.type.startsWith('new_')) {
             if (c.rY === null) return;
             startY = c.rY - rScroll;
             if (startY < -50 || startY > svgHeight + 50) { c.pathEl.setAttribute('d', ''); return; }
-            startX = svgWidth / 2; endX = svgWidth; endY = startY;
+            startX = c.rX - 60; // 從左側漸顯
+            endX = c.rX; 
+            endY = startY;
+            c.pathEl.setAttribute('d', `M ${startX} ${startY} L ${endX} ${endY}`);
         } 
         else {
             if (c.lY === null || c.rY === null) return;
@@ -1714,11 +1829,14 @@ function drawOmniLinesFast() {
             if ((startY < -50 || startY > svgHeight + 50) && (endY < -50 || endY > svgHeight + 50)) {
                 c.pathEl.setAttribute('d', ''); return;
             }
-            startX = 0; endX = svgWidth;
+            startX = c.lX; 
+            endX = c.rX;
+            
+            // 完美 S 型貝茲曲線演算法
+            const ctrlX = (startX + endX) / 2;
+            const d = `M ${startX} ${startY} C ${ctrlX} ${startY}, ${ctrlX} ${endY}, ${endX} ${endY}`;
+            c.pathEl.setAttribute('d', d);
         }
-
-        const d = `M ${startX} ${startY} C ${startX + 40} ${startY}, ${endX - 40} ${endY}, ${endX} ${endY}`;
-        c.pathEl.setAttribute('d', d);
     });
 }
 
@@ -1774,6 +1892,9 @@ function renderChatsUI() {
             else if (diff < 1440) timeStr = `${Math.floor(diff/60)} 小时前`;
             else timeStr = `${Math.floor(diff/1440)} 天前`;
         }
+        
+        // 計算單個存檔大小
+        const chatSize = JSON.stringify(chat).length * 2;
 
         const pinColor = isPinned ? 'var(--ds-yellow)' : 'rgba(255,255,255,0.2)';
         const item = document.createElement('div');
@@ -1784,6 +1905,7 @@ function renderChatsUI() {
                 <span style="font-size:13px; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:${isActive?'var(--ds-cyan)':'#e5e5e5'}; text-shadow:${isActive?'0 0 8px rgba(0,229,255,0.4)':'none'};">${isActive ? '🟢 ' : ''}${escapeHtml(chat.label)}</span>
                 <div style="display:flex; gap:12px; font-size:11px; margin-top:6px;">
                     <span style="color:var(--ds-green); background:rgba(152,195,121,0.1); padding:2px 6px; border-radius:4px;">节点: ${count}</span>
+                    <span style="color:var(--ds-purple); background:rgba(198,120,221,0.1); padding:2px 6px; border-radius:4px;">${formatBytes(chatSize)}</span>
                     <span style="color:#5c6370; display:flex; align-items:center; gap:4px;"><i class="fa-regular fa-clock"></i> ${timeStr}</span>
                 </div>
             </div>
@@ -1816,7 +1938,7 @@ function generateDiagnosticReport() {
     const chatKeyInfo = getChatKey();
     const state = Settings.chats[chatKeyInfo.key] || {};
     
-    let report = `=== DeepSeek Quantum Matrix Diagnostic Report ===\n`;
+    let report = `=== DeepSeek Ultimate Truth Diagnostic Report ===\n`;
     report += `Generated: ${new Date().toISOString()}\n`;
     report += `User Agent: ${navigator.userAgent}\n\n`;
     
@@ -1929,14 +2051,14 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v52-opt-drawer">
+        <div class="inline-drawer" id="ds-v54-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 量子矩阵优化器 (v52)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 量子流体优化器 (v54)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
                 
-                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 量子矩阵沙盒 (即时预览)</button>
+                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 量子流体沙盒 (即时预览)</button>
                 <button id="ds-btn-one-click" class="ds-btn ds-btn-magic"><i class="fa-solid fa-wand-magic-sparkles"></i> 🌟 一键套用 DeepSeek 100% 缓存最佳设定</button>
 
                 <!-- 1. 核心开关 -->
@@ -1949,7 +2071,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动量子矩阵引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
+                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动终极真理引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
                                     <span>(核心功能！让回复变秒回，大幅节省 Token 和 API 费用)</span>
                                 </div>
                             </label>
@@ -2209,7 +2331,8 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:#abb2bf;">当我修改或删除旧对话时，在右上角提醒我</b>
+                                    <b style="color:#abb2bf;">开启详细协议弹窗提示 (Toast)</b>
+                                    <span>(当触发吃书、时空补丁、微创手术等协议时，在右上角聚合提示)</span>
                                 </div>
                             </label>
                         </div>
@@ -2285,6 +2408,7 @@ async function setupUI() {
                         <div class="ds-row" style="margin-top:15px;">
                             <button id="ds-btn-export" class="menu_button interactable" style="flex:1; padding:10px; font-size:12px; border-radius:6px; background:rgba(255,255,255,0.05);"><i class="fa-solid fa-download"></i> 备份设置</button>
                             <button id="ds-btn-import" class="menu_button interactable" style="flex:1; padding:10px; font-size:12px; border-radius:6px; background:rgba(255,255,255,0.05);"><i class="fa-solid fa-upload"></i> 恢复设置</button>
+                            <button id="ds-btn-reset-settings" class="menu_button interactable" style="flex:1; padding:10px; font-size:12px; border-radius:6px; background:rgba(224,108,117,0.1); color:var(--ds-red);"><i class="fa-solid fa-rotate-left"></i> 恢复默认</button>
                             <input type="file" id="ds-file-import" style="display:none;" accept=".json">
                         </div>
                     </div>
@@ -2392,6 +2516,15 @@ async function setupUI() {
         $('#ds-btn-export-json').on('click', exportLogsAsJSON);
         $('#ds-btn-undo-action').on('click', () => restoreVaultBackup(0));
 
+        $('#ds-btn-reset-settings').on('click', () => {
+            if(confirm("⚠️ 确定要恢复所有设置为默认值吗？")) {
+                delete extension_settings.ds_cache_v54;
+                initSettings();
+                safeSave();
+                location.reload();
+            }
+        });
+
         $('#ds-btn-pause-log').on('click', function() {
             isLogPaused = !isLogPaused;
             if (isLogPaused) {
@@ -2456,7 +2589,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v52_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v54_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2524,7 +2657,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 量子矩阵优化器 v52 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 量子流体优化器 v54 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
