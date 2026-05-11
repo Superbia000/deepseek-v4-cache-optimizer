@@ -583,14 +583,16 @@ function getBigrams(str) {
     return bigrams;
 }
 
+// 🛡️ 修復：加入 originalHash 基因溯源，防止克羅諾斯協議無限套娃
 function createMsg(msg, tag) {
     const content = msg.content || '';
     const norm = Logger.normalize(content);
-    return { role: msg.role, content: content, norm: norm, hash: cyrb53(norm), len: content.length, tag: tag };
+    const hash = cyrb53(norm);
+    return { role: msg.role, content: content, norm: norm, hash: hash, originalHash: hash, len: content.length, tag: tag };
 }
 
 function getSimilarity(msg1, msg2) {
-    if (msg1.hash === msg2.hash) return 1;
+    if (msg1.hash === msg2.hash || (msg1.originalHash && msg2.originalHash && msg1.originalHash === msg2.originalHash)) return 1;
     const str1 = msg1.norm; const str2 = msg2.norm;
     if (Math.abs(str1.length - str2.length) > Math.max(str1.length, str2.length) * 0.5) return 0;
     const clean1 = stripHtml(str1); const clean2 = stripHtml(str2);
@@ -606,10 +608,12 @@ function getSimilarity(msg1, msg2) {
     return union <= 0 ? 1 : matchCount / union;
 }
 
-function findBestMatch(targetMsg, poolArray) {
+// 🛡️ 修復：加入 excludeSet 絕對排他鎖，徹底切除癌細胞增生
+function findBestMatch(targetMsg, poolArray, excludeSet) {
     let bestIdx = -1;
     let bestScore = 0;
     for (let i = 0; i < poolArray.length; i++) {
+        if (excludeSet && excludeSet.has(i)) continue; 
         if (targetMsg.tag !== poolArray[i].tag && !(targetMsg.tag === 'SYS' && poolArray[i].tag === 'SYS')) continue;
         const score = getSimilarity(targetMsg, poolArray[i]);
         if (score > bestScore) { bestScore = score; bestIdx = i; }
@@ -880,7 +884,7 @@ function askUserForResetAsync(dropPercent, mapInfo, causeText) {
 }
 
 // ==========================================
-// 7. 絕對零度不可變日誌演算法 (Absolute Zero v44)
+// 7. 絕對零度不可變日誌演算法 (Absolute Zero v44 Ultimate)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -935,16 +939,18 @@ async function interceptAndRestructurePrompt(data) {
             currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
         }
 
-        // 🌌 平行宇宙協議
+        // 🌌 平行宇宙協議 (🛡️ 修復 3：只比對穩定的歷史記錄，排除動態提示詞的干擾)
         if (Settings.multiverseProtocol && state.multiverse && state.multiverse.length > 0) {
             let bestUniverse = state.frozenSequence;
             let bestMatchCount = -1;
-            const currentStreamNorms = [...incomingSys, ...parsedHis].map(m => m.norm);
+            const currentHistoryNorms = parsedHis.map(m => m.norm); 
+            
             for (let i = 0; i < state.multiverse.length; i++) {
                 const universe = state.multiverse[i];
+                const universeHisNorms = universe.filter(m => m.tag === 'USER' || m.tag === 'AI').map(m => m.norm);
                 let matchCount = 0;
-                for (let j = 0; j < Math.min(universe.length, currentStreamNorms.length); j++) {
-                    if (universe[j].norm === currentStreamNorms[j]) matchCount++; else break;
+                for (let j = 0; j < Math.min(universeHisNorms.length, currentHistoryNorms.length); j++) {
+                    if (universeHisNorms[j] === currentHistoryNorms[j]) matchCount++; else break;
                 }
                 if (matchCount > bestMatchCount) { bestMatchCount = matchCount; bestUniverse = universe; }
             }
@@ -954,13 +960,13 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 2. 絕對零度核心：不可變追加日誌 (Immutable Append-Only Log)
+        // 2. 絕對零度核心：不可變追加日誌
         const frozen = state.frozenSequence || [];
         let nextFrozen = [];
         let patches = [];
         let dynamicAppends = [];
         let newSysAppends = [];
-        let ephemeralBottom = []; // 向量/摘要等不寫入凍結序列的臨時內容
+        let ephemeralBottom = []; 
 
         let matchedIncomingHis = new Set();
         let matchedIncomingSys = new Set();
@@ -969,37 +975,58 @@ async function interceptAndRestructurePrompt(data) {
         let detectedAnomalies = [];
 
         // 2.1 遍歷已凍結序列，確保其絕對不可變
-        let missingHisCount = 0;
+        let headTruncationCount = 0;
+        let middleDeletionCount = 0;
+        let hasMatchedAnyHistory = false; // 🛡️ 修復 2：完美區分頭部截斷與中間刪除
+        let maxMatchedIncomingIdx = -1;   // 🛡️ 修復 4：精準定位閃回插入點
+
         for (let i = 0; i < frozen.length; i++) {
             const fNode = frozen[i];
             let keepFrozen = true;
 
+            // 🛡️ 修復 5：系統補丁與日記直接繼承，絕對不參與匹配，防止精神分裂
+            if (fNode.tag === 'PATCH' || fNode.tag === 'DIARY') {
+                nextFrozen.push(fNode);
+                continue;
+            }
+
             if (fNode.tag === 'USER' || fNode.tag === 'AI') {
-                let match = findBestMatch(fNode, parsedHis);
+                let match = findBestMatch(fNode, parsedHis, matchedIncomingHis); // 🛡️ 修復 1：傳入 excludeSet
                 if (match.score === 1) {
                     matchedIncomingHis.add(match.index);
+                    maxMatchedIncomingIdx = Math.max(maxMatchedIncomingIdx, match.index);
+                    hasMatchedAnyHistory = true;
                 } else if (match.score > thresholds.his) {
                     matchedIncomingHis.add(match.index);
-                    if (Settings.entropyShield && match.score > 0.99) {
-                        patches.push(createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(fNode.content, 15)}" 已修正为 "${truncateLog(parsedHis[match.index].content, 15)}"]`}, 'SYS'));
-                        Logger.debug(`[🛡️ 熵减护盾] 拦截错字修改，生成补丁。`);
+                    maxMatchedIncomingIdx = Math.max(maxMatchedIncomingIdx, match.index);
+                    hasMatchedAnyHistory = true;
+                    
+                    if (Settings.entropyShield && match.score > 0.95) {
+                        patches.push(createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(fNode.content, 15)}" 已修正为 "${truncateLog(parsedHis[match.index].content, 15)}"]`}, 'PATCH'));
                     } else if (Settings.historyEditMode === 1) {
-                        patches.push(createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(fNode.content, 20)}" 实际上已发生改变，最新情况为："${parsedHis[match.index].content}"]`}, 'SYS'));
-                        Logger.debug(`[🛡️ 时空补丁] 拦截历史修改，生成补丁。`);
+                        patches.push(createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(fNode.content, 20)}" 实际上已发生改变，最新情况为："${parsedHis[match.index].content}"]`}, 'PATCH'));
                     } else if (Settings.historyEditMode === 0) {
                         keepFrozen = false; nextFrozen.push(parsedHis[match.index]);
-                        Logger.debug(`[💥 真实修改] 破坏缓存，原位替换历史。`);
                     }
                 } else {
-                    // ST 刪除了這段歷史
-                    missingHisCount++;
-                    if (Settings.retconProtocol && missingHisCount <= 3) {
-                        patches.push(createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(fNode.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS'));
-                        Logger.debug(`[🗑️ 吃书协议] 拦截历史删除，生成抹除声明。`);
+                    // 🛡️ 修復 2：精準判斷是爆 Token 截斷，還是用戶手動刪除
+                    if (!hasMatchedAnyHistory) {
+                        if (i === 0 && Settings.prefixAnchor) { 
+                            Logger.debug(`[⚓ 绝对前缀锚点] 拦截到头部截断，强制保留最旧记忆以稳固缓存。`);
+                        } else {
+                            headTruncationCount++;
+                            keepFrozen = false;
+                        }
+                    } else {
+                        middleDeletionCount++;
+                        keepFrozen = false;
+                        if (Settings.retconProtocol && middleDeletionCount <= 3) {
+                            patches.push(createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(fNode.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'PATCH'));
+                        }
                     }
                 }
             } else if (fNode.tag === 'SYS') {
-                let match = findBestMatch(fNode, incomingSys);
+                let match = findBestMatch(fNode, incomingSys, matchedIncomingSys); // 🛡️ 修復 1：傳入 excludeSet
                 if (match.score === 1) {
                     matchedIncomingSys.add(match.index);
                 } else if (match.score > thresholds.sys) {
@@ -1007,38 +1034,46 @@ async function interceptAndRestructurePrompt(data) {
                     detectedAnomalies.push({ oldText: fNode.content, newText: incomingSys[match.index].content, score: match.score });
                     if (Settings.dynamicMode === 0) needsAsk = true;
 
-                    if (Settings.nanoPatching && match.score > 0.85) {
-                        let addedText = extractAddedText(fNode.content, incomingSys[match.index].content);
-                        if (addedText) {
-                            patches.push(createMsg({role: 'system', content: `[系统提示：设定微调补充。新增细节：${addedText}]`}, 'SYS'));
-                            Logger.debug(`[🔬 量子微创] 拦截设定微调，生成纳米补丁。`);
+                    let addedText = extractAddedText(fNode.content, incomingSys[match.index].content);
+                    
+                    if (Settings.hotReloadPersona && i === 0) {
+                        patches.push(createMsg({role: 'system', content: `[系统提示：角色设定已热更新，最新特征如下：\n${incomingSys[match.index].content}]`}, 'PATCH'));
+                    } else if (Settings.nanoPatching && match.score > 0.85 && addedText) {
+                        patches.push(createMsg({role: 'system', content: `[系统提示：设定微调补充。新增细节：${addedText}]`}, 'PATCH'));
+                    } else {
+                        if (Settings.dynamicMode === 1) {
+                            if (fNode.content.length < 300) {
+                                dynamicAppends.push({...incomingSys[match.index], tag: 'DIARY'});
+                            } else {
+                                keepFrozen = false; nextFrozen.push(incomingSys[match.index]);
+                                Logger.warn(`[动态提示词] 文本过长，降级为原位替换。`);
+                            }
+                        } else if (Settings.dynamicMode === 2) {
+                            keepFrozen = false; dynamicAppends.push(incomingSys[match.index]);
+                        } else if (Settings.dynamicMode === 3) {
+                            // keepFrozen = true
+                        } else if (Settings.dynamicMode === 4) {
+                            keepFrozen = false; nextFrozen.push(incomingSys[match.index]);
+                        } else if (Settings.dynamicMode === 5) {
+                            keepFrozen = false;
                         }
-                    } else if (Settings.dynamicMode === 1) {
-                        dynamicAppends.push(incomingSys[match.index]);
-                        Logger.debug(`[动态提示词-写日记模式] 冻结旧版，追加新版至底部。`);
-                    } else if (Settings.dynamicMode === 2) {
-                        keepFrozen = false; dynamicAppends.push(incomingSys[match.index]);
-                    } else if (Settings.dynamicMode === 4) {
-                        keepFrozen = false; nextFrozen.push(incomingSys[match.index]);
-                    } else if (Settings.dynamicMode === 5) {
-                        keepFrozen = false;
                     }
                 } else {
-                    // ST 停用了這個世界書/提示詞
-                    // 永久記憶烙印：什麼都不做，它會繼續留在 nextFrozen 裡
+                    if (!Settings.permanentMemoryImprint) {
+                        keepFrozen = false;
+                        Logger.debug(`[清理] 永久记忆烙印已关闭，移除失效的世界书: ${truncateLog(fNode.content)}`);
+                    }
                 }
             }
 
             if (keepFrozen) nextFrozen.push(fNode);
         }
 
-        // 處理失憶症協議 (大量頭部歷史被刪除)
-        if (Settings.amnesiaProtocol && missingHisCount > 5) {
-            Logger.warn(`[🧠 失忆症协议] 检测到头部大面积截断 (${missingHisCount} 个节点)，已自动归档早期记忆。`);
-            patches.push(createMsg({role: 'system', content: `[系统提示：早期的记忆已归档，请根据当前上下文继续。]`}, 'SYS'));
-            // 這裡我們選擇保留凍結，因為大模型已經看過它們了。如果強制刪除會破壞快取。
-        } else if (Settings.voidBridging && missingHisCount > 0 && missingHisCount <= 5) {
-            patches.push(createMsg({role: 'system', content: `[系统提示：上下文微小跳跃。]`}, 'SYS'));
+        if (Settings.amnesiaProtocol && headTruncationCount > 5) {
+            patches.push(createMsg({role: 'system', content: `[系统提示：早期的记忆已归档，请根据当前上下文继续。]`}, 'PATCH'));
+        }
+        if (Settings.voidBridging && middleDeletionCount > 3 && middleDeletionCount <= 5) {
+            patches.push(createMsg({role: 'system', content: `[系统提示：上下文发生跳跃，部分中间事件已被省略。]`}, 'PATCH'));
         }
 
         if (detectedAnomalies.length > 0) state.dynamicAnomalies = detectedAnomalies; 
@@ -1051,48 +1086,50 @@ async function interceptAndRestructurePrompt(data) {
         for (let i = 0; i < parsedHis.length; i++) {
             if (!matchedIncomingHis.has(i)) {
                 const node = parsedHis[i];
-                if (i >= parsedHis.length - 3) {
-                    // 正常的新對話，追加到凍結序列
-                    nextFrozen.push(node);
-                    Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(node.content)}`);
-                } else if (Settings.flashbackInsertion) {
-                    // 中間插入的對話
-                    patches.push(createMsg({role: 'system', content: `[系统提示：闪回补充。在之前的事件中，还发生了以下细节：\n${node.content}]`}, 'SYS'));
+                // 🛡️ 修復 4：精準判斷閃回插入點 (如果插入位置小於已知的最大匹配索引，就是插在中間)
+                if (Settings.flashbackInsertion && maxMatchedIncomingIdx !== -1 && i < maxMatchedIncomingIdx) {
+                    patches.push(createMsg({role: 'system', content: `[系统提示：闪回补充。在之前的事件中，还发生了以下细节：\n${node.content}]`}, 'PATCH'));
                     Logger.debug(`[⏪ 闪回插入] 拦截中途插入对话，生成底部补丁。`);
                 } else {
                     nextFrozen.push(node);
+                    Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(node.content)}`);
                 }
             }
         }
 
         // 2.3 處理未匹配的傳入系統提示詞 (新世界書、向量 RAG、摘要等)
-        const seenSysHashes = new Set(nextFrozen.filter(n => n.tag === 'SYS').map(n => n.hash));
+        const unmatchedSys = [];
         for (let i = 0; i < incomingSys.length; i++) {
-            if (!matchedIncomingSys.has(i)) {
-                const node = incomingSys[i];
-                
-                // 🗜️ 絕對去重協議
-                if (Settings.absoluteDeduplication && seenSysHashes.has(node.hash)) {
-                    Logger.debug(`[🗜️ 绝对去重] 拦截到语义重复的提示词，已自动压缩。`);
-                    continue;
-                }
-                seenSysHashes.add(node.hash);
+            if (!matchedIncomingSys.has(i)) unmatchedSys.push(incomingSys[i]);
+        }
+        if (Settings.absoluteOrderMatrix) unmatchedSys.sort((a, b) => a.hash - b.hash);
 
-                if (node.isTimeSkip) {
-                    patches.push(createMsg({role: 'system', content: `[系统提示：叙事过渡。${node.content}]`}, 'SYS'));
-                    Logger.debug(`[⏳ 克罗诺斯协议] 转化为叙事过渡补丁。`);
-                } else if (node.isVector || node.isSummary) {
-                    ephemeralBottom.push(node);
-                    Logger.debug(`[🎯 临时隔离区] 拦截到 RAG/摘要，强制隔离至最底部 (不写入永久冻结)。`);
-                } else {
-                    newSysAppends.push(node);
-                    Logger.debug(`[追加至尾部] 新增设定/世界书: ${truncateLog(node.content)}`);
-                }
+        const seenSysHashes = new Set(nextFrozen.filter(n => n.tag === 'SYS').map(n => n.hash));
+        for (const node of unmatchedSys) {
+            if (Settings.absoluteDeduplication && seenSysHashes.has(node.hash)) {
+                Logger.debug(`[🗜️ 绝对去重] 拦截到语义重复的提示词，已自动压缩。`);
+                continue;
+            }
+            seenSysHashes.add(node.hash);
+
+            if (node.isTimeSkip) {
+                // 🛡️ 修復 6：保留 originalHash，防止克羅諾斯協議無限套娃
+                let chronosNode = {
+                    ...node, 
+                    content: `[系统提示：叙事过渡。${node.content}]`,
+                    norm: Logger.normalize(`[系统提示：叙事过渡。${node.content}]`)
+                };
+                chronosNode.hash = cyrb53(chronosNode.norm);
+                newSysAppends.push(chronosNode);
+                Logger.debug(`[⏳ 克罗诺斯协议] 转化为叙事过渡补丁。`);
+            } else if (node.isVector || node.isSummary) {
+                ephemeralBottom.push(node);
+            } else {
+                newSysAppends.push(node);
             }
         }
 
         // 3. 完美組裝 (嚴格遵循用戶要求的順序)
-        // 舊凍結 -> 新Sys -> 動態追加 -> 補丁 -> 臨時向量 -> 當前User -> 預填充
         const proposedStream = [
             ...nextFrozen, 
             ...newSysAppends, 
@@ -1235,8 +1272,28 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         if (decision === 'accept') {
-            // 5. 更新狀態：將新內容寫入永久凍結序列 (不包含臨時向量、當前User、Prefill)
-            state.frozenSequence = [...nextFrozen, ...newSysAppends, ...dynamicAppends, ...patches];
+            // 5. 更新狀態：將新內容寫入永久凍結序列
+            let finalFrozen = [...nextFrozen, ...newSysAppends, ...dynamicAppends, ...patches];
+            
+            // 🛡️ 修復：限制 DIARY 和 PATCH 節點數量，防止 Token 爆炸
+            const limitNodes = (arr, tag, limit) => {
+                const count = arr.filter(n => n.tag === tag).length;
+                if (count > limit) {
+                    let removeCount = count - limit;
+                    return arr.filter(n => {
+                        if (n.tag === tag && removeCount > 0) {
+                            removeCount--;
+                            return false;
+                        }
+                        return true;
+                    });
+                }
+                return arr;
+            };
+            finalFrozen = limitNodes(finalFrozen, 'DIARY', 15);
+            finalFrozen = limitNodes(finalFrozen, 'PATCH', 15);
+
+            state.frozenSequence = finalFrozen;
             state.lastPrefills = currentTurn.prefills;
             state.lastSentSequence = proposedStream;
             
@@ -1477,7 +1534,7 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v44-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-snowflake"></span> DeepSeek 绝对零度优化器 (v44)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-snowflake"></span> DeepSeek 绝对零度优化器 (v44 Ultimate)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -1993,7 +2050,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v44_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v44_Ultimate_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2047,7 +2104,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ ❄️ DeepSeek 绝对零度优化器 v44 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ ❄️ DeepSeek 绝对零度优化器 v44 Ultimate 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
