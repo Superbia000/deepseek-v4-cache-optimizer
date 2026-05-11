@@ -321,7 +321,8 @@ const NotificationCenter = {
         if (typeof toastr !== 'undefined') {
             if (this.queue.length === 1) {
                 const q = this.queue[0];
-                toastrq.type === 'error' ? 'error' : (q.type === 'warning' ? 'warning' : 'success') [<sup>1</sup>](`${q.icon} ${q.msg}`, '绝对真理协议');
+                const toastrType = q.type === 'error' ? 'error' : (q.type === 'warning' ? 'warning' : 'success');
+                toastrtoastrType [<sup>1</sup>](`${q.icon} ${q.msg}`, '绝对真理协议');
             } else {
                 const msgs = this.queue.map(q => `<div style="margin-bottom:4px;">${q.icon} ${q.msg}</div>`).join('');
                 toastr.success(`<div style="font-size:12px; line-height:1.5;">${msgs}</div>`, '🛡️ 绝对真理多重协议触发');
@@ -445,6 +446,19 @@ function processLogQueue() {
     if (Settings.autoScrollLog && !isLogPaused) container.scrollTop = container.scrollHeight;
     
     isLogRendering = false;
+}
+
+function applyLogFilters() {
+    const activeFilter = $('.ds-log-filter.active').data('filter') || 'all';
+    const searchTerm = ($('#ds-log-search').val() || '').toLowerCase();
+    $('#ds-cache-log-container .ds-log-line').each(function() {
+        const type = $(this).attr('data-type');
+        const text = $(this).text().toLowerCase();
+        const typeMatch = (activeFilter === 'all' || type === activeFilter || type === 'divider');
+        const searchMatch = (searchTerm === '' || text.includes(searchTerm));
+        if (typeMatch && searchMatch) $(this).removeClass('hide');
+        else $(this).addClass('hide');
+    });
 }
 
 function logAt(level, type, msg) {
@@ -733,6 +747,34 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
         return createMsg({role: assistantObj.role, content: content}, assistantObj.tag);
     }
     return assistantObj;
+}
+
+// ==========================================
+// 6. 彈窗與用戶互動
+// ==========================================
+function askUserForResetAsync(dropPercentStr, mapInfoText, causeText) {
+    return new Promise((resolve) => {
+        const html = `
+            <div class="ds-overlay" id="ds-reset-modal">
+                <div class="ds-modal" onclick="event.stopPropagation();">
+                    <h2 class="ds-modal-title"><i class="fa-solid fa-triangle-exclamation" style="color:var(--ds-red);"></i> 警告：缓存断层检测</h2>
+                    <p style="color:#abb2bf; font-size:14px; line-height:1.6;">系统检测到您 <b>${causeText}</b>，这将导致后续 <b>${dropPercentStr}%</b> 的缓存失效并重新计算。</p>
+                    <div style="background:rgba(0,0,0,0.3); padding:15px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); margin:15px 0; font-family:monospace; font-size:12px; color:#abb2bf; max-height:200px; overflow-y:auto;">
+                        ${mapInfoText}
+                    </div>
+                    <div class="ds-btn-col">
+                        <button class="ds-btn ds-btn-accept" id="ds-btn-accept"><i class="fa-solid fa-check"></i> 接受修改 (重算断层后的内容)</button>
+                        <button class="ds-btn ds-btn-revert" id="ds-btn-revert"><i class="fa-solid fa-clock-rotate-left"></i> 撤销修改 (无视本次更改，强行使用旧版缓存)</button>
+                        <button class="ds-btn ds-btn-abort" id="ds-btn-abort"><i class="fa-solid fa-ban"></i> 拦截发送 (让我再改改)</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        $('body').append(html);
+        $('#ds-btn-accept').on('click', () => { $('#ds-reset-modal').remove(); resolve('accept'); });
+        $('#ds-btn-revert').on('click', () => { $('#ds-reset-modal').remove(); resolve('revert'); });
+        $('#ds-btn-abort').on('click', () => { $('#ds-reset-modal').remove(); resolve('abort'); });
+    });
 }
 
 // ==========================================
