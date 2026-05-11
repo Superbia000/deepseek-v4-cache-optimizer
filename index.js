@@ -2,14 +2,14 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Quantum Matrix UI)
+// 1. 樣式注入 (Quantum Canvas UI)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
     const style = document.createElement('style');
     style.id = 'ds-cache-styles';
     style.innerHTML = `
-        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-blue: #61afef; --ds-bg: rgba(15, 20, 25, 0.7); --ds-border: rgba(0, 229, 255, 0.2); }
+        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-pink: #ff79c6; --ds-gray: #abb2bf; --ds-bg: rgba(15, 20, 25, 0.7); --ds-border: rgba(0, 229, 255, 0.2); }
         
         .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
@@ -82,10 +82,10 @@ const injectCSS = () => {
         .ds-modal-title { color: var(--ds-cyan); margin: 0 0 20px 0; display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.4); flex-wrap: wrap; }
         
         .ds-btn-col { display: flex; flex-direction: column; gap: 16px; margin-top: 35px; }
-        .ds-btn { padding: 18px 24px; border: 1px solid transparent; border-radius: 12px; cursor: pointer; font-weight: bold; font-size: 15px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:16px; text-align:left; line-height: 1.5; background: rgba(255,255,255,0.05); color: #fff; }
-        .ds-btn:hover { transform: translateY(-3px); box-shadow: 0 10px 25px rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); }
+        .ds-btn { padding: 14px 20px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 14px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:12px; text-align:left; line-height: 1.5; background: rgba(255,255,255,0.05); color: #fff; }
+        .ds-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); }
         .ds-btn:active { transform: translateY(0); }
-        .ds-btn i { font-size: 20px; width: 26px; text-align: center; flex-shrink: 0; }
+        .ds-btn i { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
         
         .ds-btn-accept { border-color: rgba(152,195,121,0.5); background: linear-gradient(90deg, rgba(152,195,121,0.2) 0%, rgba(0,0,0,0) 100%); }
         .ds-btn-accept:hover { border-color: var(--ds-green); box-shadow: 0 0 20px rgba(152,195,121,0.4); }
@@ -107,70 +107,65 @@ const injectCSS = () => {
         .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.2); }
         .ds-btn-reset i { color: var(--ds-red); }
 
-        .ds-btn-magic { border-color: rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-yellow); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 16px; letter-spacing: 1px; }
+        .ds-btn-magic { border-color: rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-yellow); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 15px; letter-spacing: 1px; }
         .ds-btn-magic:hover { border-color: var(--ds-yellow); box-shadow: 0 0 25px rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.3) 0%, rgba(0,0,0,0) 100%); color: #fff; }
 
-        .ds-btn-omni { border-color: rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-purple); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 16px; letter-spacing: 1px; }
+        .ds-btn-omni { border-color: rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-purple); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 15px; letter-spacing: 1px; }
         .ds-btn-omni:hover { border-color: var(--ds-purple); box-shadow: 0 0 25px rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.3) 0%, rgba(0,0,0,0) 100%); color: #fff; }
 
         .ds-health-bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; margin-top: 6px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s; }
 
-        /* ==========================================
-           Omni-Vision v52 Quantum Matrix Styles
-           ========================================== */
-        .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 25px !important; overflow: hidden; }
+        /* Omni-Vision UI Styles (Quantum Canvas) */
+        .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
+        .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
         
-        /* 控制台區域 */
-        .ds-omni-control-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); transition: max-height 0.3s ease; overflow: hidden; }
-        .ds-omni-control-header { padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.05); }
-        .ds-omni-control-header:hover { background: rgba(255,255,255,0.06); }
-        .ds-omni-control-body { padding: 15px 18px; display: flex; flex-direction: column; gap: 15px; }
-        .ds-omni-control-panel.collapsed .ds-omni-control-body { display: none; }
-        .ds-omni-control-panel.collapsed .ds-omni-control-header i.fa-chevron-up { transform: rotate(180deg); }
+        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; }
+        .ds-omni-panel-header { padding: 10px 15px; background: rgba(255,255,255,0.05); font-size: 13px; font-weight: bold; color: var(--ds-cyan); display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+        .ds-omni-panel-header:hover { background: rgba(255,255,255,0.08); }
+        .ds-omni-panel-body { padding: 15px; display: none; }
+        .ds-omni-panel.open .ds-omni-panel-body { display: block; animation: dsFadeIn 0.2s ease; }
+        .ds-omni-panel.open .ds-omni-panel-header i.fa-chevron-down { transform: rotate(180deg); }
 
-        .ds-omni-actions-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-        .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 8px 16px; border-radius: 8px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; font-weight: bold; }
+        .ds-omni-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; font-weight: bold; }
         .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
         .ds-omni-action-btn.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
         
-        .ds-omni-toggles-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; max-height: 150px; overflow-y: auto; padding-right: 5px; }
-        .ds-omni-toggle { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 6px 10px; border-radius: 6px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; max-height: 150px; overflow-y: auto; padding-right: 5px; }
+        .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 5px 10px; border-radius: 5px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; }
         .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
-        .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+        .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
 
-        /* 矩陣視窗區域 (Quantum Matrix Layout) */
-        .ds-omni-matrix-container { display: flex; flex: 1; min-height: 0; position: relative; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); }
+        /* 雙視窗 + Canvas 佈局 */
+        .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; }
+        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
+        .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
+        .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
         
-        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; position: relative; z-index: 2; width: 45%; }
-        .ds-omni-pane-header { padding: 12px 20px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; font-weight: bold; flex-shrink: 0; font-size: 14px; }
-        .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; position: relative; scroll-behavior: auto; will-change: scroll-position; }
+        .ds-omni-canvas-container { width: 120px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
+        #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
-        /* 畫布橋樑 (Canvas Bridge) */
-        .ds-omni-bridge { position: absolute; top: 0; left: 45%; width: 10%; height: 100%; z-index: 1; pointer-events: none; overflow: hidden; }
-        #omni-svg-canvas { width: 100%; height: 100%; position: absolute; top: 0; left: 0; overflow: visible; }
-        #omni-svg-canvas path { will-change: d; transition: stroke 0.3s; }
-
-        /* 卡片樣式 */
         .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
         .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
         
-        /* 9 維度色彩定義 */
-        .ds-node-frozen { border-left: 5px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-deleted { border-left: 5px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.08) 0%, rgba(0,0,0,0) 100%); opacity: 0.7; }
-        .ds-node-fuzzy { border-left: 5px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-sys { border-left: 5px solid var(--ds-blue); background: linear-gradient(90deg, rgba(97,175,239,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-lore { border-left: 5px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-dyn { border-left: 5px solid var(--ds-orange); background: linear-gradient(90deg, rgba(209,154,102,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-new-his { border-left: 5px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-patch { border-left: 5px solid var(--ds-purple); background: linear-gradient(90deg, rgba(198,120,221,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-miss { border-left: 4px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.08) 0%, rgba(0,0,0,0) 100%); opacity: 0.6; }
+        .ds-node-warn { border-left: 4px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-sys { border-left: 4px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-lore { border-left: 4px solid #56b6c2; background: linear-gradient(90deg, rgba(86,182,194,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-dyn { border-left: 4px solid var(--ds-orange); background: linear-gradient(90deg, rgba(209,154,102,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-new-his { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-patch { border-left: 4px solid var(--ds-purple); background: linear-gradient(90deg, rgba(198,120,221,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-flashback { border-left: 4px solid var(--ds-pink); background: linear-gradient(90deg, rgba(255,121,198,0.08) 0%, rgba(0,0,0,0) 100%); }
+        .ds-node-retcon { border-left: 4px solid var(--ds-gray); background: linear-gradient(90deg, rgba(171,178,191,0.08) 0%, rgba(0,0,0,0) 100%); }
         
         .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; color: #7f848e; border-bottom: 1px dashed rgba(255,255,255,0.15); padding-bottom: 6px; }
         
         .ds-node-content-wrapper { position: relative; }
         .ds-node-content { line-height: 1.6; }
-        .ds-node-content.collapsed { max-height: 70px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
-        .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 6px; background: rgba(0,229,255,0.08); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.2); font-weight: bold; }
+        .ds-node-content.collapsed { max-height: 60px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
+        .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 4px; background: rgba(0,229,255,0.08); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.2); font-weight: bold; }
         .ds-node-expand-btn:hover { background: rgba(0,229,255,0.2); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
 
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -313,9 +308,9 @@ function triggerToast(key, msg, type = 'info', icon = '💡') {
     if (!triggerThrottlers[key] || now - triggerThrottlers[key] > 5000) {
         triggerThrottlers[key] = now;
         if (typeof toastr !== 'undefined') {
-            if (type === 'success') toastr.success(`${icon} ${msg}`, '量子矩阵协议');
-            else if (type === 'warning') toastr.warning(`${icon} ${msg}`, '量子矩阵协议');
-            else toastr.info(`${icon} ${msg}`, '量子矩阵协议');
+            if (type === 'success') toastr.success(`${icon} ${msg}`, '绝对真理协议');
+            else if (type === 'warning') toastr.warning(`${icon} ${msg}`, '绝对真理协议');
+            else toastr.info(`${icon} ${msg}`, '绝对真理协议');
         }
     }
 }
@@ -367,15 +362,15 @@ function updateTopBarState() {
     if (!dot.length) return;
     if (!Settings.enabled) {
         dot.css('color', '#5c6370');
-        $('#ds-top-reset-btn').attr('title', '量子矩阵缓存: 已停用 (大模型每次都会重读所有内容)');
+        $('#ds-top-reset-btn').attr('title', '绝对真理缓存: 已停用 (大模型每次都会重读所有内容)');
         dot.html('<i class="fa-solid fa-circle"></i>');
     } else if (Settings.zenMode) {
         dot.css('color', '#c678dd');
-        $('#ds-top-reset-btn').attr('title', '量子矩阵缓存: 运作中 [沉浸免打扰模式]');
+        $('#ds-top-reset-btn').attr('title', '绝对真理缓存: 运作中 [沉浸免打扰模式]');
         dot.html('<i class="fa-solid fa-yin-yang ds-zen-icon"></i>');
     } else {
         dot.css('color', '#00e5ff');
-        $('#ds-top-reset-btn').attr('title', '量子矩阵缓存: 运作中 (正在为您省钱省算力)');
+        $('#ds-top-reset-btn').attr('title', '绝对真理缓存: 运作中 (正在为您省钱省算力)');
         dot.html('<i class="fa-solid fa-circle" style="text-shadow: 0 0 5px #00e5ff;"></i>');
     }
 }
@@ -441,12 +436,12 @@ function logAt(level, type, msg) {
     const now = new Date();
     const time = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     
-    if (type === 'warn') console.warn(`%c[矩阵日志] 🌪️ ${msg}`, 'color: #e5c07b;');
-    else if (type === 'error') console.error(`[矩阵日志] 🔴 ${msg}`);
-    else if (type === 'map') console.log(`%c[矩阵日志] 🗺️ ${msg}`, 'color: #00e5ff;');
-    else if (type === 'debug') console.log(`%c[矩阵日志] 🐛 ${msg}`, 'color: #c678dd;');
+    if (type === 'warn') console.warn(`%c[真理日志] 🌪️ ${msg}`, 'color: #e5c07b;');
+    else if (type === 'error') console.error(`[真理日志] 🔴 ${msg}`);
+    else if (type === 'map') console.log(`%c[真理日志] 🗺️ ${msg}`, 'color: #00e5ff;');
+    else if (type === 'debug') console.log(`%c[真理日志] 🐛 ${msg}`, 'color: #c678dd;');
     else if (type === 'divider') console.log(`%c${msg}`, 'color: #4b5263; font-weight: bold;');
-    else console.log(`%c[矩阵日志] ✅ ${msg}`, 'color: #98c379;');
+    else console.log(`%c[真理日志] ✅ ${msg}`, 'color: #98c379;');
     
     logQueue.push({ time, type, msg });
     if (logQueue.length > 500) logQueue.shift();
@@ -516,7 +511,7 @@ function getChatState(chatKeyInfo) {
 function ensureTopMenuButton() {
     if ($('#ds-top-reset-btn').length === 0) {
         const btn = $(`
-            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 量子矩阵缓存优化器">
+            <li id="ds-top-reset-btn" class="menu_button interactable" title="DeepSeek 绝对真理缓存优化器">
                 <span class="fa-solid fa-microchip"></span>
                 <span id="ds-top-status-dot" style="font-size:0.7em; margin-left:2px; vertical-align:top;"></span>
             </li>
@@ -526,7 +521,7 @@ function ensureTopMenuButton() {
             Settings.enabled = !Settings.enabled;
             $('#ds-cache-enable').prop('checked', Settings.enabled);
             safeSave(); updateTopBarState();
-            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 量子矩阵缓存已启动！" : "💤 量子矩阵缓存已关闭。", "DeepSeek");
+            if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 绝对真理缓存已启动！" : "💤 绝对真理缓存已关闭。", "DeepSeek");
         });
         btn.on('contextmenu', (e) => { e.preventDefault(); resetCurrentCache(); });
         if ($('ul#extensions_menu').length > 0) $('ul#extensions_menu').append(btn);
@@ -591,7 +586,7 @@ function setupGlobalHotkeys() {
                 Settings.enabled = !Settings.enabled;
                 $('#ds-cache-enable').prop('checked', Settings.enabled);
                 safeSave(); updateTopBarState();
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 量子矩阵已启动" : "💤 量子矩阵已关闭", "快捷键");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(Settings.enabled ? "🚀 绝对真理已启动" : "💤 绝对真理已关闭", "快捷键");
             }
             if (e.key.toLowerCase() === 'r') { e.preventDefault(); resetCurrentCache(); }
             if (e.key.toLowerCase() === 'z') { 
@@ -661,7 +656,8 @@ function createMsg(msg, tag) {
         fuzzyHash: cyrb53(fuzzy), 
         len: content.length, 
         tag: tag,
-        _omniCat: '' 
+        _omniCat: '',
+        _sourceHash: null 
     };
 }
 
@@ -875,7 +871,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         if (addedText) {
                             const patch = createMsg({role: 'system', content: `[系统提示：设定微调补充。新增细节：${addedText}]`}, 'SYS');
                             patch._omniCat = 'patch';
-                            patch._patchedOldHash = frozenItem.hash; // 供 Omni-Vision 連線使用
+                            patch._sourceHash = frozenItem.hash;
                             newAdditions.patches.push(patch);
                             if (!isDryRun) {
                                 Logger.debug(`[🔬 量子微创] 生成设定差异补丁。`);
@@ -885,7 +881,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     } else if (Settings.hotReloadPersona && i === 0) {
                         const patch = createMsg({role: 'system', content: `[系统提示：角色设定已热更新，最新特征如下：\n${incomingItem.content}]`}, 'SYS');
                         patch._omniCat = 'patch';
-                        patch._patchedOldHash = frozenItem.hash;
+                        patch._sourceHash = frozenItem.hash;
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
                             Logger.debug(`[🔥 设定热更新] 生成热更新补丁。`);
@@ -935,7 +931,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(frozenItem.content, 15)}" 已修正为 "${truncateLog(incomingItem.content, 15)}"]`}, 'SYS');
                         patch._omniCat = 'patch';
-                        patch._patchedOldHash = frozenItem.hash;
+                        patch._sourceHash = frozenItem.hash;
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
                             Logger.debug(`[🛡️ 熵减护盾] 生成错字修正补丁。`);
@@ -946,7 +942,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(frozenItem.content, 20)}" 实际上已发生改变，最新情况为："${incomingItem.content}"]`}, 'SYS');
                         patch._omniCat = 'patch';
-                        patch._patchedOldHash = frozenItem.hash;
+                        patch._sourceHash = frozenItem.hash;
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
                             Logger.debug(`[🛡️ 时空补丁] 生成历史修改补丁。`);
@@ -973,8 +969,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS');
-                        patch._omniCat = 'patch';
-                        patch._patchedOldHash = frozenItem.hash;
+                        patch._omniCat = 'retcon';
+                        patch._sourceHash = frozenItem.hash;
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
                             Logger.debug(`[🗑️ 吃书协议] 生成记忆抹除声明。`);
@@ -989,9 +985,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         for (let j = 0; j < incomingHistoryPool.length; j++) {
             if (!handledIncomingHis.has(j)) {
                 const h = incomingHistoryPool[j];
+                // 如果這個未處理的歷史節點，出現在某個已處理的歷史節點之前，代表它是被「插入」在中間的
                 if (Settings.flashbackInsertion && j < lastHandledIncomingHisIdx) {
                     const patch = createMsg({role: 'system', content: `[系统提示：闪回补充。在之前的事件中，还发生了以下细节：\n${h.content}]`}, 'SYS');
-                    patch._omniCat = 'patch';
+                    patch._omniCat = 'flashback';
                     newAdditions.patches.push(patch);
                     if (!isDryRun) {
                         Logger.debug(`[⏪ 闪回插入] 将新插入的对话转为闪回补丁。`);
@@ -1013,7 +1010,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     newAdditions.patches.push(patch);
                     if (!isDryRun) triggerToast('chronos', '克罗诺斯协议：已生成时间跳跃补丁', 'info', '⏳');
                 } else if (sys.isVector) {
-                    sys._omniCat = 'vector';
+                    sys._omniCat = 'dynamic';
                     newAdditions.dynamic.push(sys);
                     if (!isDryRun) triggerToast('vector', '向量隔离区：已将检索记忆沉底', 'info', '🎯');
                 } else if (sys.isSummary) {
@@ -1147,7 +1144,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             setTopBarStatus('#e5c07b', `缓存: 等待确认`);
             if (Settings.autoAccept) {
                 Logger.warn(`[自动修复] 已放行断层重组 (需重算 ${dropPercentStr}%)`);
-                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "量子矩阵");
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "绝对真理");
                 decision = 'accept';
             } else {
                 decision = await askUserForResetAsync(dropPercentStr, mapInfoText, causeText);
@@ -1157,7 +1154,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (decision === 'abort') {
             Logger.error('[物理拦截] 已拦截本次发送，强制中止生成。', null, LogLevels.BASIC);
             setTopBarStatus('#e06c75', '缓存: 已拦截发送');
-            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "量子矩阵");
+            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "绝对真理");
             
             data.chat.length = 0; 
             data.chat.push({ role: "invalid_abort_role", content: "ABORT_GENERATION" });
@@ -1183,7 +1180,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             safeSave();
 
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "量子矩阵");
+            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "绝对真理");
             return;
         }
 
@@ -1232,14 +1229,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Matrix)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas)
 // ==========================================
 let omniRenderTimeout = null;
-let omniMappings = []; 
-let isSyncScroll = true;
-let isSyncingLeft = false;
-let isSyncingRight = false;
-let positionCache = []; // 零重排繪圖引擎核心
+let omniMappings = [];
+let isSyncLocked = true;
+let isSyncing = false;
+let isDrawingCanvas = false;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1254,7 +1250,7 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 量子矩阵沙盒</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 量子画布沙盒</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
@@ -1266,20 +1262,13 @@ async function showOmniVisionUI() {
                     <div class="ds-health-bar" style="height:8px; border-radius:4px; background:rgba(224,108,117,0.3);"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);"></div></div>
                 </div>
 
-                <!-- 摺疊式控制台 -->
-                <div class="ds-omni-control-panel" id="omni-control-panel">
-                    <div class="ds-omni-control-header" onclick="document.getElementById('omni-control-panel').classList.toggle('collapsed'); setTimeout(recalcOmniPositions, 350);">
-                        <span style="color:var(--ds-purple); font-size:13px;"><i class="fa-solid fa-sliders"></i> 核心协议控制台 & 模拟输入</span>
-                        <i class="fa-solid fa-chevron-up" style="color:#abb2bf; transition:0.3s;"></i>
+                <div class="ds-omni-panel open">
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
+                        <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (即时生效)</span>
+                        <i class="fa-solid fa-chevron-down"></i>
                     </div>
-                    <div class="ds-omni-control-body">
-                        <div class="ds-omni-actions-row">
-                            <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
-                            <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
-                            <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
-                        </div>
-                        
-                        <div class="ds-omni-toggles-grid ds-scroll">
+                    <div class="ds-omni-panel-body">
+                        <div class="ds-omni-toggles-container ds-scroll">
                             <div class="ds-omni-toggle ${Settings.dynamicMode===1?'active':''}" data-setting="dynamicMode" data-val="1" title="写日记模式"><i class="fa-solid fa-book-journal-whills"></i> 日记模式</div>
                             <div class="ds-omni-toggle ${Settings.absoluteOrderMatrix?'active':''}" data-setting="absoluteOrderMatrix" title="绝对真理追加架构"><i class="fa-solid fa-sort"></i> 追加架构</div>
                             <div class="ds-omni-toggle ${Settings.vectorQuarantine?'active':''}" data-setting="vectorQuarantine" title="向量隔离区"><i class="fa-solid fa-bullseye"></i> 向量隔离</div>
@@ -1300,53 +1289,39 @@ async function showOmniVisionUI() {
                             <div class="ds-omni-toggle ${Settings.hotReloadPersona?'active':''}" data-setting="hotReloadPersona" title="角色卡热更新"><i class="fa-solid fa-fire"></i> 热更新</div>
                             <div class="ds-omni-toggle ${Settings.flashbackInsertion?'active':''}" data-setting="flashbackInsertion" title="闪回插入协议"><i class="fa-solid fa-backward-fast"></i> 闪回插入</div>
                         </div>
-                        
+                    </div>
+                </div>
+
+                <div class="ds-omni-panel open">
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
+                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试</span>
+                        <i class="fa-solid fa-chevron-down"></i>
+                    </div>
+                    <div class="ds-omni-panel-body" style="padding-top: 5px;">
                         <textarea id="omni-simulated-input" class="ds-input-styled ds-scroll" placeholder="✍️ 模拟用户即将发送的输入 (输入后会自动触发下方沙盒重算)..." style="height: 40px; resize: vertical;"></textarea>
                     </div>
                 </div>
 
-                <!-- 矩陣視窗 -->
-                <div class="ds-omni-matrix-container">
+                <div class="ds-omni-actions">
+                    <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
+                    <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
+                    <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
+                </div>
+
+                <div class="ds-omni-workspace">
                     <!-- 左視窗：歷史觀測 -->
                     <div class="ds-omni-pane">
                         <div class="ds-omni-pane-header">
                             <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (绝对锁定)</span>
                         </div>
-                        <div id="omni-left-content" class="ds-omni-pane-content ds-scroll">
+                        <div id="omni-left-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
                     </div>
 
-                    <!-- 畫布橋樑 (Canvas Bridge) -->
-                    <div class="ds-omni-bridge">
-                        <svg id="omni-svg-canvas">
-                            <defs>
-                                <linearGradient id="grad-red" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(224,108,117,0.8)" />
-                                    <stop offset="100%" stop-color="rgba(224,108,117,0)" />
-                                </linearGradient>
-                                <linearGradient id="grad-blue" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(0,229,255,0)" />
-                                    <stop offset="100%" stop-color="rgba(97,175,239,0.8)" />
-                                </linearGradient>
-                                <linearGradient id="grad-cyan" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(86,182,194,0)" />
-                                    <stop offset="100%" stop-color="rgba(0,229,255,0.8)" />
-                                </linearGradient>
-                                <linearGradient id="grad-orange" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(209,154,102,0)" />
-                                    <stop offset="100%" stop-color="rgba(209,154,102,0.8)" />
-                                </linearGradient>
-                                <linearGradient id="grad-green" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(152,195,121,0)" />
-                                    <stop offset="100%" stop-color="rgba(152,195,121,0.8)" />
-                                </linearGradient>
-                                <linearGradient id="grad-vector" x1="0%" y1="0%" x2="100%" y2="0%">
-                                    <stop offset="0%" stop-color="rgba(160,82,45,0)" />
-                                    <stop offset="100%" stop-color="rgba(160,82,45,0.8)" />
-                                </linearGradient>
-                            </defs>
-                        </svg>
+                    <!-- 神經網路連線畫布 (Canvas) -->
+                    <div class="ds-omni-canvas-container">
+                        <canvas id="omni-canvas"></canvas>
                     </div>
 
                     <!-- 右視窗：即時沙盒預覽 -->
@@ -1354,7 +1329,7 @@ async function showOmniVisionUI() {
                         <div class="ds-omni-pane-header">
                             <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用设定后)</span>
                         </div>
-                        <div id="omni-right-content" class="ds-omni-pane-content ds-scroll">
+                        <div id="omni-right-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
                     </div>
@@ -1364,7 +1339,6 @@ async function showOmniVisionUI() {
     `;
     $('body').append(html);
 
-    // 事件綁定
     $('.ds-omni-toggle').on('click', function() {
         const setting = $(this).data('setting');
         if (setting === 'dynamicMode') {
@@ -1381,11 +1355,11 @@ async function showOmniVisionUI() {
     });
 
     $('#omni-btn-sync').on('click', function() {
-        isSyncScroll = !isSyncScroll;
-        $(this).toggleClass('active', isSyncScroll);
-        if (isSyncScroll) {
+        isSyncLocked = !isSyncLocked;
+        $(this).toggleClass('active', isSyncLocked);
+        if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-            syncScrollPositions(document.getElementById('omni-left-content'), document.getElementById('omni-right-content'));
+            syncScroll('left'); // 立即同步一次
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
         }
@@ -1394,13 +1368,13 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(recalcOmniPositions, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(recalcOmniPositions, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
     });
 
     let inputTimeout;
@@ -1418,51 +1392,63 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(recalcOmniPositions, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 零重排滾動監聽
-    const lPane = document.getElementById('omni-left-content');
-    const rPane = document.getElementById('omni-right-content');
+    // 綁定滾動事件
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
     
-    lPane.addEventListener('scroll', () => {
-        if (isSyncingRight) return;
-        if (isSyncScroll) {
-            isSyncingLeft = true;
-            syncScrollPositions(lPane, rPane);
-            setTimeout(() => isSyncingLeft = false, 20);
-        }
-        requestAnimationFrame(drawOmniLinesFast);
-    }, { passive: true });
+    leftPane.addEventListener('scroll', () => {
+        if (isSyncLocked && !isSyncing) syncScroll('left');
+        requestCanvasUpdate();
+    });
+    
+    rightPane.addEventListener('scroll', () => {
+        if (isSyncLocked && !isSyncing) syncScroll('right');
+        requestCanvasUpdate();
+    });
 
-    rPane.addEventListener('scroll', () => {
-        if (isSyncingLeft) return;
-        if (isSyncScroll) {
-            isSyncingRight = true;
-            syncScrollPositions(rPane, lPane);
-            setTimeout(() => isSyncingRight = false, 20);
-        }
-        requestAnimationFrame(drawOmniLinesFast);
-    }, { passive: true });
+    window.addEventListener('resize', () => {
+        resizeCanvas();
+        updateOmniCanvas();
+    });
 
     triggerOmniRender(state);
 }
 
 window.closeOmniVision = function() {
     $('#ds-omni-modal-wrapper').remove();
-    omniMappings.forEach(m => { m.pathEl = null; }); 
     omniMappings = [];
-    positionCache = [];
 };
 
-function syncScrollPositions(source, target) {
-    const sourceMax = source.scrollHeight - source.clientHeight;
-    const targetMax = target.scrollHeight - target.clientHeight;
-    if (sourceMax <= 0 || targetMax <= 0) return;
-    const ratio = source.scrollTop / sourceMax;
-    target.scrollTop = ratio * targetMax;
+function syncScroll(source) {
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
+    if (!leftPane || !rightPane) return;
+
+    isSyncing = true;
+    if (source === 'left') {
+        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
+    } else {
+        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
+        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
+    }
+    // 延遲解除鎖定，防止無限迴圈
+    setTimeout(() => { isSyncing = false; }, 50);
+}
+
+function requestCanvasUpdate() {
+    if (!isDrawingCanvas) {
+        requestAnimationFrame(() => {
+            updateOmniCanvas();
+            isDrawingCanvas = false;
+        });
+        isDrawingCanvas = true;
+    }
 }
 
 function triggerOmniRender(state) {
@@ -1471,8 +1457,8 @@ function triggerOmniRender(state) {
 }
 
 async function renderOmniVision(state) {
-    const leftContainer = document.getElementById('omni-left-content');
-    const rightContainer = document.getElementById('omni-right-content');
+    const leftContainer = document.getElementById('omni-left-pane');
+    const rightContainer = document.getElementById('omni-right-pane');
     if (!leftContainer || !rightContainer) return;
 
     const leftArray = fastClone(state.lastSentSequence || []);
@@ -1518,34 +1504,40 @@ async function renderOmniVision(state) {
         let bestMatchIdx = -1;
         let bestScore = 0;
         
-        if (rNode._omniCat === 'patch' && rNode._patchedOldHash) {
-            // 精準補丁追蹤
-            bestMatchIdx = leftArray.findIndex(l => l.hash === rNode._patchedOldHash);
-            if (bestMatchIdx !== -1) bestScore = 1;
-        } else {
-            leftArray.forEach((lNode, lIdx) => {
-                if (rNode.hash === lNode.hash) { bestMatchIdx = lIdx; bestScore = 1; }
-                else if (rNode.fuzzyHash === lNode.fuzzyHash && bestScore < 0.99) { bestMatchIdx = lIdx; bestScore = 0.99; }
-                else {
-                    let score = getSimilarity(rNode, lNode);
-                    if (score > bestScore && score > 0.8) { bestScore = score; bestMatchIdx = lIdx; }
+        if (rNode._omniCat === 'patch' || rNode._omniCat === 'retcon' || rNode._omniCat === 'flashback') {
+            if (rNode._sourceHash) {
+                bestMatchIdx = leftArray.findIndex(l => l.hash === rNode._sourceHash);
+                if (bestMatchIdx !== -1) {
+                    leftMatched.add(bestMatchIdx);
+                    rightMatched.add(rIdx);
+                    omniMappings.push({ left: bestMatchIdx, right: rIdx, type: 'patch_link' });
+                    return;
                 }
-            });
+            }
         }
+
+        leftArray.forEach((lNode, lIdx) => {
+            if (rNode.hash === lNode.hash) { bestMatchIdx = lIdx; bestScore = 1; }
+            else if (rNode.fuzzyHash === lNode.fuzzyHash && bestScore < 0.99) { bestMatchIdx = lIdx; bestScore = 0.99; }
+            else {
+                let score = getSimilarity(rNode, lNode);
+                if (score > bestScore && score > 0.8) { bestScore = score; bestMatchIdx = lIdx; }
+            }
+        });
 
         if (bestMatchIdx !== -1) {
             leftMatched.add(bestMatchIdx);
             rightMatched.add(rIdx);
             let type = bestScore === 1 ? 'perfect' : 'fuzzy';
-            if (rNode._omniCat === 'patch') type = 'patch_link';
             omniMappings.push({ left: bestMatchIdx, right: rIdx, type: type });
         } else {
             let type = 'new_sys';
             if (rNode._omniCat === 'lorebook') type = 'new_lorebook';
             else if (rNode._omniCat === 'dynamic') type = 'new_dynamic';
             else if (rNode._omniCat === 'history') type = 'new_history';
+            else if (rNode._omniCat === 'flashback') type = 'new_flashback';
+            else if (rNode._omniCat === 'retcon') type = 'new_retcon';
             else if (rNode._omniCat === 'patch') type = 'new_patch';
-            else if (rNode._omniCat === 'vector') type = 'new_vector';
             omniMappings.push({ left: -1, right: rIdx, type: type });
         }
     });
@@ -1556,12 +1548,12 @@ async function renderOmniVision(state) {
         }
     });
 
-    // 2. 渲染左側 (絕對凍結)
+    // 2. 渲染左側 DOM
     const leftFrag = document.createDocumentFragment();
     leftArray.forEach((node, idx) => {
         const isDeleted = !leftMatched.has(idx);
         const el = document.createElement('div');
-        el.className = `ds-node-card ${isDeleted ? 'ds-node-deleted' : 'ds-node-frozen'}`;
+        el.className = `ds-node-card ds-virtual-list ${isDeleted ? 'ds-node-miss' : 'ds-node-hit'}`;
         el.id = `omni-left-node-${idx}`;
         el.innerHTML = `
             <div class="ds-node-header">
@@ -1578,7 +1570,7 @@ async function renderOmniVision(state) {
     leftContainer.innerHTML = '';
     leftContainer.appendChild(leftFrag);
 
-    // 3. 渲染右側 (即時沙盒)
+    // 3. 渲染右側 DOM
     const rightFrag = document.createDocumentFragment();
     rightArray.forEach((node, idx) => {
         const isMiss = breakIndex !== -1 && idx >= breakIndex;
@@ -1588,18 +1580,19 @@ async function renderOmniVision(state) {
         let newLabel = '';
         
         if (isNew) {
-            if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold;">(NEW LORE)</span>'; }
+            if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; font-weight:bold;">(NEW LORE)</span>'; }
             else if (node._omniCat === 'dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold;">(NEW DYN)</span>'; }
             else if (node._omniCat === 'history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); font-weight:bold;">(NEW HIS)</span>'; }
+            else if (node._omniCat === 'flashback') { cardClass = 'ds-node-flashback'; newLabel = '<span style="color:var(--ds-pink); font-weight:bold;">(FLASHBACK)</span>'; }
+            else if (node._omniCat === 'retcon') { cardClass = 'ds-node-retcon'; newLabel = '<span style="color:var(--ds-gray); font-weight:bold;">(RETCON)</span>'; }
             else if (node._omniCat === 'patch') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold;">(PATCH)</span>'; }
-            else if (node._omniCat === 'vector') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:#a0522d; font-weight:bold;">(VECTOR)</span>'; }
-            else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-blue); font-weight:bold;">(NEW SYS)</span>'; }
-        } else if (node._omniCat === 'patch') {
+            else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold;">(NEW SYS)</span>'; }
+        } else if (node._omniCat === 'patch' || node._omniCat === 'retcon' || node._omniCat === 'flashback') {
             cardClass = 'ds-node-patch';
         }
 
         const el = document.createElement('div');
-        el.className = `ds-node-card ${cardClass}`;
+        el.className = `ds-node-card ds-virtual-list ${cardClass}`;
         el.id = `omni-right-node-${idx}`;
         el.innerHTML = `
             <div class="ds-node-header">
@@ -1616,109 +1609,118 @@ async function renderOmniVision(state) {
     rightContainer.innerHTML = '';
     rightContainer.appendChild(rightFrag);
 
-    // 4. 初始化 SVG 與快取座標
+    // 4. 初始化 Canvas 並快取座標
     requestAnimationFrame(() => {
-        initOmniSVGPaths();
-        recalcOmniPositions();
+        resizeCanvas();
+        cacheOmniPositions();
+        updateOmniCanvas();
     });
 }
 
-// 初始化 SVG 路徑池 (只建立一次 DOM)
-function initOmniSVGPaths() {
-    const svg = document.getElementById('omni-svg-canvas');
-    if (!svg) return;
-    const defs = svg.querySelector('defs');
-    svg.innerHTML = '';
-    if (defs) svg.appendChild(defs);
-
-    omniMappings.forEach(m => {
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        let color, dash = '', strokeWidth = '2';
-
-        if (m.type === 'deleted') { color = 'url(#grad-red)'; strokeWidth = '1.5'; dash = '4,4'; } 
-        else if (m.type.startsWith('new_')) {
-            if (m.type === 'new_lorebook') color = 'url(#grad-cyan)';
-            else if (m.type === 'new_dynamic') color = 'url(#grad-orange)';
-            else if (m.type === 'new_history') color = 'url(#grad-green)';
-            else if (m.type === 'new_vector') color = 'url(#grad-vector)';
-            else color = 'url(#grad-blue)';
-            strokeWidth = '1.5'; dash = '4,4';
-        } 
-        else {
-            if (m.type === 'perfect') color = 'rgba(152,195,121,0.6)'; 
-            else if (m.type === 'fuzzy') { color = 'rgba(229,192,123,0.8)'; dash = '5,5'; } 
-            else if (m.type === 'patch_link') color = 'rgba(198,120,221,0.8)'; 
-        }
-
-        path.setAttribute('stroke', color);
-        path.setAttribute('stroke-width', strokeWidth);
-        path.setAttribute('fill', 'none');
-        if (dash) path.setAttribute('stroke-dasharray', dash);
-        
-        svg.appendChild(path);
-        m.pathEl = path; 
-    });
+function resizeCanvas() {
+    const canvas = document.getElementById('omni-canvas');
+    const container = canvas?.parentElement;
+    if (!canvas || !container) return;
+    
+    const rect = container.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
 }
 
-// 重新計算並快取所有卡片的絕對 Y 座標 (只在佈局改變時呼叫)
-function recalcOmniPositions() {
-    positionCache = [];
+function cacheOmniPositions() {
     omniMappings.forEach(m => {
-        let cache = { pathEl: m.pathEl, type: m.type, lY: null, rY: null };
-        
         if (m.left !== -1) {
             const el = document.getElementById(`omni-left-node-${m.left}`);
-            if (el) cache.lY = el.offsetTop + (el.offsetHeight / 2);
+            if (el) { m.lTop = el.offsetTop; m.lHeight = el.offsetHeight; }
         }
         if (m.right !== -1) {
             const el = document.getElementById(`omni-right-node-${m.right}`);
-            if (el) cache.rY = el.offsetTop + (el.offsetHeight / 2);
+            if (el) { m.rTop = el.offsetTop; m.rHeight = el.offsetHeight; }
         }
-        positionCache.push(cache);
     });
-    drawOmniLinesFast();
 }
 
-// 零重排極速繪圖引擎 (在 requestAnimationFrame 中呼叫)
-function drawOmniLinesFast() {
-    const lPane = document.getElementById('omni-left-content');
-    const rPane = document.getElementById('omni-right-content');
-    const svg = document.getElementById('omni-svg-canvas');
-    if (!lPane || !rPane || !svg) return;
+function updateOmniCanvas() {
+    const canvas = document.getElementById('omni-canvas');
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
+    if (!canvas || !leftPane || !rightPane) return;
 
-    const lScroll = lPane.scrollTop;
-    const rScroll = rPane.scrollTop;
-    const svgWidth = svg.clientWidth;
-    const svgHeight = svg.clientHeight;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    
+    ctx.clearRect(0, 0, width, height);
 
-    positionCache.forEach(c => {
-        if (!c.pathEl) return;
-        let startX, startY, endX, endY;
+    const lScroll = leftPane.scrollTop;
+    const rScroll = rightPane.scrollTop;
 
-        if (c.type === 'deleted') {
-            if (c.lY === null) return;
-            startY = c.lY - lScroll;
-            if (startY < -50 || startY > svgHeight + 50) { c.pathEl.setAttribute('d', ''); return; }
-            startX = 0; endX = svgWidth / 2; endY = startY;
+    omniMappings.forEach(m => {
+        let startX = 0, startY = 0, endX = width, endY = 0;
+        let isVisible = false;
+
+        if (m.type === 'deleted') {
+            if (m.lTop === undefined) return;
+            startY = m.lTop - lScroll + (m.lHeight / 2);
+            endY = startY;
+            endX = width / 2;
+            if (startY > -50 && startY < height + 50) isVisible = true;
         } 
-        else if (c.type.startsWith('new_')) {
-            if (c.rY === null) return;
-            startY = c.rY - rScroll;
-            if (startY < -50 || startY > svgHeight + 50) { c.pathEl.setAttribute('d', ''); return; }
-            startX = svgWidth / 2; endX = svgWidth; endY = startY;
+        else if (m.type.startsWith('new_')) {
+            if (m.rTop === undefined) return;
+            endY = m.rTop - rScroll + (m.rHeight / 2);
+            startY = endY;
+            startX = width / 2;
+            if (endY > -50 && endY < height + 50) isVisible = true;
         } 
         else {
-            if (c.lY === null || c.rY === null) return;
-            startY = c.lY - lScroll;
-            endY = c.rY - rScroll;
-            if ((startY < -50 || startY > svgHeight + 50) && (endY < -50 || endY > svgHeight + 50)) {
-                c.pathEl.setAttribute('d', ''); return;
-            }
-            startX = 0; endX = svgWidth;
+            if (m.lTop === undefined || m.rTop === undefined) return;
+            startY = m.lTop - lScroll + (m.lHeight / 2);
+            endY = m.rTop - rScroll + (m.rHeight / 2);
+            if ((startY > -50 && startY < height + 50) || (endY > -50 && endY < height + 50)) isVisible = true;
         }
 
-        const d = `M ${startX} ${startY} C ${startX + 40} ${startY}, ${endX - 40} ${endY}, ${endX} ${endY}`;
-        c.pathEl.setAttribute('d', d);
+        if (!isVisible) return;
+
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.bezierCurveTo(startX + 40, startY, endX - 40, endY, endX, endY);
+
+        ctx.lineWidth = 2;
+        if (m.type === 'fuzzy') {
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = 'rgba(229,192,123,0.8)';
+        } else {
+            ctx.setLineDash([]);
+            if (m.type === 'perfect') ctx.strokeStyle = 'rgba(152,195,121,0.6)';
+            else if (m.type === 'patch_link') ctx.strokeStyle = 'rgba(198,120,221,0.8)';
+            else if (m.type === 'deleted') {
+                const grad = ctx.createLinearGradient(0, 0, width/2, 0);
+                grad.addColorStop(0, 'rgba(224,108,117,0.8)');
+                grad.addColorStop(1, 'rgba(224,108,117,0)');
+                ctx.strokeStyle = grad;
+            }
+            else if (m.type.startsWith('new_')) {
+                const grad = ctx.createLinearGradient(width/2, 0, width, 0);
+                let color = '0,229,255'; // sys
+                if (m.type === 'new_lorebook') color = '86,182,194';
+                else if (m.type === 'new_dynamic') color = '209,154,102';
+                else if (m.type === 'new_history') color = '152,195,121';
+                else if (m.type === 'new_patch') color = '198,120,221';
+                else if (m.type === 'new_flashback') color = '255,121,198';
+                else if (m.type === 'new_retcon') color = '171,178,191';
+                
+                grad.addColorStop(0, `rgba(${color},0)`);
+                grad.addColorStop(1, `rgba(${color},0.8)`);
+                ctx.strokeStyle = grad;
+            }
+        }
+        ctx.stroke();
     });
 }
 
@@ -1816,7 +1818,7 @@ function generateDiagnosticReport() {
     const chatKeyInfo = getChatKey();
     const state = Settings.chats[chatKeyInfo.key] || {};
     
-    let report = `=== DeepSeek Quantum Matrix Diagnostic Report ===\n`;
+    let report = `=== DeepSeek Absolute Truth Diagnostic Report ===\n`;
     report += `Generated: ${new Date().toISOString()}\n`;
     report += `User Agent: ${navigator.userAgent}\n\n`;
     
@@ -1931,12 +1933,12 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v52-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 量子矩阵优化器 (v52)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v52)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
                 
-                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 量子矩阵沙盒 (即时预览)</button>
+                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 量子画布沙盒 (即时预览)</button>
                 <button id="ds-btn-one-click" class="ds-btn ds-btn-magic"><i class="fa-solid fa-wand-magic-sparkles"></i> 🌟 一键套用 DeepSeek 100% 缓存最佳设定</button>
 
                 <!-- 1. 核心开关 -->
@@ -1949,7 +1951,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动量子矩阵引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
+                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动绝对真理引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
                                     <span>(核心功能！让回复变秒回，大幅节省 Token 和 API 费用)</span>
                                 </div>
                             </label>
@@ -2524,7 +2526,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 量子矩阵优化器 v52 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v52 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
