@@ -12,8 +12,7 @@ function initSettings() {
         vectorQuarantine: true, prefixAnchor: true, semanticNorm: true, deduplication: true, warpFilter: true,
         entropyShield: true, timeSpacePatch: true, flashback: true, voidBridging: true, amnesia: true, retconMode: true,
         diaryMode: true, floatingAnchor: true, memoryImprint: true, nanoPatching: true, hotReload: true, summarySink: true, chronos: true,
-        logLevel: 3, // 0:關閉, 1:錯誤, 2:僅動作, 3:動作+表格, 4:極限除錯
-        chats: {} 
+        logLevel: 3, chats: {} 
     };
 
     if (!extension_settings.ds_cache_v13_ultimate) {
@@ -29,132 +28,104 @@ function safeSave() {
 }
 
 // ==========================================
-// 深度日誌系統 (Markdown LogManager)
+// 深度日誌系統 (Markdown Logger Engine)
 // ==========================================
-const LogManager = {
-    rawMarkdown: "",
-    currentSession: null,
-
-    startSession: function() {
-        this.currentSession = { actions: [], original: [], final: [] };
-    },
-    
-    addAction: function(action) {
-        if (this.currentSession) this.currentSession.actions.push(action);
-    },
-
-    addOriginal: function(msg, index) {
-        if (this.currentSession) this.currentSession.original.push({ msg, index });
-    },
-
-    addFinal: function(msg, newIndex) {
-        if (this.currentSession) this.currentSession.final.push({ msg, newIndex });
-    },
-
-    truncate: function(text) {
-        if (!text) return "";
-        const cleanText = text.replace(/\n/g, ' ').trim();
-        return cleanText.length > 30 ? cleanText.substring(0, 30) + '...' : cleanText;
-    },
-
-    flush: function() {
-        if (!this.currentSession || Settings.logLevel < 2) return;
-        
-        const time = new Date().toLocaleString(); // 瀏覽器時區
-        let md = `### 🕒 處理時間: ${time}\n\n`;
-
-        // 動作列表
-        if (this.currentSession.actions.length > 0) {
-            md += `**🛠️ 插件執行動作:**\n`;
-            this.currentSession.actions.forEach(a => md += `- ${a}\n`);
-            md += `\n`;
-        }
-
-        // 表格 (僅在 Level 3 以上顯示)
-        if (Settings.logLevel >= 3) {
-            md += `**📊 處理前原始陣列:**\n`;
-            md += `| 原排序 | 角色 | 分類 | 內容摘要 |\n|---|---|---|---|\n`;
-            this.currentSession.original.forEach(item => {
-                const cat = item.msg.name ? `System(${item.msg.name})` : item.msg.role;
-                md += `| ${item.index} | ${item.msg.role} | ${cat} | ${this.truncate(item.msg.content)} |\n`;
-            });
-            md += `\n`;
-
-            md += `**📈 處理後最終陣列:**\n`;
-            md += `| 新排序 | 原排序 | 分類 | 來源/生成 | 處理方式 | 使用協議 | 狀態 | 內容摘要 |\n|---|---|---|---|---|---|---|---|\n`;
-            this.currentSession.final.forEach(item => {
-                const m = item.msg._meta || { originalIndex: '-', category: '未知', source: '未知', action: '未知', protocol: '未知', status: '未知' };
-                md += `| ${item.newIndex} | ${m.originalIndex} | ${m.category} | ${m.source} | ${m.action} | ${m.protocol} | ${m.status} | ${this.truncate(item.msg.content)} |\n`;
-            });
-            md += `\n---\n\n`;
-        }
-
-        this.rawMarkdown += md;
-        this.renderToUI();
-    },
-
-    renderToUI: function() {
-        const container = document.getElementById('ds-cache-log-content');
-        if (!container) return;
-
-        // 輕量級 Markdown 轉 HTML 渲染器
-        let html = this.rawMarkdown;
-        html = html.replace(/^### (.*$)/gim, '<h3 style="color:#00e5ff; margin:15px 0 5px 0; font-size:13px;">$1</h3>');
-        html = html.replace(/^\*\* (.*$)/gim, '<b style="color:#e0e0e0; font-size:12px;">$1</b>');
-        html = html.replace(/\*\*(.*?)\*\*/g, '<b style="color:#e0e0e0; font-size:12px;">$1</b>');
-        html = html.replace(/^- (.*$)/gim, '<li style="margin-left:15px; color:#ccc; font-size:11px;">$1</li>');
-        html = html.replace(/^---/gim, '<hr style="border-color:rgba(255,255,255,0.1); margin:15px 0;">');
-
-        // 表格渲染
-        const tableRegex = /\|(.+)\|\n\|[-|]+\|\n(\|.+?\|\n)+/g;
-        html = html.replace(tableRegex, function(match) {
-            const rows = match.trim().split('\n');
-            let tableHtml = `<table style="width:100%; border-collapse:collapse; margin:8px 0; font-size:10px; text-align:left;">`;
-            rows.forEach((row, i) => {
-                if (row.includes('---')) return;
-                const cells = row.split('|').filter(c => c !== '');
-                tableHtml += `<tr>`;
-                cells.forEach(cell => {
-                    const style = i === 0 
-                        ? `border:1px solid #555; background:rgba(255,255,255,0.1); padding:4px; color:#00e5ff; font-weight:bold;` 
-                        : `border:1px solid #444; padding:4px; color:#ccc;`;
-                    tableHtml += `<td style="${style}">${cell.trim()}</td>`;
-                });
-                tableHtml += `</tr>`;
-            });
-            tableHtml += `</table>`;
-            return tableHtml;
-        });
-
-        container.innerHTML = html;
-        container.scrollTop = container.scrollHeight;
-    },
-
-    clear: function() { this.rawMarkdown = ""; this.renderToUI(); },
-    copy: function() { navigator.clipboard.writeText(this.rawMarkdown); },
-    export: function() {
-        const blob = new Blob([this.rawMarkdown], { type: 'text/markdown' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `DS_Cache_Log_${new Date().toISOString().slice(0,10)}.md`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }
-};
+const LogLevels = { OFF: 0, BASIC: 1, STANDARD: 2, DETAILED: 3, EXTREME: 4 };
+let rawMarkdownLogs = [];
 
 const Logger = {
+    _uiViewer: null,
+    
+    // 核心工具
     normalize: (text) => Settings.semanticNorm ? text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim() : text.trim(),
     hash: (text) => {
         let hash = 0, str = Logger.normalize(text);
         for (let i = 0; i < str.length; i++) hash = ((hash << 5) - hash) + str.charCodeAt(i);
         return hash.toString(16);
+    },
+    truncate: (text) => {
+        if (!text) return '';
+        const clean = text.replace(/\n/g, ' ');
+        return clean.length > 30 ? clean.substring(0, 30) + '...' : clean;
+    },
+    getTime: () => {
+        const now = new Date();
+        return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
+    },
+
+    // 寫入純文本/Markdown日誌
+    write: (markdownText, level = LogLevels.STANDARD) => {
+        if (Settings.logLevel < level) return;
+        const time = Logger.getTime();
+        const entry = `**[${time}]** ${markdownText}\n`;
+        rawMarkdownLogs.push(entry);
+        Logger.updateUI(entry);
+        
+        if (level === LogLevels.EXTREME) console.log(`[DS Cache EXTREME]`, markdownText);
+    },
+
+    // 渲染 Markdown 到 UI
+    updateUI: (newEntry) => {
+        if (!Logger._uiViewer) return;
+        
+        // 輕量級 Markdown 轉 HTML (處理粗體與表格)
+        let html = newEntry
+            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
+            .replace(/^- (.*)/gm, '<li>$1</li>');
+            
+        if (html.includes('|')) {
+            const lines = html.split('\n');
+            let tableHtml = '<table class="ds-log-table">';
+            let inTable = false;
+            for (let line of lines) {
+                if (line.trim().startsWith('|')) {
+                    if (!inTable) inTable = true;
+                    const cells = line.split('|').filter(c => c.trim() !== '');
+                    const isHeader = line.includes('---');
+                    if (isHeader) continue;
+                    
+                    tableHtml += '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
+                } else {
+                    if (inTable) { tableHtml += '</table>'; inTable = false; }
+                    tableHtml += line + '<br>';
+                }
+            }
+            if (inTable) tableHtml += '</table>';
+            html = tableHtml;
+        }
+
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        div.style.marginBottom = '8px';
+        div.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+        div.style.paddingBottom = '8px';
+        
+        Logger._uiViewer.appendChild(div);
+        Logger._uiViewer.scrollTop = Logger._uiViewer.scrollHeight;
+    },
+
+    clear: () => {
+        rawMarkdownLogs = [];
+        if (Logger._uiViewer) Logger._uiViewer.innerHTML = '';
+    },
+
+    copy: () => {
+        navigator.clipboard.writeText(rawMarkdownLogs.join('\n')).then(() => {
+            if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿");
+        });
+    },
+
+    export: () => {
+        const blob = new Blob([rawMarkdownLogs.join('\n')], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `DSCache_Log_${new Date().toISOString().replace(/[:.]/g, '-')}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
     }
 };
 
-// ==========================================
-// 核心工具與判定器
-// ==========================================
 function getChatKey() {
     const context = getContext();
     let chatId = context.chatId || "default_chat";
@@ -175,10 +146,15 @@ function getSimilarity(str1, str2) {
     const s2 = str1.length < str2.length ? str2 : str1;
     if (s1.length === 0) return 0;
     let matchCount = 0;
-    for (let i = 0; i < s1.length - 1; i++) if (s2.includes(s1.substring(i, i+2))) matchCount++;
+    for (let i = 0; i < s1.length - 1; i++) {
+        if (s2.includes(s1.substring(i, i+2))) matchCount++;
+    }
     return matchCount / (s1.length - 1);
 }
 
+// ==========================================
+// 🛡️ 核心防禦矩陣判定器 & 來源偵測器
+// ==========================================
 const Detectors = {
     isZeroEntropy: (text) => text.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '').length === 0,
     isEphemeral: (text) => {
@@ -187,10 +163,36 @@ const Detectors = {
         const isSum = ['summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k));
         return (Settings.vectorQuarantine && isRag) || (Settings.summarySink && isSum);
     },
-    isChronos: (text) => text.length <= 150 && ['later', 'next day', '第二天', '几个小时后', '一段时间后', 'meanwhile'].some(k => text.toLowerCase().includes(k)),
+    isChronos: (text) => {
+        if (text.length > 150) return false;
+        return ['later', 'next day', '第二天', '几个小时后', '一段时间后', 'meanwhile'].some(k => text.toLowerCase().includes(k));
+    },
     isDynamicPrompt: (text) => /\{\{.*?\}\}/.test(text) || text.includes('Current Time:') || text.includes('当前时间：'),
-    isDefaultPrompt: (msg) => msg.name && ['system', 'main', 'nsfw', 'jailbreak', 'persona', 'character'].some(k => msg.name.toLowerCase().includes(k)),
-    isLorebook: (msg) => msg.name && ['lorebook', 'world'].some(k => msg.name.toLowerCase().includes(k))
+    isDefaultPrompt: (msg) => {
+        if (!msg.name) return false;
+        const n = msg.name.toLowerCase();
+        return n.includes('system') || n.includes('main') || n.includes('nsfw') || n.includes('jailbreak') || n.includes('persona') || n.includes('character');
+    },
+    isLorebook: (msg) => {
+        if (!msg.name) return false;
+        const n = msg.name.toLowerCase();
+        return n.includes('lorebook') || n.includes('world');
+    },
+    
+    // 深度偵測來源與創造者
+    analyzeOrigin: (msg) => {
+        let source = 'ST預設', creator = 'ST核心', category = 'SYS';
+        if (msg.role === 'user') { source = '用戶輸入'; creator = '用戶'; category = 'USER'; }
+        else if (msg.role === 'assistant') { source = 'AI回覆'; creator = '大模型'; category = 'AI'; }
+        else if (msg.isDSPatch) { source = '本插件'; creator = 'DS Cache'; category = 'PATCH'; }
+        else if (msg.name) {
+            const n = msg.name.toLowerCase();
+            if (n.includes('lorebook') || n.includes('world')) { source = '世界書'; creator = '用戶/ST'; }
+            else if (n.includes('author')) { source = 'ST預設'; creator = '用戶'; }
+            else if (!Detectors.isDefaultPrompt(msg)) { source = '其他插件'; creator = msg.name; }
+        }
+        return { source, creator, category };
+    }
 };
 
 // ==========================================
@@ -200,58 +202,79 @@ async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun || !data?.chat?.length) return;
 
     try {
-        LogManager.startSession();
         const state = getChatState(getChatKey());
         const incomingStream = data.chat;
         
+        // 帳本系統初始化
+        let ledger = [];
+        let otherPluginActions = [];
+
+        // --- 階段 1：拆解 ST 傳入的原始陣列 ---
         let currentUserMsg = null;
         let prefills = [];
         let incomingPool = [];
 
-        // 記錄原始陣列並拆解
-        for (let i = 0; i < incomingStream.length; i++) {
-            LogManager.addOriginal(incomingStream[i], i);
-        }
-
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             const msg = incomingStream[i];
+            const origin = Detectors.analyzeOrigin(msg);
+            
+            // 偵測其他插件的動作 (要求4)
+            if (origin.source === '其他插件') {
+                otherPluginActions.push(`- 偵測到其他插件 (**${origin.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
+            }
+
             if (!currentUserMsg && msg.role === 'user') {
-                currentUserMsg = { ...msg, _meta: { originalIndex: i, category: 'User', source: '用戶輸入', action: '附加', protocol: '基礎', status: '未凍結' }};
+                currentUserMsg = msg;
+                ledger.push({ ref: msg, origIdx: i, ...origin, gen: '新增', action: '置底發送', proto: '-', status: '未凍結' });
             } else if (!currentUserMsg && msg.role === 'assistant') {
-                prefills.unshift({ ...msg, _meta: { originalIndex: i, category: 'Prefill', source: '預填充', action: '附加', protocol: '基礎', status: '未凍結' }});
+                prefills.unshift(msg);
+                ledger.push({ ref: msg, origIdx: i, ...origin, category: 'PREFILL', gen: '新增', action: '置底發送', proto: '-', status: '未凍結' });
             } else {
                 incomingPool.unshift({
-                    ...msg, norm: Logger.normalize(msg.content), hash: Logger.hash(msg.content), originalIndex: i,
-                    _meta: { originalIndex: i, category: msg.name ? 'System' : msg.role, source: 'ST傳入', action: '待處理', protocol: '-', status: '待定' }
+                    ...msg, norm: Logger.normalize(msg.content), hash: Logger.hash(msg.content), originalIndex: i, ...origin
                 });
             }
         }
 
         if (Settings.warpFilter) {
-            const beforeLen = incomingPool.length;
-            incomingPool = incomingPool.filter(msg => !Detectors.isZeroEntropy(msg.norm));
-            if (beforeLen > incomingPool.length) LogManager.addAction(`觸發曲率引擎過濾，剔除 ${beforeLen - incomingPool.length} 個零熵節點`);
+            incomingPool = incomingPool.filter(msg => {
+                if (Detectors.isZeroEntropy(msg.norm)) {
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '捨棄', action: '剔除', proto: '協議6', status: '-', content: msg.content });
+                    return false;
+                }
+                return true;
+            });
         }
 
+        // --- 階段 2：提取臨時態 ---
         let ephemeralZone = [];
         incomingPool = incomingPool.filter(msg => {
             if (Detectors.isEphemeral(msg.norm) || (Settings.floatingAnchor && msg.role === 'system' && msg.name === "Author's Note")) {
-                msg._meta.action = '隔離'; msg._meta.protocol = '隔離區/沉底錨點'; msg._meta.status = '未凍結';
                 ephemeralZone.push(msg);
-                LogManager.addAction(`將節點隔離至底部臨時態 (索引: ${msg.originalIndex})`);
+                ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '繼承', action: '隔離沉底', proto: '協議2/15/19', status: '未凍結' });
                 return false;
             }
             return true;
         });
 
+        // --- 階段 3：絕對秩序矩陣 (比對凍結池) ---
         const nextFrozenSequence = [];
         const seenHashes = new Set();
         let missingHistoryCount = 0;
+        let patches = [];
+
+        const createPatch = (content, proto) => {
+            const p = { role: 'system', content, isDSPatch: true };
+            patches.push(p);
+            ledger.push({ ref: p, origIdx: '-', source: '本插件', creator: 'DS Cache', category: 'PATCH', gen: '補丁', action: '追加凍結', proto: proto, status: '將凍結' });
+        };
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const frozenMsg = state.frozenSequence[i];
             nextFrozenSequence.push(frozenMsg); 
             seenHashes.add(frozenMsg.hash);
+            
+            const origin = Detectors.analyzeOrigin(frozenMsg);
 
             let bestMatchIdx = -1;
             let bestSim = 0;
@@ -262,121 +285,147 @@ async function interceptAndRestructurePrompt(data) {
             }
 
             if (bestSim === 1) {
-                incomingPool.splice(bestMatchIdx, 1);
+                const matched = incomingPool.splice(bestMatchIdx, 1)[0];
+                ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '繼承', action: '原位凍結', proto: '協議1', status: '已凍結' });
                 missingHistoryCount = 0;
             } 
             else if (Settings.entropyShield && bestSim > 0.99) {
-                incomingPool.splice(bestMatchIdx, 1);
-                patches.push({ role: 'system', content: `[系統微調] 之前的對話已修正微小細節。`, _meta: { originalIndex: '-', category: 'Patch', source: '插件生成', action: '生成補丁', protocol: '熵減護盾', status: '凍結' }});
-                LogManager.addAction(`觸發熵減護盾 (相似度: ${bestSim.toFixed(3)})`);
+                const matched = incomingPool.splice(bestMatchIdx, 1)[0];
+                ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '修改', action: '原位凍結', proto: '協議8', status: '已凍結' });
+                createPatch(`[系統微調] 之前的對話已修正微小細節。`, '協議8');
                 missingHistoryCount = 0;
             }
             else if (bestSim > 0.85 && frozenMsg.role === 'system') {
                 const matched = incomingPool.splice(bestMatchIdx, 1)[0];
+                ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '修改', action: '原位凍結', proto: '協議17/18', status: '已凍結' });
                 if (Settings.nanoPatching && matched.norm.length > frozenMsg.norm.length && (matched.norm.length - frozenMsg.norm.length) < 300) {
-                    patches.push({ role: 'system', content: `[設定微調補充] 新增細節：${matched.content.substring(0, 150)}...`, _meta: { originalIndex: matched.originalIndex, category: 'Patch', source: '插件生成', action: '生成補丁', protocol: '量子微創手術', status: '凍結' }});
-                    LogManager.addAction(`觸發量子微創手術`);
+                    createPatch(`[設定微調補充] 新增細節：${matched.content.substring(0, 150)}...`, '協議17');
                 } else if (Settings.hotReload) {
-                    patches.push({ role: 'system', content: `[設定熱更新] 最新特徵如下：\n${matched.content}`, _meta: { originalIndex: matched.originalIndex, category: 'Patch', source: '插件生成', action: '生成補丁', protocol: '提示詞熱更新', status: '凍結' }});
-                    LogManager.addAction(`觸發提示詞熱更新`);
+                    createPatch(`[設定熱更新] 最新特徵如下：\n${matched.content}`, '協議18');
                 }
                 missingHistoryCount = 0;
             }
             else if (Settings.timeSpacePatch && bestSim > 0.5) {
                 const matched = incomingPool.splice(bestMatchIdx, 1)[0];
-                patches.push({ role: 'system', content: `[時空修正] 之前的事件已發生改變，最新情況為：\n${matched.content}`, _meta: { originalIndex: matched.originalIndex, category: 'Patch', source: '插件生成', action: '生成補丁', protocol: '時空補丁', status: '凍結' }});
-                LogManager.addAction(`觸發時空補丁`);
+                ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '修改', action: '原位凍結', proto: '協議9', status: '已凍結' });
+                createPatch(`[時空修正] 之前的事件已發生改變，最新情況為：\n${matched.content}`, '協議9');
                 missingHistoryCount = 0;
             }
             else {
-                if (frozenMsg.role === 'system') {
-                    if (Settings.memoryImprint) LogManager.addAction(`觸發永久記憶烙印，保留已消失的系統提示詞`);
-                } else {
+                ledger.push({ ref: frozenMsg, origIdx: '-', ...origin, gen: '消失', action: '強制保留', proto: '協議3/16', status: '已凍結' });
+                if (frozenMsg.role !== 'system') {
                     missingHistoryCount++;
-                    if (Settings.prefixAnchor && i === 0) {
-                        LogManager.addAction(`觸發絕對前綴錨點，保留頭部記憶`);
-                    } else if (Settings.amnesia && missingHistoryCount > 5) {
-                        if (missingHistoryCount === 6) patches.push({ role: 'system', content: `[系統提示] 早期的記憶已歸檔，請根據當前上下文繼續。`, _meta: { originalIndex: '-', category: 'Patch', source: '插件生成', action: '生成補丁', protocol: '失憶症協議', status: '凍結' }});
+                    if (Settings.amnesia && missingHistoryCount > 5) {
+                        if (missingHistoryCount === 6) createPatch(`[系統提示] 早期的記憶已歸檔，請根據當前上下文繼續。`, '協議12');
                     } else if (Settings.retconMode && missingHistoryCount <= 3) {
-                        patches.push({ role: 'system', content: `[世界意志] 之前的某個事件已被抹除，請當作從未發生過。`, _meta: { originalIndex: '-', category: 'Patch', source: '插件生成', action: '生成補丁', protocol: '吃書協議', status: '凍結' }});
-                        LogManager.addAction(`觸發吃書協議`);
+                        createPatch(`[世界意志] 之前的某個事件已被抹除，請當作從未發生過。`, '協議13');
                     } else if (Settings.voidBridging) {
-                        patches.push({ role: 'system', content: `[上下文微小跳躍]`, _meta: { originalIndex: '-', category: 'Patch', source: '插件生成', action: '生成補丁', protocol: '虛空架橋協議', status: '凍結' }});
+                        createPatch(`[上下文微小跳躍]`, '協議11');
                     }
                 }
             }
         }
 
-        let newDefaultPrompts = [], newLorebooks = [], newOtherPrompts = [], newHistory = [], dynamicPrompts = [], patches = [];
+        // --- 階段 4：精準分類新生代數據 ---
+        let newDefaultPrompts = [], newLorebooks = [], newOtherPrompts = [], newHistory = [], dynamicPrompts = [];
 
         for (const msg of incomingPool) {
             if (Settings.deduplication && seenHashes.has(msg.hash)) {
-                LogManager.addAction(`觸發絕對去重協議，捨棄重複節點 (索引: ${msg.originalIndex})`);
+                ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '重複', action: '抹除', proto: '協議5', status: '-' });
                 continue;
             }
 
             if (msg.role === 'system') {
                 if (Settings.diaryMode && Detectors.isDynamicPrompt(msg.content)) {
-                    dynamicPrompts.push({ role: 'system', content: `[狀態更新] ${msg.content}`, _meta: { originalIndex: msg.originalIndex, category: 'System', source: '動態轉換', action: '追加', protocol: '寫日記模式', status: '凍結' }});
-                    LogManager.addAction(`觸發寫日記模式`);
+                    const p = { role: 'system', content: `[狀態更新] ${msg.content}`, isDSPatch: true };
+                    dynamicPrompts.push(p);
+                    ledger.push({ ref: p, origIdx: msg.originalIndex, source: '本插件', creator: 'DS Cache', category: 'SYS', gen: '轉換', action: '追加凍結', proto: '協議14', status: '將凍結' });
                 } else if (Detectors.isLorebook(msg)) {
-                    msg._meta.action = '追加'; msg._meta.protocol = '排序引擎'; msg._meta.status = '凍結';
                     newLorebooks.push(msg);
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '-', status: '將凍結' });
                 } else if (Detectors.isDefaultPrompt(msg)) {
-                    msg._meta.action = '追加'; msg._meta.protocol = '排序引擎'; msg._meta.status = '凍結';
                     newDefaultPrompts.push(msg);
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '-', status: '將凍結' });
                 } else {
-                    msg._meta.action = '追加'; msg._meta.protocol = '排序引擎'; msg._meta.status = '凍結';
                     newOtherPrompts.push(msg);
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '-', status: '將凍結' });
                 }
             } 
             else {
                 if (Settings.chronos && Detectors.isChronos(msg.norm)) {
-                    patches.push({ role: 'system', content: `[敘事過渡] ${msg.content}`, _meta: { originalIndex: msg.originalIndex, category: 'Patch', source: '旁白轉換', action: '生成補丁', protocol: '克羅諾斯協議', status: '凍結' }});
-                    LogManager.addAction(`觸發克羅諾斯協議`);
+                    createPatch(`[敘事過渡] ${msg.content}`, '協議20');
                 }
                 else if (Settings.flashback && msg.originalIndex < incomingStream.length - 3) {
-                    patches.push({ role: 'system', content: `[閃回補充] 在之前的事件中，還發生了以下細節：\n${msg.role}: ${msg.content}`, _meta: { originalIndex: msg.originalIndex, category: 'Patch', source: '插隊轉換', action: '生成補丁', protocol: '閃回插入協議', status: '凍結' }});
-                    LogManager.addAction(`觸發閃回插入協議`);
+                    createPatch(`[閃回補充] 在之前的事件中，還發生了以下細節：\n${msg.role}: ${msg.content}`, '協議10');
                 }
                 else {
-                    msg._meta.action = '追加'; msg._meta.protocol = '排序引擎'; msg._meta.status = '凍結';
                     newHistory.push(msg);
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '-', status: '將凍結' });
                 }
             }
         }
 
+        // --- 階段 5：雙軌排序引擎 ---
         let rawNewItems = [];
         if (state.frozenSequence.length === 0) {
             rawNewItems = [...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...newHistory, ...dynamicPrompts, ...patches];
-            LogManager.addAction(`執行 對話1 初始排序邏輯`);
         } else {
             rawNewItems = [...newHistory, ...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...dynamicPrompts, ...patches];
-            LogManager.addAction(`執行 對話2+ 追加排序邏輯 (AI回覆優先凍結)`);
         }
 
         const newItemsToFreeze = rawNewItems.map(item => ({
-            role: item.role, content: item.content, norm: Logger.normalize(item.content), hash: Logger.hash(item.content),
-            _meta: item._meta || { originalIndex: '-', category: '未知', source: '未知', action: '凍結', protocol: '排序引擎', status: '凍結' }
+            role: item.role, content: item.content, norm: Logger.normalize(item.content), hash: Logger.hash(item.content)
         }));
 
         state.frozenSequence = [...nextFrozenSequence, ...newItemsToFreeze];
         safeSave();
 
         const finalStream = [...state.frozenSequence];
-        ephemeralZone.forEach(m => finalStream.push(m));
+        ephemeralZone.forEach(m => finalStream.push({ role: m.role, content: m.content }));
         if (currentUserMsg) finalStream.push(currentUserMsg);
         prefills.forEach(p => finalStream.push(p));
 
-        // 記錄最終陣列並發送
-        finalStream.forEach((msg, idx) => LogManager.addFinal(msg, idx));
+        // 寫入最終索引到帳本
+        ledger.forEach(entry => {
+            if (entry.action === '剔除' || entry.action === '抹除') {
+                entry.finalIdx = '-';
+            } else {
+                const idx = finalStream.findIndex(m => m.content === entry.ref.content);
+                entry.finalIdx = idx !== -1 ? idx : '-';
+            }
+        });
+
         data.chat.splice(0, data.chat.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
         
-        LogManager.addAction(`✅ 絕對時序重構完成。凍結池: ${state.frozenSequence.length} | 臨時區: ${ephemeralZone.length}`);
-        LogManager.flush();
+        // --- 階段 6：生成 Markdown 日誌 ---
+        if (Settings.logLevel >= LogLevels.DETAILED) {
+            let mdLog = `### 🛡️ 絕對防禦矩陣處理報告\n\n`;
+            if (otherPluginActions.length > 0) {
+                mdLog += `**🔌 其他插件動態：**\n${otherPluginActions.join('\n')}\n\n`;
+            }
+            
+            mdLog += `| 原序 | 新序 | 分類 | 來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 內容摘要 |\n`;
+            mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
+            
+            // 按照最終順序排序帳本輸出，被剔除的放最後
+            ledger.sort((a, b) => {
+                if (a.finalIdx === '-' && b.finalIdx === '-') return 0;
+                if (a.finalIdx === '-') return 1;
+                if (b.finalIdx === '-') return -1;
+                return a.finalIdx - b.finalIdx;
+            });
+
+            ledger.forEach(l => {
+                mdLog += `| ${l.origIdx} | ${l.finalIdx} | ${l.category} | ${l.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.proto} | ${l.status} | ${Logger.truncate(l.ref.content || l.content)} |\n`;
+            });
+
+            Logger.write(mdLog, LogLevels.DETAILED);
+        } else if (Settings.logLevel >= LogLevels.STANDARD) {
+            Logger.write(`✅ 處理完成。凍結池: ${state.frozenSequence.length} | 臨時區: ${ephemeralZone.length} | 補丁生成: ${patches.length}`, LogLevels.STANDARD);
+        }
 
     } catch (err) {
-        if (Settings.logLevel >= 1) console.error('[DS Cache] 攔截器發生錯誤', err);
+        Logger.error('攔截器發生錯誤', err);
     }
 }
 
@@ -438,10 +487,22 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
+    // 注入 Markdown 表格的 CSS
+    if (!$('#ds-log-style').length) {
+        $('head').append(`
+            <style id="ds-log-style">
+                .ds-log-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; color: #ccc; }
+                .ds-log-table th, .ds-log-table td { border: 1px solid rgba(255,255,255,0.1); padding: 4px 6px; text-align: left; word-break: break-all; }
+                .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+                .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.1); }
+            </style>
+        `);
+    }
+
     const html = `
     <div class="inline-drawer" id="ds-v13-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v13.0 終極日誌版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v13.0 旗艦版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -478,38 +539,37 @@ async function setupUI() {
                 createToggle('chronos', '20. 克羅諾斯協議 (Chronos Protocol)', '將簡短的時間跳躍旁白轉化為底部的敘事過渡補丁，不打斷歷史快取。', Settings.chronos)
             )}
 
-            ${createCategory('system', '⚙️', '系統與日誌管理', `
-                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 5px;">📂 存檔凍結池管理：</b>
-                <div id="ds-chat-list-container" style="max-height: 150px; overflow-y: auto; margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 5px; background: rgba(0,0,0,0.2);"></div>
-                <button id="ds-cache-factory-reset" class="menu_button" style="width: 100%; margin-bottom: 15px; background: #8b0000; color: white; border-radius: 6px; padding: 8px;">⚠️ 廠級清空所有凍結池 (還原 ST 默認)</button>
-                
-                <hr style="border-color:rgba(255,255,255,0.1); margin:15px 0;">
-                
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                    <b style="font-size: 14px; color: #fff;">📝 Markdown 深度日誌</b>
-                    <select id="ds-opt-logLevel" class="text_pole" style="width: 120px; padding: 4px; font-size: 12px;">
+            ${createCategory('system', '⚙️', '系統與全景日誌管理', `
+                <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+                    <span style="font-size: 14px; font-weight: bold; color: #e0e0e0;">日誌輸出等級</span>
+                    <select id="ds-opt-logLevel" class="text_pole" style="width: 120px; padding: 4px;">
                         <option value="0" ${Settings.logLevel===0?'selected':''}>0: 關閉</option>
-                        <option value="1" ${Settings.logLevel===1?'selected':''}>1: 僅錯誤</option>
-                        <option value="2" ${Settings.logLevel===2?'selected':''}>2: 僅動作</option>
-                        <option value="3" ${Settings.logLevel===3?'selected':''}>3: 動作+表格</option>
+                        <option value="1" ${Settings.logLevel===1?'selected':''}>1: 基礎警告</option>
+                        <option value="2" ${Settings.logLevel===2?'selected':''}>2: 標準摘要</option>
+                        <option value="3" ${Settings.logLevel===3?'selected':''}>3: 全景 Markdown 表格</option>
                         <option value="4" ${Settings.logLevel===4?'selected':''}>4: 極限除錯</option>
                     </select>
                 </div>
                 
-                <div style="display: flex; gap: 8px; margin-bottom: 10px;">
-                    <button id="ds-log-copy" class="menu_button" style="flex: 1; padding: 6px; font-size: 12px;">📋 複製</button>
-                    <button id="ds-log-export" class="menu_button" style="flex: 1; padding: 6px; font-size: 12px;">💾 導出 .md</button>
-                    <button id="ds-log-clear" class="menu_button" style="flex: 1; padding: 6px; font-size: 12px; background: #552222;">🗑️ 清空</button>
-                </div>
+                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 5px;">📂 存檔凍結池管理：</b>
+                <div id="ds-chat-list-container" style="max-height: 120px; overflow-y: auto; margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 5px; background: rgba(0,0,0,0.2);"></div>
+                <button id="ds-cache-factory-reset" class="menu_button" style="width: 100%; margin-bottom: 15px; background: #8b0000; color: white; border-radius: 6px; padding: 8px;">⚠️ 廠級清空所有凍結池 (還原 ST 默認)</button>
                 
-                <div id="ds-cache-log-content" style="width: 100%; height: 300px; overflow-y: auto; background: #0d0d0d; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1); font-family: Consolas, monospace;">
-                    <div style="color: #666; font-size: 12px; text-align: center; margin-top: 130px;">等待生成日誌...</div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <b style="font-size: 13px; color: #aaa;">📝 全景 Markdown 日誌：</b>
+                    <div>
+                        <button id="ds-log-copy" class="menu_button" style="padding: 2px 8px; font-size: 11px; margin: 0 2px;">📋 複製</button>
+                        <button id="ds-log-export" class="menu_button" style="padding: 2px 8px; font-size: 11px; margin: 0 2px;">💾 導出 .md</button>
+                        <button id="ds-log-clear" class="menu_button" style="padding: 2px 8px; font-size: 11px; margin: 0 2px;">🗑️ 清空</button>
+                    </div>
                 </div>
+                <div id="ds-cache-log-viewer" style="width: 100%; height: 300px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1);"></div>
             `)}
         </div>
     </div>`;
     
     $('#extensions_settings').append(html);
+    Logger._uiViewer = document.getElementById('ds-cache-log-viewer');
 
     $('.ds-category-header').on('click', function() {
         const targetId = $(this).data('target');
@@ -534,11 +594,11 @@ async function setupUI() {
     });
 
     $('#ds-opt-logLevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
-    $('#ds-cache-factory-reset').on('click', () => { if (confirm("確定要清除所有存檔的快取連續性嗎？")) { Settings.chats = {}; safeSave(); renderChatsUI(); }});
+    $('#ds-cache-factory-reset').on('click', () => { if (confirm("這將摧毀所有存檔的快取連續性！確定要清除嗎？")) { Settings.chats = {}; safeSave(); renderChatsUI(); } });
     
-    $('#ds-log-copy').on('click', () => { LogManager.copy(); alert("日誌已複製到剪貼簿！"); });
-    $('#ds-log-export').on('click', () => LogManager.export());
-    $('#ds-log-clear').on('click', () => LogManager.clear());
+    $('#ds-log-copy').on('click', Logger.copy);
+    $('#ds-log-export').on('click', Logger.export);
+    $('#ds-log-clear').on('click', Logger.clear);
     
     renderChatsUI();
 }
@@ -555,7 +615,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        console.log('[DS Cache] ══════ 🛡️ V13 終極日誌旗艦版 就緒 ══════');
+        Logger.write('══════ 🛡️ V13 終極日誌旗艦版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
