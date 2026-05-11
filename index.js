@@ -303,32 +303,35 @@ function getTolerance() {
 }
 
 // ==========================================
-// 統一彈窗防騷擾系統 (Unified Notification Center)
+// 2.5 量子彈窗聚合器 (Quantum Toast Aggregator)
 // ==========================================
-const NotificationCenter = {
-    queue: [],
+const QuantumToastAggregator = {
+    queue: new Map(),
     timeout: null,
     add: function(key, msg, type = 'info', icon = '💡') {
         if (!Settings.enabled || !Settings.toastHistory || Settings.zenMode) return;
-        if (!this.queue.find(q => q.key === key)) {
-            this.queue.push({key, msg, type, icon});
-        }
+        this.queue.set(key, { msg, type, icon });
         if (this.timeout) clearTimeout(this.timeout);
-        this.timeout = setTimeout(() => this.flush(), 150); // 延遲合併彈窗
+        this.timeout = setTimeout(() => this.flush(), 500); // 500ms 內收集所有觸發的協議
     },
     flush: function() {
-        if (this.queue.length === 0) return;
-        if (typeof toastr !== 'undefined') {
-            if (this.queue.length === 1) {
-                const q = this.queue[0];
-                const toastrType = q.type === 'error' ? 'error' : (q.type === 'warning' ? 'warning' : 'success');
-                toastrtoastrType [<sup>1</sup>](`${q.icon} ${q.msg}`, '绝对真理协议');
-            } else {
-                const msgs = this.queue.map(q => `<div style="margin-bottom:4px;">${q.icon} ${q.msg}</div>`).join('');
-                toastr.success(`<div style="font-size:12px; line-height:1.5;">${msgs}</div>`, '🛡️ 绝对真理多重协议触发');
-            }
+        if (this.queue.size === 0 || typeof toastr === 'undefined') return;
+        
+        if (this.queue.size === 1) {
+            const item = Array.from(this.queue.values())[0];
+            if (item.type === 'success') toastr.success(`${item.icon} ${item.msg}`, '绝对真理协议');
+            else if (item.type === 'warning') toastr.warning(`${item.icon} ${item.msg}`, '绝对真理协议');
+            else toastr.info(`${item.icon} ${item.msg}`, '绝对真理协议');
+        } else {
+            // 合併多個提示
+            let combinedMsg = `<div style="font-size:12px; margin-bottom:4px;">本次拦截触发了多项协议：</div><ul style="margin:0; padding-left:20px; font-size:11px;">`;
+            this.queue.forEach(item => {
+                combinedMsg += `<li>${item.icon} ${item.msg}</li>`;
+            });
+            combinedMsg += `</ul>`;
+            toastr.success(combinedMsg, '🛡️ 绝对真理多重防御');
         }
-        this.queue = [];
+        this.queue.clear();
     }
 };
 
@@ -446,19 +449,6 @@ function processLogQueue() {
     if (Settings.autoScrollLog && !isLogPaused) container.scrollTop = container.scrollHeight;
     
     isLogRendering = false;
-}
-
-function applyLogFilters() {
-    const activeFilter = $('.ds-log-filter.active').data('filter') || 'all';
-    const searchTerm = ($('#ds-log-search').val() || '').toLowerCase();
-    $('#ds-cache-log-container .ds-log-line').each(function() {
-        const type = $(this).attr('data-type');
-        const text = $(this).text().toLowerCase();
-        const typeMatch = (activeFilter === 'all' || type === activeFilter || type === 'divider');
-        const searchMatch = (searchTerm === '' || text.includes(searchTerm));
-        if (typeMatch && searchMatch) $(this).removeClass('hide');
-        else $(this).addClass('hide');
-    });
 }
 
 function logAt(level, type, msg) {
@@ -750,34 +740,6 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
 }
 
 // ==========================================
-// 6. 彈窗與用戶互動
-// ==========================================
-function askUserForResetAsync(dropPercentStr, mapInfoText, causeText) {
-    return new Promise((resolve) => {
-        const html = `
-            <div class="ds-overlay" id="ds-reset-modal">
-                <div class="ds-modal" onclick="event.stopPropagation();">
-                    <h2 class="ds-modal-title"><i class="fa-solid fa-triangle-exclamation" style="color:var(--ds-red);"></i> 警告：缓存断层检测</h2>
-                    <p style="color:#abb2bf; font-size:14px; line-height:1.6;">系统检测到您 <b>${causeText}</b>，这将导致后续 <b>${dropPercentStr}%</b> 的缓存失效并重新计算。</p>
-                    <div style="background:rgba(0,0,0,0.3); padding:15px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); margin:15px 0; font-family:monospace; font-size:12px; color:#abb2bf; max-height:200px; overflow-y:auto;">
-                        ${mapInfoText}
-                    </div>
-                    <div class="ds-btn-col">
-                        <button class="ds-btn ds-btn-accept" id="ds-btn-accept"><i class="fa-solid fa-check"></i> 接受修改 (重算断层后的内容)</button>
-                        <button class="ds-btn ds-btn-revert" id="ds-btn-revert"><i class="fa-solid fa-clock-rotate-left"></i> 撤销修改 (无视本次更改，强行使用旧版缓存)</button>
-                        <button class="ds-btn ds-btn-abort" id="ds-btn-abort"><i class="fa-solid fa-ban"></i> 拦截发送 (让我再改改)</button>
-                    </div>
-                </div>
-            </div>
-        `;
-        $('body').append(html);
-        $('#ds-btn-accept').on('click', () => { $('#ds-reset-modal').remove(); resolve('accept'); });
-        $('#ds-btn-revert').on('click', () => { $('#ds-reset-modal').remove(); resolve('revert'); });
-        $('#ds-btn-abort').on('click', () => { $('#ds-reset-modal').remove(); resolve('abort'); });
-    });
-}
-
-// ==========================================
 // 7. 🧊 絕對真理追加架構 (Append-Only Interceptor)
 // ==========================================
 async function interceptAndRestructurePrompt(data, isDryRun = false) {
@@ -807,12 +769,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const timeSkipRegex = /(later|next day|第二天|几个小时后|一段时间后|meanwhile|之后|随后|时光飞逝|转眼间|the next morning)/i;
         const vectorRegex = /(retrieved context|search results|vector database|相关记忆|检索到的内容|记忆库片段|data bank)/i;
 
+        // 1. 拆解 ST 原始陣列
         for (const msg of stream) {
             if (!msg.content) continue;
             if (Settings.warpDriveFilter && msg.content.replace(/[\s\*\.\-]/g, '').length === 0) {
                 if (!isDryRun) {
                     Logger.trace(`[🌌 曲率引擎] 过滤了零熵空白节点。`);
-                    NotificationCenter.add('warp', '曲率引擎：已过滤空白消息', 'info', '🌌');
+                    QuantumToastAggregator.add('warp', '曲率引擎：已过滤空白消息', 'info', '🌌');
                 }
                 continue;
             }
@@ -838,6 +801,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             }
         }
 
+        // 2. 提取當前回合與歷史回合
         let lastUserIdx = -1;
         for (let i = chatMsgs.length - 1; i >= 0; i--) { if (chatMsgs[i].tag === 'USER') { lastUserIdx = i; break; } }
 
@@ -867,6 +831,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             if(t.assistant) incomingHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
         }
 
+        // 3. 平行宇宙協議 (分支切換)
         if (Settings.multiverseProtocol && state.multiverse && state.multiverse.length > 0) {
             let bestUniverse = state.frozenSequence;
             let bestMatchCount = -1;
@@ -884,7 +849,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             if (bestUniverse !== state.frozenSequence) {
                 if (!isDryRun) {
                     Logger.map(`[🌌 平行宇宙跳跃] 检测到分支切换！已跳跃至匹配度最高的宇宙。`);
-                    NotificationCenter.add('multiverse', '平行宇宙：已跳跃至最佳历史分支', 'success', '🌌');
+                    QuantumToastAggregator.add('multiverse', '平行宇宙：已跳跃至最佳历史分支', 'success', '🌌');
                 }
                 state.frozenSequence = bestUniverse;
             }
@@ -898,7 +863,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const handledIncomingHis = new Set();
         let lastHandledIncomingHisIdx = -1;
 
-        // 階段 1：遍歷凍結的過去
+        // 4. 核心比對：遍歷凍結的過去 (嚴格保證過去不可變)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             const frozenItem = state.frozenSequence[i];
 
@@ -916,7 +881,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     handledIncomingSys.add(bestIdx);
                     if (bestScore < 1 && !isDryRun) {
                         Logger.debug(`[🧹 模糊语义] 无视排版差异，保持冻结: ${truncateLog(frozenItem.content)}`);
-                        NotificationCenter.add('fuzzy', '模糊语义：已无视排版差异', 'success', '🧹');
+                        QuantumToastAggregator.add('fuzzy', '模糊语义：已无视排版差异', 'success', '🧹');
                     }
                 } else if (bestScore > thresholds.sys) {
                     const incomingItem = incomingSysPool[bestIdx];
@@ -933,7 +898,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                             newAdditions.patches.push(patch);
                             if (!isDryRun) {
                                 Logger.debug(`[🔬 量子微创] 生成设定差异补丁。`);
-                                NotificationCenter.add('nano', '量子微创：已生成设定差异补丁', 'success', '🔬');
+                                QuantumToastAggregator.add('nano', '量子微创：已生成设定差异补丁', 'success', '🔬');
                             }
                         }
                     } else if (Settings.hotReloadPersona && i === 0) {
@@ -943,7 +908,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
                             Logger.debug(`[🔥 设定热更新] 生成热更新补丁。`);
-                            NotificationCenter.add('hotreload', '设定热更新：已生成更新补丁', 'success', '🔥');
+                            QuantumToastAggregator.add('hotreload', '设定热更新：已生成更新补丁', 'success', '🔥');
                         }
                     } else {
                         if (Settings.dynamicMode === 1) {
@@ -958,19 +923,11 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         }
                     }
                 } else {
-                    // 虛空架橋 (Void Bridging) 與 永久記憶烙印
-                    if (Settings.voidBridging || Settings.permanentMemoryImprint) {
+                    // 即使 ST 刪除了它，只要它在凍結序列中，我們就強制保留 (100% 緩存的核心)
+                    if (Settings.permanentMemoryImprint || Settings.amnesiaProtocol) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
-                        if (!isDryRun) Logger.debug(`[🌉 虚空架桥] 强制保留被删除的设定: ${truncateLog(frozenItem.content)}`);
-                        
-                        if (Settings.retconProtocol) {
-                            const patch = createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的设定 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS');
-                            patch._omniCat = 'retcon';
-                            patch._sourceHash = frozenItem.hash;
-                            newAdditions.patches.push(patch);
-                            if (!isDryRun) NotificationCenter.add('retcon', '吃书协议：已生成记忆抹除声明', 'success', '🗑️');
-                        }
+                        if (!isDryRun) Logger.debug(`[🖨️ 永久记忆] 强制保留被删除的设定/记忆: ${truncateLog(frozenItem.content)}`);
                     }
                 }
             } 
@@ -993,7 +950,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     handledIncomingHis.add(bestIdx);
                     lastHandledIncomingHisIdx = Math.max(lastHandledIncomingHisIdx, bestIdx);
 
-                    if (Settings.entropyShield && bestScore > 0.99) {
+                    if (Settings.entropyShield && bestScore > 0.98) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(frozenItem.content, 15)}" 已修正为 "${truncateLog(incomingItem.content, 15)}"]`}, 'SYS');
@@ -1002,7 +959,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
                             Logger.debug(`[🛡️ 熵减护盾] 生成错字修正补丁。`);
-                            NotificationCenter.add('entropy', '熵减护盾：已生成错字修正补丁', 'success', '🛡️');
+                            QuantumToastAggregator.add('entropy', '熵减护盾：已生成错字修正补丁', 'success', '🛡️');
                         }
                     } else if (Settings.historyEditMode === 1) {
                         frozenItem._omniCat = 'frozen';
@@ -1013,7 +970,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
                             Logger.debug(`[🛡️ 时空补丁] 生成历史修改补丁。`);
-                            NotificationCenter.add('patch', '时空补丁：已生成历史修改补丁', 'success', '⏳');
+                            QuantumToastAggregator.add('patch', '时空补丁：已生成历史修改补丁', 'success', '⏳');
                         }
                     } else if (Settings.historyEditMode === 2) {
                         frozenItem._omniCat = 'frozen';
@@ -1030,27 +987,28 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newFrozenSequence.push(frozenItem); 
                         if (!isDryRun) {
                             Logger.warn(`[⚓ 绝对前缀锚点] 强制保留被截断的头部。`);
-                            NotificationCenter.add('prefix', '前缀锚点：已强制保留被截断的头部', 'warning', '⚓');
+                            QuantumToastAggregator.add('prefix', '前缀锚点：已强制保留被截断的头部', 'warning', '⚓');
                         }
-                    } else if (Settings.voidBridging) {
+                    } else if (Settings.retconProtocol) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
-                        if (Settings.retconProtocol) {
-                            const patch = createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS');
-                            patch._omniCat = 'retcon';
-                            patch._sourceHash = frozenItem.hash;
-                            newAdditions.patches.push(patch);
-                            if (!isDryRun) {
-                                Logger.debug(`[🗑️ 吃书协议] 生成记忆抹除声明。`);
-                                NotificationCenter.add('retcon', '吃书协议：已生成记忆抹除声明', 'success', '🗑️');
-                            }
+                        const patch = createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS');
+                        patch._omniCat = 'retcon';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🗑️ 吃书协议] 生成记忆抹除声明。`);
+                            QuantumToastAggregator.add('retcon', '吃书协议：已生成记忆抹除声明', 'success', '🗑️');
                         }
+                    } else if (Settings.amnesiaProtocol) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
                     }
                 }
             }
         }
 
-        // 階段 2：處理未匹配的全新內容
+        // 5. 處理未匹配的全新內容 (New Stuff)
         for (let j = 0; j < incomingHistoryPool.length; j++) {
             if (!handledIncomingHis.has(j)) {
                 const h = incomingHistoryPool[j];
@@ -1060,7 +1018,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     newAdditions.patches.push(patch);
                     if (!isDryRun) {
                         Logger.debug(`[⏪ 闪回插入] 将新插入的对话转为闪回补丁。`);
-                        NotificationCenter.add('flashback', '闪回插入：已生成闪回补丁', 'success', '⏪');
+                        QuantumToastAggregator.add('flashback', '闪回插入：已生成闪回补丁', 'success', '⏪');
                     }
                 } else {
                     h._omniCat = 'history';
@@ -1076,11 +1034,11 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     const patch = createMsg({role: 'system', content: `[系统提示：叙事过渡。${sys.content}]`}, 'SYS');
                     patch._omniCat = 'patch';
                     newAdditions.patches.push(patch);
-                    if (!isDryRun) NotificationCenter.add('chronos', '克罗诺斯协议：已生成时间跳跃补丁', 'info', '⏳');
+                    if (!isDryRun) QuantumToastAggregator.add('chronos', '克罗诺斯协议：已生成时间跳跃补丁', 'info', '⏳');
                 } else if (sys.isVector) {
                     sys._omniCat = 'dynamic';
                     newAdditions.dynamic.push(sys);
-                    if (!isDryRun) NotificationCenter.add('vector', '向量隔离区：已将检索记忆沉底', 'info', '🎯');
+                    if (!isDryRun) QuantumToastAggregator.add('vector', '向量隔离区：已将检索记忆沉底', 'info', '🎯');
                 } else if (sys.isSummary) {
                     sys._omniCat = 'dynamic';
                     newAdditions.dynamic.push(sys);
@@ -1096,19 +1054,34 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             }
         }
 
-        // 階段 3：嚴格按照 Append-Only 順序組裝 (完美符合要求)
-        for (let sys of newAdditions.sys) newFrozenSequence.push(sys);
-        for (let lb of newAdditions.lorebooks) newFrozenSequence.push(lb);
-        for (let h of newAdditions.history) newFrozenSequence.push(h); // 新歷史
-        for (let dyn of newAdditions.dynamic) newFrozenSequence.push(dyn);
-        for (let patch of newAdditions.patches) newFrozenSequence.push(patch);
+        // 6. 嚴格按照 Append-Only 順序組裝 (The Holy Grail Order)
+        let assembledSequence = [];
+        
+        // 6.1 徹底凍結的過去
+        assembledSequence.push(...newFrozenSequence);
+        
+        // 6.2 全新預設提示詞
+        assembledSequence.push(...newAdditions.sys);
+        
+        // 6.3 全新世界書
+        assembledSequence.push(...newAdditions.lorebooks);
+        
+        // 6.4 全新其他提示詞 (歷史)
+        assembledSequence.push(...newAdditions.history);
+        
+        // 6.5 動態提示詞 (寫日記模式追加)
+        if (Settings.dynamicMode === 1) {
+            assembledSequence.push(...newAdditions.dynamic);
+        }
+        
+        // 6.6 插件修復功能提示詞 (補丁)
+        assembledSequence.push(...newAdditions.patches);
 
-        // 階段 4：分類去重隔離 (絕對不碰動態變數與補丁)
+        // 7. 絕對去重協議 (只針對 SYS 和 Lorebook，防止 ST 重複發送導致無限膨脹)
         let dedupedSequence = [];
         const seenSysNorms = new Set();
-        for (const item of newFrozenSequence) {
+        for (const item of assembledSequence) {
             if (item.tag === 'SYS' && Settings.absoluteDeduplication) {
-                // 豁免動態變數，確保日記模式正常運作
                 if (item._omniCat === 'sys' || item._omniCat === 'lorebook' || item._omniCat === 'frozen') {
                     if (seenSysNorms.has(item.hash)) continue;
                     seenSysNorms.add(item.hash);
@@ -1117,6 +1090,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             dedupedSequence.push(item);
         }
 
+        // 8. 加上當前用戶輸入與預填充
         const proposedStream = [...dedupedSequence];
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
@@ -1125,8 +1099,11 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             Logger.debug(`[最终追加发送阵列] 总节点数: ${proposedStream.length}`);
         }
 
+        // 觸發彈窗聚合器
+        if (!isDryRun) QuantumToastAggregator.flush();
+
         // ==========================================
-        // 5. 精準流失率演算法
+        // 9. 精準流失率演算法與攔截判定
         // ==========================================
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
@@ -1285,7 +1262,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 }
             }
 
-            // 影同步協議 (Phantom Sync)：修改發送給 API 的陣列，但不影響 ST 前端
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
             Logger.log(`✅ 追加排序完成，拦截器授权发送。耗时: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
         }
@@ -1295,9 +1271,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         setTopBarStatus('#e06c75', '缓存: 发生崩溃');
         Logger.error('核心运算崩溃', err);
         throw err;
-    } finally {
-        // 確保所有收集到的彈窗在最後統一發出
-        NotificationCenter.flush();
     }
 }
 
@@ -1319,6 +1292,7 @@ async function showOmniVisionUI() {
         return;
     }
 
+    // 徹底凍結左側陣列
     omniLeftArrayFrozen = fastClone(state.lastSentSequence || []);
 
     const html = `
@@ -2120,7 +2094,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-void" ${Settings.voidBridging ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某句话，系统会自动保留该节点，并生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
+                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某句话，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
                                     <span>(中间删除不破缓存)</span>
                                 </div>
                             </label>
@@ -2528,7 +2502,7 @@ async function setupUI() {
             }
             bigramCache.clear(); 
             safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success(`👻 碎片整理完毕！共清除了 ${count} 个未锁定的缓存，并释放了内存池。`);
+            if (typeof toastr !== 'undefined') toastr.success(`👻 碎片整理完毕！共清清除 ${count} 个未锁定的缓存，并释放了内存池。`);
         });
         
         $('.ds-log-filter').on('click', function() {
@@ -2612,8 +2586,8 @@ jQuery(async () => {
             });
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => NotificationCenter.add('his_del', '您删除了历史对话，已标记断层！下次发送将原位修补。', 'warning', '🗑️'));
-            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => NotificationCenter.add('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => QuantumToastAggregator.add('his_del', '您删除了历史对话，已标记断层！下次发送将原位修补。', 'warning', '🗑️'));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => QuantumToastAggregator.add('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
         Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v52 引擎上线 ══════', LogLevels.BASIC);
