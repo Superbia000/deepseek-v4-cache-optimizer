@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (極致小白友善的現代化 UI)
+// 1. 樣式注入 (小白友善的現代化 UI)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -90,14 +90,14 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態設定 (新增吃書協議與絕對沉底)
+// 2. 狀態設定 (新增 100% 快取防禦盾設定)
 // ==========================================
 let Settings = {};
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v33 || extension_settings.ds_cache_v32 || {};
-    if (!extension_settings.ds_cache_v34) {
-        extension_settings.ds_cache_v34 = {
+    const oldSettings = extension_settings.ds_cache_v32 || extension_settings.ds_cache_v31 || {};
+    if (!extension_settings.ds_cache_v33) {
+        extension_settings.ds_cache_v33 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -108,15 +108,14 @@ function initSettings() {
             maxCacheSize: oldSettings.maxCacheSize ?? 30,
             hotkeysEnabled: oldSettings.hotkeysEnabled ?? true,
             autoPinThreshold: oldSettings.autoPinThreshold ?? 0,
-            dynamicMode: oldSettings.dynamicMode ?? 1, 
-            historyEditMode: oldSettings.historyEditMode ?? 1, 
-            lorebookSink: oldSettings.lorebookSink ?? true, 
-            retconProtocol: oldSettings.retconProtocol ?? true, // 新增：吃書協議 (刪除對話不破壞快取)
+            dynamicMode: oldSettings.dynamicMode ?? 1, // 預設改為 1 (寫日記模式)，對小白最友善
+            historyEditMode: oldSettings.historyEditMode ?? 1, // 新增：0=破壞快取, 1=時空補丁(推薦), 2=幻象隱藏
+            lorebookSink: oldSettings.lorebookSink ?? true, // 新增：世界書強制沉底
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v34;
+    Settings = extension_settings.ds_cache_v33;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -124,7 +123,7 @@ function initSettings() {
 function safeSave() {
     try { 
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v34_snapshot', JSON.stringify(Settings));
+        if (Math.random() < 0.1) localStorage.setItem('ds_cache_v33_snapshot', JSON.stringify(Settings));
     } 
     catch (e) {}
 }
@@ -371,7 +370,7 @@ function setupGlobalHotkeys() {
 }
 
 // ==========================================
-// 5. 核心邏輯工具與 Diff 演算法 (絕對零度強化版)
+// 5. 核心邏輯工具與 Diff 演算法 (強化版)
 // ==========================================
 function createMsg(msg, tag) {
     const content = msg.content || '';
@@ -385,6 +384,7 @@ function getSimilarity(str1, str2) {
     const s2 = str1.length < str2.length ? str2 : str1;
     if (s1.length === 0) return 0;
     
+    // 強化：如果短字串完全包含在長字串中，給予極高分數 (解決短句比對失敗問題)
     if (s2.includes(s1) && s1.length > 10) return 0.95;
 
     const bigrams = new Set();
@@ -421,6 +421,7 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
     let modified = false;
     for (const p of prefills) {
         const pContent = p.content || '';
+        // 強化：忽略開頭的空白與換行進行比對
         const trimmedContent = content.trimStart();
         const trimmedPContent = pContent.trimStart();
         if (trimmedContent.startsWith(trimmedPContent)) { 
@@ -643,7 +644,7 @@ function askUserForResetAsync(dropPercent, mapInfo, causeText) {
 }
 
 // ==========================================
-// 7. 完美時序凍結演算法 (Absolute Zero v34)
+// 7. 完美時序凍結演算法 (Chrono-Lock Algorithm v33)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -707,11 +708,11 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         // ---------------------------------------------------------
-        // 階段 2：原位更新與同步邏輯 (支援快照、時空補丁、吃書協議、Swipe識別)
+        // 階段 2：原位更新與同步邏輯 (支援快照歸檔、時序修正與時空補丁)
         // ---------------------------------------------------------
         let dynamicPromptsToSink = [];
         let oldSnapshotsToMove = [];
-        let timeSpacePatches = []; 
+        let timeSpacePatches = []; // 新增：時空補丁陣列
         let hasSeenHistory = false;
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
@@ -724,7 +725,6 @@ async function interceptAndRestructurePrompt(data) {
                     const score = getSimilarity(item.norm, remainingHistory[j].norm);
                     if (score > bestScore) { bestScore = score; bestIdx = j; }
                 }
-                
                 if (bestScore === 1) {
                     newFrozenSequence.push(remainingHistory[bestIdx]);
                     Logger.debug(`[绝对冻结] 历史对话: ${truncateLog(remainingHistory[bestIdx].content)}`);
@@ -732,36 +732,26 @@ async function interceptAndRestructurePrompt(data) {
                 } else if (bestScore > thresholds.his) {
                     const matchedItem = remainingHistory[bestIdx];
                     
-                    // 🛡️ 100% 快取防禦盾：歷史修改策略 (時空補丁)
+                    // 🛡️ 100% 快取防禦盾：歷史修改策略
                     if (Settings.historyEditMode === 1) {
+                        // 模式 1：時空補丁 (保留舊版，底部追加修正說明)
                         newFrozenSequence.push(item); 
                         timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(item.content, 20)}" 实际上已发生改变，最新情况为："${matchedItem.content}"]`}, 'SYS'));
                         remainingHistory.splice(bestIdx, 1);
                         Logger.debug(`[🛡️ 时空补丁] 拦截了历史修改，已生成底部修正补丁以保住 100% 缓存。`);
                     } else if (Settings.historyEditMode === 2) {
+                        // 模式 2：幻象隱藏 (保留舊版，無視新版)
                         newFrozenSequence.push(item); 
                         remainingHistory.splice(bestIdx, 1);
                         Logger.debug(`[🛡️ 幻象隐藏] 拦截了历史修改，强行使用旧版以保住 100% 缓存。`);
                     } else {
+                        // 模式 0：破壞快取 (原位替換)
                         newFrozenSequence.push(matchedItem); 
                         remainingHistory.splice(bestIdx, 1);
                         Logger.debug(`[历史记录-原位同步] -> ${truncateLog(matchedItem.content)}`);
                     }
                 } else {
-                    // 找不到舊對話，可能是被刪除了，或者是 Swipe (重新生成)
-                    const isLastAiMessage = (i === state.frozenSequence.length - 1 && item.tag === 'AI');
-                    
-                    if (isLastAiMessage) {
-                        // 🚀 Swipe 智能識別：如果是最後一句 AI 話不見了，說明用戶點了重新生成！直接忽略，完美保住前面的快取。
-                        Logger.debug(`[🚀 Swipe 识别] 检测到用户重新生成了最后一句回复，完美截断，保住 100% 缓存！`);
-                    } else if (Settings.retconProtocol) {
-                        // 🗑️ 吃書協議：用戶刪除了中間的對話。保留它，並在底部追加抹除聲明。
-                        newFrozenSequence.push(item);
-                        timeSpacePatches.push(createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(item.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS'));
-                        Logger.debug(`[🗑️ 吃书协议] 拦截了历史删除，已生成底部抹除声明以保住 100% 缓存。`);
-                    } else {
-                        Logger.debug(`[原位删除] 找不到旧对话，已移除: ${truncateLog(item.content)}`);
-                    }
+                    Logger.debug(`[原位删除] 找不到旧对话，已移除: ${truncateLog(item.content)}`);
                 }
             } 
             else if (item.tag === 'SYS') {
@@ -807,13 +797,7 @@ async function interceptAndRestructurePrompt(data) {
                         }
                     }
                 } else {
-                    // 👻 世界書幽靈錨點：如果一個系統提示詞（世界書）曾經觸發過，現在不觸發了，我們依然保留它！
-                    if (Settings.lorebookSink && hasSeenHistory) {
-                        newFrozenSequence.push(item);
-                        Logger.debug(`[👻 世界书幽灵锚点] 发现不再触发的旧设定，已将其永久冻结在历史中以保住 100% 缓存: ${truncateLog(item.content)}`);
-                    } else {
-                        Logger.debug(`[原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
-                    }
+                    Logger.debug(`[原位删除] 已移除旧提示词: ${truncateLog(item.content)}`);
                 }
             }
         }
@@ -844,11 +828,11 @@ async function interceptAndRestructurePrompt(data) {
                 Logger.debug(`[追加至尾部] 新历史对话: ${truncateLog(h.content)}`);
             }
             
-            // 🛡️ 100% 快取防禦盾：世界書與作者備註 (A/N) 強制沉底
+            // 🛡️ 100% 快取防禦盾：世界書強制沉底
             for (let sys of sysPool) {
                 if (Settings.lorebookSink) {
                     dynamicPromptsToSink.push(sys);
-                    Logger.debug(`[🛡️ 设定绝对沉底] 发现新设定/世界书/作者备注，强制移至最底部以保住缓存: ${truncateLog(sys.content)}`);
+                    Logger.debug(`[🛡️ 世界书沉底] 发现新设定/世界书，强制移至最底部以保住缓存: ${truncateLog(sys.content)}`);
                 } else {
                     newFrozenSequence.push(sys);
                     Logger.debug(`[追加至尾部] 新增设定/世界书/动态快照: ${truncateLog(sys.content)}`);
@@ -856,14 +840,14 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 追加所有需要沉底的內容 (動態提示詞、世界書、時空補丁、吃書聲明)
+        // 追加所有需要沉底的內容 (動態提示詞、世界書、時空補丁)
         for (let dp of dynamicPromptsToSink) {
             newFrozenSequence.push(dp);
             Logger.debug(`[追加至尾部] 垫底内容: ${truncateLog(dp.content)}`);
         }
         for (let patch of timeSpacePatches) {
             newFrozenSequence.push(patch);
-            Logger.debug(`[追加至尾部] 时空修正/吃书补丁: ${truncateLog(patch.content)}`);
+            Logger.debug(`[追加至尾部] 时空修正补丁: ${truncateLog(patch.content)}`);
         }
 
         // ---------------------------------------------------------
@@ -1129,9 +1113,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v34-opt-drawer">
+        <div class="inline-drawer" id="ds-v33-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <b><span class="fa-solid fa-microchip"></span> DeepSeek 满血缓存优化器 (v34 绝对零度版)</b>
+                <b><span class="fa-solid fa-microchip"></span> DeepSeek 满血缓存优化器 (v33)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
             </div>
             <div class="inline-drawer-content" style="padding:15px; background: rgba(0,0,0,0.1);">
@@ -1157,14 +1141,10 @@ async function setupUI() {
                         <span><i class="fa-solid fa-shield-halved"></i> 2. 100% 缓存防御盾 (史诗级功能)</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
-                        <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.5;">开启以下功能，即使你在聊天中途触发了世界书，或者往回修改、删除了旧对话，系统也能帮你<b>保住 100% 的缓存</b>！</p>
+                        <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.5;">开启以下功能，即使你在聊天中途触发了世界书，或者往回修改了旧对话，系统也能帮你<b>保住 100% 的缓存</b>！</p>
                         
                         <div class="ds-row" style="margin-top:5px;">
-                            <label class="ds-row-left" style="color:#e5c07b;"><input type="checkbox" id="ds-cache-lorebook-sink" ${Settings.lorebookSink ? 'checked' : ''}> <b>世界书/作者备注绝对沉底</b><br><span style="font-size:11px; color:#abb2bf; font-weight:normal;">(当聊天中途触发新设定或A/N时，强制把它塞到最下面，防止破坏上方缓存)</span></label>
-                        </div>
-                        
-                        <div class="ds-row">
-                            <label class="ds-row-left" style="color:#e06c75;"><input type="checkbox" id="ds-cache-retcon" ${Settings.retconProtocol ? 'checked' : ''}> <b>吃书协议 (删除对话不破缓存)</b><br><span style="font-size:11px; color:#abb2bf; font-weight:normal;">(当你删除了旧对话，系统会保留它，并在底部告诉AI「刚才那件事被抹除了」，完美保住缓存)</span></label>
+                            <label class="ds-row-left" style="color:#e5c07b;"><input type="checkbox" id="ds-cache-lorebook-sink" ${Settings.lorebookSink ? 'checked' : ''}> <b>世界书/新设定强制垫底</b><br><span style="font-size:11px; color:#abb2bf; font-weight:normal;">(当聊天中途触发新设定时，强制把它塞到最下面，防止破坏上方缓存)</span></label>
                         </div>
                         
                         <div class="ds-row" style="flex-direction:column; align-items:flex-start; gap:5px; background:rgba(0,0,0,0.2); padding:10px; border-radius:6px;">
@@ -1301,7 +1281,6 @@ async function setupUI() {
         // 新增事件綁定
         $('#ds-cache-history-mode').on('change', function () { Settings.historyEditMode = parseInt($(this).val()); safeSave(); });
         $('#ds-cache-lorebook-sink').on('change', function () { Settings.lorebookSink = $(this).is(':checked'); safeSave(); });
-        $('#ds-cache-retcon').on('change', function () { Settings.retconProtocol = $(this).is(':checked'); safeSave(); });
 
         $('#ds-btn-diagnostic').on('click', showDiagnosticCenter);
 
@@ -1335,18 +1314,10 @@ async function setupUI() {
             navigator.clipboard.writeText(text).then(() => { if(typeof toastr !== 'undefined') toastr.success("📋 日志已复制到剪贴板！"); });
         });
 
-        $('#ds-btn-exportlog').on('click', () => {
-            const text = Array.from(document.querySelectorAll('#ds-cache-log-container .ds-log-line')).map(el => el.innerText).join('\n');
-            const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
-            const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Log_${new Date().getTime()}.txt`;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-        });
-
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v34_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v33_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -1383,7 +1354,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerWarningImmediate('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', Settings.toastHistory));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 满血缓存优化器 v34 绝对零度版上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 满血缓存优化器 v33 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
