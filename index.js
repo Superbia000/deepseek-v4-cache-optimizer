@@ -11,7 +11,7 @@ const injectCSS = () => {
     style.innerHTML = `
         :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-pink: #ff79c6; --ds-gray: #abb2bf; --ds-bg: rgba(15, 20, 25, 0.7); --ds-border: rgba(0, 229, 255, 0.2); }
         
-        .ds-gpu-accel { transform: translateZ(0); will-change: transform, scroll-position; backface-visibility: hidden; perspective: 1000px; }
+        .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
         
         .ds-scroll::-webkit-scrollbar { width: 6px; }
@@ -120,9 +120,10 @@ const injectCSS = () => {
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
         
-        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; }
+        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; transition: 0.3s; }
         .ds-omni-panel-header { padding: 10px 15px; background: rgba(255,255,255,0.05); font-size: 13px; font-weight: bold; color: var(--ds-cyan); display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
         .ds-omni-panel-header:hover { background: rgba(255,255,255,0.08); }
+        .ds-omni-panel-header i.fa-chevron-down { transition: transform 0.3s; }
         .ds-omni-panel-body { padding: 15px; display: none; }
         .ds-omni-panel.open .ds-omni-panel-body { display: block; animation: dsFadeIn 0.2s ease; }
         .ds-omni-panel.open .ds-omni-panel-header i.fa-chevron-down { transform: rotate(180deg); }
@@ -141,15 +142,12 @@ const injectCSS = () => {
         .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; }
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
         .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
-        .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; contain: layout style paint; }
+        .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
         
-        .ds-omni-canvas-container { width: 140px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
+        .ds-omni-canvas-container { width: 120px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
         #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
-        .ds-node-card { 
-            background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; 
-            content-visibility: auto; contain-intrinsic-size: 0 500px; contain: layout style paint;
-        }
+        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
         .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
         
         .ds-node-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
@@ -194,9 +192,9 @@ function fastClone(obj) {
 }
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v52 || extension_settings.ds_cache_v51 || {};
-    if (!extension_settings.ds_cache_v53) {
-        extension_settings.ds_cache_v53 = {
+    const oldSettings = extension_settings.ds_cache_v51 || extension_settings.ds_cache_v50 || {};
+    if (!extension_settings.ds_cache_v52) {
+        extension_settings.ds_cache_v52 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -236,13 +234,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v53;
+    Settings = extension_settings.ds_cache_v52;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v53_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v52_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -258,7 +256,7 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v53_snapshot', dataStr);
+            localStorage.setItem('ds_cache_v52_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -283,7 +281,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v53_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v52_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -352,7 +350,7 @@ function performGarbageCollection() {
 }
 
 // ==========================================
-// 3. Omni-Log 全知日誌系統 (保持原样)
+// 3. Omni-Log 全知日誌系統
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3, TRACE: 4 };
 let logQueue = [];
@@ -483,7 +481,7 @@ const Logger = {
 };
 
 // ==========================================
-// 4. 狀態管理與擴充選單 (保持原样)
+// 4. 狀態管理與擴充選單
 // ==========================================
 function getChatKey() {
     const context = getContext();
@@ -597,7 +595,7 @@ function setupGlobalHotkeys() {
                 Settings.zenMode = !Settings.zenMode; 
                 $('#ds-cache-zen').prop('checked', Settings.zenMode);
                 safeSave(); updateTopBarState(); 
-                if(typeof toastr !== 'undefined') toastr.info(Settings.zenMode ? "🧘 沉浸免打扰已开启" : "🔔 沉浸免打扰已关闭", "快捷键");
+                if(typeof toastr !== 'undefined') toastr.info(Settings.zenMode ? "🧘 沉浸免打扰已开启" : "🔔 沉浸免打扰关闭", "快捷键");
             }
             if (e.key.toLowerCase() === 'v') { e.preventDefault(); showOmniVisionUI(); }
         }
@@ -605,7 +603,7 @@ function setupGlobalHotkeys() {
 }
 
 // ==========================================
-// 5. 核心邏輯工具與 Diff 演算法 (保持原样)
+// 5. 核心邏輯工具與 Diff 演算法
 // ==========================================
 
 function cyrb53(str, seed = 0) {
@@ -723,51 +721,9 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
 }
 
 // ==========================================
-// 7. 🧊 絕對真理追加架構 (保持原样，但保留原有 askUserForResetAsync 等)
+// 7. 🧊 絕對真理追加架構 (Append-Only Interceptor)
 // ==========================================
-async function askUserForResetAsync(dropPercentStr, mapInfoText, causeText) {
-    // 原弹窗逻辑保持不变
-    return new Promise((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.className = 'ds-overlay';
-        overlay.innerHTML = `
-            <div class="ds-modal" style="max-width:600px; text-align:left;">
-                <h2 class="ds-modal-title"><i class="fa-solid fa-triangle-exclamation" style="color:var(--ds-yellow);"></i> 缓存断层警告</h2>
-                <p style="font-size:14px; line-height:1.7; color:#abb2bf; margin-bottom:20px;">
-                    检测到 <b style="color:var(--ds-red);">${causeText}</b>，导致约 <b style="color:var(--ds-red);">${dropPercentStr}%</b> 的缓存将要失效（需重算 Tokens）。
-                </p>
-                <div style="background:rgba(0,0,0,0.3); border-radius:10px; padding:15px; margin-bottom:25px; border:1px solid rgba(255,255,255,0.08);">
-                    ${mapInfoText}
-                </div>
-                <div class="ds-btn-col">
-                    <div class="ds-btn ds-btn-accept" id="ds-accept-btn"><i class="fa-solid fa-check"></i> <div><b>接受并重组 (推荐)</b><br><span style="font-size:11px; opacity:0.7;">系统将在后台自动修复顺序并发送，确保上下文逻辑正确。</span></div></div>
-                    <div class="ds-btn ds-btn-revert" id="ds-revert-btn"><i class="fa-solid fa-lock"></i> <div><b>强制冻结旧版</b><br><span style="font-size:11px; opacity:0.7;">无视你的修改，强行使用上一次冻结的旧版缓存内容发送 (保住 100% 缓存)。</span></div></div>
-                    <div class="ds-btn ds-btn-abort" id="ds-abort-btn"><i class="fa-solid fa-ban"></i> <div><b>中止发送</b><br><span style="font-size:11px; opacity:0.7;">取消本次生成，让你回去重新检查内容。</span></div></div>
-                    <div class="ds-btn" id="ds-bypass-btn" style="border-color:rgba(255,255,255,0.1);"><i class="fa-solid fa-forward"></i> <div><b>临时放行</b><br><span style="font-size:11px; opacity:0.7;">本次不做任何优化，让 ST 按原样乱序发送。</span></div></div>
-                </div>
-                <label style="display:flex; align-items:center; gap:8px; margin-top:20px; color:#abb2bf; font-size:12px; cursor:pointer;">
-                    <input type="checkbox" id="ds-snooze-reset"> 今天不再管这个对话的缓存断层，全部自动修复不发警告。
-                </label>
-            </div>
-        `;
-        document.body.appendChild(overlay);
-
-        const remove = (decision) => {
-            sessionSnoozeReset = document.getElementById('ds-snooze-reset')?.checked || false;
-            overlay.remove();
-            resolve(decision);
-        };
-
-        overlay.querySelector('#ds-accept-btn').addEventListener('click', (e) => { e.stopPropagation(); remove('accept'); });
-        overlay.querySelector('#ds-revert-btn').addEventListener('click', (e) => { e.stopPropagation(); remove('revert'); });
-        overlay.querySelector('#ds-abort-btn').addEventListener('click', (e) => { e.stopPropagation(); remove('abort'); });
-        overlay.querySelector('#ds-bypass-btn').addEventListener('click', (e) => { e.stopPropagation(); remove('bypass'); });
-        overlay.addEventListener('click', (e) => { if(e.target === overlay) remove('abort'); });
-    });
-}
-
 async function interceptAndRestructurePrompt(data, isDryRun = false) {
-    // 保持原有逻辑，不变
     if (!Settings.enabled && !isDryRun) return;
     const startTime = performance.now();
     const chatKeyInfo = getChatKey();
@@ -787,9 +743,483 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             Logger.divider(`===== 🚀 启动绝对真理拦截: ${chatKeyInfo.label} =====`);
         }
 
-        // ... 后续所有原有处理逻辑，一字不差，此处省略以节省篇幅，实际文件包含全部
-        // 返回 proposedStream 等
-        // 最终处理 decision
+        const topSysMsgs = []; 
+        const bottomSysMsgs = []; 
+        const chatMsgs = [];
+        let hasSeenUserOrAi = false;
+        const timeSkipRegex = /(later|next day|第二天|几个小时后|一段时间后|meanwhile|之后|随后|时光飞逝|转眼间|the next morning)/i;
+        const vectorRegex = /(retrieved context|search results|vector database|相关记忆|检索到的内容|记忆库片段|data bank)/i;
+
+        for (const msg of stream) {
+            if (!msg.content) continue;
+            if (Settings.warpDriveFilter && msg.content.replace(/[\s\*\.\-]/g, '').length === 0) {
+                if (!isDryRun) {
+                    Logger.trace(`[🌌 曲率引擎] 过滤了零熵空白节点。`);
+                    triggerToast('warp', '曲率引擎：已过滤空白消息', 'info', '🌌');
+                }
+                continue;
+            }
+            
+            const isSys = (msg.role === 'system' || (msg.role !== 'user' && msg.role !== 'assistant'));
+            if (isSys) {
+                const sysNode = createMsg(msg, 'SYS');
+                const isSummary = Settings.summaryAnchor && /(summary|previously on|摘要|前情提要|总结|回顾)/i.test(sysNode.content);
+                const isTimeSkip = Settings.chronosProtocol && sysNode.content.length < 150 && timeSkipRegex.test(sysNode.content);
+                const isVector = Settings.vectorQuarantine && vectorRegex.test(sysNode.content);
+                
+                if (isSummary || isTimeSkip || isVector || (Settings.anchorStabilization && hasSeenUserOrAi) || (Settings.gravityProtocol && hasSeenUserOrAi)) {
+                    if (isTimeSkip) sysNode.isTimeSkip = true; 
+                    if (isVector) sysNode.isVector = true;
+                    if (isSummary) sysNode.isSummary = true;
+                    bottomSysMsgs.push(sysNode);
+                } else {
+                    topSysMsgs.push(sysNode);
+                }
+            } else {
+                hasSeenUserOrAi = true;
+                chatMsgs.push(createMsg(msg, msg.role === 'user' ? 'USER' : 'AI'));
+            }
+        }
+
+        let lastUserIdx = -1;
+        for (let i = chatMsgs.length - 1; i >= 0; i--) { if (chatMsgs[i].tag === 'USER') { lastUserIdx = i; break; } }
+
+        let historyTurns = []; let currentTurn = { user: null, prefills: [] };
+        if (lastUserIdx === -1) {
+            currentTurn.prefills = chatMsgs.filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
+        } else {
+            const hMsgs = chatMsgs.slice(0, lastUserIdx);
+            const cMsgs = chatMsgs.slice(lastUserIdx);
+            currentTurn.user = cMsgs[0];
+            currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
+
+            let curUser = null; let curAiContents = [];
+            for (const msg of hMsgs) {
+                if (msg.tag === 'USER') {
+                    if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
+                    curUser = msg; curAiContents = [];
+                } else if (msg.tag === 'AI') curAiContents.push(msg.content);
+            }
+            if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
+        }
+
+        const incomingSysPool = [...topSysMsgs, ...bottomSysMsgs];
+        const incomingHistoryPool = [];
+        for(let t of historyTurns) {
+            incomingHistoryPool.push(t.user);
+            if(t.assistant) incomingHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
+        }
+
+        if (Settings.multiverseProtocol && state.multiverse && state.multiverse.length > 0) {
+            let bestUniverse = state.frozenSequence;
+            let bestMatchCount = -1;
+            const currentStreamNorms = [...incomingSysPool, ...incomingHistoryPool].map(m => m.norm);
+            
+            for (let i = 0; i < state.multiverse.length; i++) {
+                const universe = state.multiverse[i];
+                let matchCount = 0;
+                for (let j = 0; j < Math.min(universe.length, currentStreamNorms.length); j++) {
+                    if (universe[j].norm === currentStreamNorms[j]) matchCount++;
+                    else break;
+                }
+                if (matchCount > bestMatchCount) { bestMatchCount = matchCount; bestUniverse = universe; }
+            }
+            if (bestUniverse !== state.frozenSequence) {
+                if (!isDryRun) {
+                    Logger.map(`[🌌 平行宇宙跳跃] 检测到分支切换！已跳跃至匹配度最高的宇宙。`);
+                    triggerToast('multiverse', '平行宇宙：已跳跃至最佳历史分支', 'success', '🌌');
+                }
+                state.frozenSequence = bestUniverse;
+            }
+        }
+
+        let newFrozenSequence = []; 
+        let newAdditions = { history: [], sys: [], lorebooks: [], dynamic: [], patches: [] };
+        const thresholds = getTolerance();
+        
+        const handledIncomingSys = new Set();
+        const handledIncomingHis = new Set();
+        let lastHandledIncomingHisIdx = -1;
+
+        // 階段 1：遍歷凍結的過去
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            const frozenItem = state.frozenSequence[i];
+
+            if (frozenItem.tag === 'SYS') {
+                let bestIdx = -1, bestScore = 0;
+                for (let j = 0; j < incomingSysPool.length; j++) {
+                    if (handledIncomingSys.has(j)) continue;
+                    const score = getSimilarity(frozenItem, incomingSysPool[j]);
+                    if (score > bestScore) { bestScore = score; bestIdx = j; }
+                }
+
+                if (bestScore === 1 || (bestIdx !== -1 && frozenItem.fuzzyHash === incomingSysPool[bestIdx].fuzzyHash)) {
+                    frozenItem._omniCat = 'frozen';
+                    newFrozenSequence.push(frozenItem);
+                    handledIncomingSys.add(bestIdx);
+                    if (bestScore < 1 && !isDryRun) {
+                        Logger.debug(`[🧹 模糊语义] 无视排版差异，保持冻结: ${truncateLog(frozenItem.content)}`);
+                        triggerToast('fuzzy', '模糊语义：已无视排版差异', 'success', '🧹');
+                    }
+                } else if (bestScore > thresholds.sys) {
+                    const incomingItem = incomingSysPool[bestIdx];
+                    frozenItem._omniCat = 'frozen';
+                    newFrozenSequence.push(frozenItem); 
+                    handledIncomingSys.add(bestIdx);
+
+                    if (Settings.nanoPatching && bestScore > 0.85) {
+                        let addedText = extractAddedText(frozenItem.content, incomingItem.content);
+                        if (addedText) {
+                            const patch = createMsg({role: 'system', content: `[系统提示：设定微调补充。新增细节：${addedText}]`}, 'SYS');
+                            patch._omniCat = 'patch';
+                            patch._sourceHash = frozenItem.hash;
+                            newAdditions.patches.push(patch);
+                            if (!isDryRun) {
+                                Logger.debug(`[🔬 量子微创] 生成设定差异补丁。`);
+                                triggerToast('nano', '量子微创：已生成设定差异补丁', 'success', '🔬');
+                            }
+                        }
+                    } else if (Settings.hotReloadPersona && i === 0) {
+                        const patch = createMsg({role: 'system', content: `[系统提示：角色设定已热更新，最新特征如下：\n${incomingItem.content}]`}, 'SYS');
+                        patch._omniCat = 'patch';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🔥 设定热更新] 生成热更新补丁。`);
+                            triggerToast('hotreload', '设定热更新：已生成更新补丁', 'success', '🔥');
+                        }
+                    } else {
+                        if (Settings.dynamicMode === 1) {
+                            incomingItem._omniCat = 'dynamic';
+                            newAdditions.dynamic.push(incomingItem); 
+                            if (!isDryRun) Logger.debug(`[📖 日记模式] 旧时间冻结，新时间追加至尾部。`);
+                        } else if (Settings.dynamicMode === 4) {
+                            newFrozenSequence.pop(); 
+                            incomingItem._omniCat = 'frozen';
+                            newFrozenSequence.push(incomingItem);
+                            if (!isDryRun) Logger.warn(`[🔥 原位替换] 破坏了缓存: ${truncateLog(incomingItem.content)}`);
+                        }
+                    }
+                } else {
+                    if (Settings.permanentMemoryImprint) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        if (!isDryRun) Logger.debug(`[🖨️ 永久记忆] 强制保留被删除的设定: ${truncateLog(frozenItem.content)}`);
+                    }
+                }
+            } 
+            else if (frozenItem.tag === 'USER' || frozenItem.tag === 'AI') {
+                let bestIdx = -1, bestScore = 0;
+                for (let j = 0; j < incomingHistoryPool.length; j++) {
+                    if (handledIncomingHis.has(j)) continue;
+                    if (frozenItem.tag !== incomingHistoryPool[j].tag) continue;
+                    const score = getSimilarity(frozenItem, incomingHistoryPool[j]);
+                    if (score > bestScore) { bestScore = score; bestIdx = j; }
+                }
+
+                if (bestScore === 1 || (bestIdx !== -1 && frozenItem.fuzzyHash === incomingHistoryPool[bestIdx].fuzzyHash)) {
+                    frozenItem._omniCat = 'frozen';
+                    newFrozenSequence.push(frozenItem);
+                    handledIncomingHis.add(bestIdx);
+                    lastHandledIncomingHisIdx = Math.max(lastHandledIncomingHisIdx, bestIdx);
+                } else if (bestScore > thresholds.his) {
+                    const incomingItem = incomingHistoryPool[bestIdx];
+                    handledIncomingHis.add(bestIdx);
+                    lastHandledIncomingHisIdx = Math.max(lastHandledIncomingHisIdx, bestIdx);
+
+                    if (Settings.entropyShield && bestScore > 0.99) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        const patch = createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(frozenItem.content, 15)}" 已修正为 "${truncateLog(incomingItem.content, 15)}"]`}, 'SYS');
+                        patch._omniCat = 'patch';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🛡️ 熵减护盾] 生成错字修正补丁。`);
+                            triggerToast('entropy', '熵减护盾：已生成错字修正补丁', 'success', '🛡️');
+                        }
+                    } else if (Settings.historyEditMode === 1) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        const patch = createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(frozenItem.content, 20)}" 实际上已发生改变，最新情况为："${incomingItem.content}"]`}, 'SYS');
+                        patch._omniCat = 'patch';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🛡️ 时空补丁] 生成历史修改补丁。`);
+                            triggerToast('patch', '时空补丁：已生成历史修改补丁', 'success', '⏳');
+                        }
+                    } else if (Settings.historyEditMode === 2) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        if (!isDryRun) Logger.debug(`[🙈 幻象隐藏] 强行使用旧版历史。`);
+                    } else {
+                        incomingItem._omniCat = 'frozen';
+                        newFrozenSequence.push(incomingItem); 
+                    }
+                } else {
+                    const isPrefix = (i === 0);
+                    if (isPrefix && Settings.prefixAnchor) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        if (!isDryRun) {
+                            Logger.warn(`[⚓ 绝对前缀锚点] 强制保留被截断的头部。`);
+                            triggerToast('prefix', '前缀锚点：已强制保留被截断的头部', 'warning', '⚓');
+                        }
+                    } else if (Settings.retconProtocol) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        const patch = createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS');
+                        patch._omniCat = 'retcon';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🗑️ 吃书协议] 生成记忆抹除声明。`);
+                            triggerToast('retcon', '吃书协议：已生成记忆抹除声明', 'success', '🗑️');
+                        }
+                    }
+                }
+            }
+        }
+
+        // 階段 2：處理未匹配的全新內容
+        for (let j = 0; j < incomingHistoryPool.length; j++) {
+            if (!handledIncomingHis.has(j)) {
+                const h = incomingHistoryPool[j];
+                if (Settings.flashbackInsertion && j < lastHandledIncomingHisIdx) {
+                    const patch = createMsg({role: 'system', content: `[系统提示：闪回补充。在之前的事件中，还发生了以下细节：\n${h.content}]`}, 'SYS');
+                    patch._omniCat = 'flashback';
+                    newAdditions.patches.push(patch);
+                    if (!isDryRun) {
+                        Logger.debug(`[⏪ 闪回插入] 将新插入的对话转为闪回补丁。`);
+                        triggerToast('flashback', '闪回插入：已生成闪回补丁', 'success', '⏪');
+                    }
+                } else {
+                    h._omniCat = 'history';
+                    newAdditions.history.push(h); 
+                }
+            }
+        }
+
+        for (let j = 0; j < incomingSysPool.length; j++) {
+            if (!handledIncomingSys.has(j)) {
+                const sys = incomingSysPool[j];
+                if (sys.isTimeSkip) {
+                    const patch = createMsg({role: 'system', content: `[系统提示：叙事过渡。${sys.content}]`}, 'SYS');
+                    patch._omniCat = 'patch';
+                    newAdditions.patches.push(patch);
+                    if (!isDryRun) triggerToast('chronos', '克罗诺斯协议：已生成时间跳跃补丁', 'info', '⏳');
+                } else if (sys.isVector) {
+                    sys._omniCat = 'dynamic';
+                    newAdditions.dynamic.push(sys);
+                    if (!isDryRun) triggerToast('vector', '向量隔离区：已将检索记忆沉底', 'info', '🎯');
+                } else if (sys.isSummary) {
+                    sys._omniCat = 'dynamic';
+                    newAdditions.dynamic.push(sys);
+                } else {
+                    if (sys.content.length < 500) {
+                        sys._omniCat = 'lorebook';
+                        newAdditions.lorebooks.push(sys);
+                    } else {
+                        sys._omniCat = 'sys';
+                        newAdditions.sys.push(sys);
+                    }
+                }
+            }
+        }
+
+        // 階段 3：嚴格按照 Append-Only 順序組裝
+        for (let h of newAdditions.history) newFrozenSequence.push(h);
+        for (let sys of newAdditions.sys) newFrozenSequence.push(sys);
+        for (let lb of newAdditions.lorebooks) newFrozenSequence.push(lb);
+        for (let dyn of newAdditions.dynamic) newFrozenSequence.push(dyn);
+        for (let patch of newAdditions.patches) newFrozenSequence.push(patch);
+
+        // 階段 4：分類去重隔離
+        let dedupedSequence = [];
+        const seenSysNorms = new Set();
+        for (const item of newFrozenSequence) {
+            if (item.tag === 'SYS' && Settings.absoluteDeduplication) {
+                if (item._omniCat === 'sys' || item._omniCat === 'lorebook' || item._omniCat === 'frozen') {
+                    if (seenSysNorms.has(item.hash)) continue;
+                    seenSysNorms.add(item.hash);
+                }
+            }
+            dedupedSequence.push(item);
+        }
+
+        const proposedStream = [...dedupedSequence];
+        if (currentTurn.user) proposedStream.push(currentTurn.user);
+        for (const p of currentTurn.prefills) proposedStream.push(p);
+
+        if (Settings.logLevel >= LogLevels.DEBUG && !isDryRun) {
+            Logger.debug(`[最终追加发送阵列] 总节点数: ${proposedStream.length}`);
+        }
+
+        // ==========================================
+        // 5. 精準流失率演算法
+        // ==========================================
+        let requireResetConfirm = false;
+        let dropPercentStr = "0.0";
+        let mapInfoText = "无变更";
+        let causeText = "修改了内容";
+        let breakIndex = -1;
+        let preservedTokens = 0;
+        let recomputeTokens = 0;
+
+        if (state.lastSentSequence && state.lastSentSequence.length > 0) {
+            const L = state.lastSentSequence;
+            const P = proposedStream;
+
+            for (let i = 0; i < Math.min(L.length, P.length); i++) {
+                if (L[i].role !== P[i].role || L[i].hash !== P[i].hash) { breakIndex = i; break; }
+            }
+            if (breakIndex === -1) breakIndex = Math.min(L.length, P.length);
+
+            let preservedLen = 0;
+            let recomputeLen = 0;
+            for (let i = 0; i < P.length; i++) {
+                let len = P[i].content?.length || 0;
+                if (i < breakIndex) preservedLen += len;
+                else recomputeLen += len;
+            }
+
+            let totalLen = preservedLen + recomputeLen;
+            let recomputeRatio = breakIndex === L.length ? 0 : (totalLen === 0 ? 0 : (recomputeLen / totalLen));
+            
+            preservedTokens = Math.floor(preservedLen / 3.5);
+            recomputeTokens = Math.floor(recomputeLen / 3.5);
+            
+            let isTailEndMutation = false;
+            if (Settings.tailEndExemption && breakIndex >= L.length - 2) {
+                if (P[breakIndex]?.tag !== 'SYS' && L[breakIndex]?.tag !== 'SYS') {
+                    isTailEndMutation = true;
+                    if (!isDryRun) Logger.log(`[👯 二重身协议] 检测到仅修改了最后回合对话，已自动放行。`);
+                }
+            }
+            
+            dropPercentStr = (recomputeRatio * 100).toFixed(1);
+
+            if (recomputeRatio >= 0.10 && Settings.showResetPrompt && !isTailEndMutation && !sessionSnoozeReset) {
+                requireResetConfirm = true;
+                
+                if (P[breakIndex]?.tag === 'SYS' || L[breakIndex]?.tag === 'SYS') {
+                    causeText = "大幅修改或删除了【设定 / 世界书 / 预设提示词】";
+                } else {
+                    causeText = "修改或删除了【历史聊天记录】";
+                }
+                
+                const tagHtml = `<span class="ds-tag ds-tag-${P[breakIndex]?.tag || L[breakIndex]?.tag}">[${P[breakIndex]?.tag || L[breakIndex]?.tag}]</span>`;
+                const oldContent = escapeHtml(L[breakIndex]?.content || '∅').substring(0, 100).replace(/\n/g, ' ↵ ');
+                const newContent = escapeHtml(P[breakIndex]?.content || '∅').substring(0, 100).replace(/\n/g, ' ↵ ');
+                
+                mapInfoText = `
+                    <div style="margin-bottom:10px; display:flex; align-items:center; gap:8px;">
+                        <span style="color:var(--ds-cyan);"><i class="fa-solid fa-location-crosshairs"></i> 缓存断裂点位置:</span> <b>[索引 ${breakIndex}]</b> ${tagHtml}
+                    </div>
+                    <div class="ds-diff-del"><i class="fa-solid fa-minus"></i> 原内容: ${oldContent}...</div>
+                    <div class="ds-diff-add"><i class="fa-solid fa-plus"></i> 新内容: ${newContent}...</div>
+                    <div style="margin-top:12px; font-size: 12px; color:var(--ds-green); background:rgba(0,0,0,0.3); padding:8px; border-radius:6px;">
+                        ✅ 断点前(保持冻结): 约 ${preservedTokens} Tokens <br>
+                        ⚠️ 断点后(必须重算): <span style="color:var(--ds-red); font-weight:bold;">约 ${recomputeTokens} Tokens</span>
+                    </div>
+                `;
+            }
+        }
+
+        if (isDryRun) {
+            return {
+                proposedStream: proposedStream,
+                breakIndex: breakIndex,
+                dropPercent: dropPercentStr,
+                preservedTokens: preservedTokens,
+                recomputeTokens: recomputeTokens
+            };
+        }
+
+        let decision = 'accept';
+        setTopBarStatus('#00ff00', '缓存: 健康');
+
+        if (requireResetConfirm) {
+            setTopBarStatus('#e5c07b', `缓存: 等待确认`);
+            if (Settings.autoAccept) {
+                Logger.warn(`[自动修复] 已放行断层重组 (需重算 ${dropPercentStr}%)`);
+                if (!Settings.zenMode && typeof toastr !== 'undefined') toastr.info(`已自动修复后台顺序 (需重算 ${dropPercentStr}%)`, "绝对真理");
+                decision = 'accept';
+            } else {
+                decision = await askUserForResetAsync(dropPercentStr, mapInfoText, causeText);
+            }
+        }
+
+        if (decision === 'abort') {
+            Logger.error('[物理拦截] 已拦截本次发送，强制中止生成。', null, LogLevels.BASIC);
+            setTopBarStatus('#e06c75', '缓存: 已拦截发送');
+            if (typeof toastr !== 'undefined') toastr.error("已拦截发送！对话已中止。", "绝对真理");
+            
+            data.chat.length = 0; 
+            data.chat.push({ role: "invalid_abort_role", content: "ABORT_GENERATION" });
+            
+            setTimeout(() => {
+                if (typeof StopGenerating === 'function') StopGenerating();
+                const stopBtn = document.getElementById('stop_generating_button') || document.getElementById('send_but');
+                if (stopBtn) stopBtn.click();
+            }, 10);
+            
+            throw new Error("Generation aborted by DeepSeek Cache Optimizer."); 
+        }
+
+        if (decision === 'revert') {
+            Logger.warn('[时空回溯] 用户选择无视本次修改，强行使用旧版缓存。');
+            setTopBarStatus('#c678dd', '缓存: 强行冻结旧版');
+            
+            const finalStream = [...state.frozenSequence];
+            if (currentTurn.user) finalStream.push(currentTurn.user);
+            for (const p of currentTurn.prefills) finalStream.push(p);
+
+            state.lastSentSequence = fastClone(finalStream);
+            safeSave();
+
+            stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
+            if (typeof toastr !== 'undefined') toastr.success("已强行使用旧版内容发送，保住100%缓存！", "绝对真理");
+            return;
+        }
+
+        if (decision === 'bypass') {
+            Logger.warn('[临时放行] 用户选择跳过本次优化，按 ST 原样乱序发送。');
+            setTopBarStatus('#e5c07b', '缓存: 临时放行');
+            return; 
+        }
+
+        if (decision === 'accept') {
+            state.frozenSequence = dedupedSequence;
+            state.lastPrefills = currentTurn.prefills;
+
+            const finalStream = [...state.frozenSequence];
+            if (currentTurn.user) finalStream.push(currentTurn.user);
+            for (const p of currentTurn.prefills) finalStream.push(p);
+
+            state.lastSentSequence = fastClone(finalStream);
+            
+            if (Settings.multiverseProtocol) {
+                if (!state.multiverse) state.multiverse = [];
+                state.multiverse.unshift([...state.frozenSequence]);
+                if (state.multiverse.length > 5) state.multiverse.pop();
+            }
+
+            safeSave();
+
+            if (Settings.autoPinThreshold > 0 && finalStream.length >= Settings.autoPinThreshold) {
+                if (!Settings.pinnedChats[chatKeyInfo.key]) {
+                    Settings.pinnedChats[chatKeyInfo.key] = true;
+                    safeSave();
+                    Logger.map(`[自动保护] 节点数(${finalStream.length})达标，已锁定当前存档。`);
+                }
+            }
+
+            stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
+            Logger.log(`✅ 追加排序完成，拦截器授权发送。耗时: ${(performance.now() - startTime).toFixed(2)}ms`, LogLevels.BASIC);
+        }
+
     } catch (err) {
         if (err.message === "Generation aborted by DeepSeek Cache Optimizer.") throw err; 
         setTopBarStatus('#e06c75', '缓存: 发生崩溃');
@@ -799,13 +1229,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas) - 彻底重构版
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = [];
 let isSyncLocked = true;
-let isSyncing = false;
-let canvasRafId = null;
+let isDrawingCanvas = false;
+let omniLeftArrayFrozen = [];
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -815,6 +1245,8 @@ async function showOmniVisionUI() {
         if (typeof toastr !== 'undefined') toastr.warning("当前对话还没有发送过任何内容，无法开启全视之眼。请先发送一次对话！");
         return;
     }
+
+    omniLeftArrayFrozen = fastClone(state.lastSentSequence || []);
 
     const html = `
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
@@ -833,8 +1265,8 @@ async function showOmniVisionUI() {
                 </div>
 
                 <div class="ds-omni-panel">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
-                        <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (即时生效)</span>
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 300);">
+                        <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (预置折叠，点击展开并即时生效)</span>
                         <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-omni-panel-body">
@@ -863,8 +1295,8 @@ async function showOmniVisionUI() {
                 </div>
 
                 <div class="ds-omni-panel">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
-                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试</span>
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 300);">
+                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试 (预置折叠，点击展开)</span>
                         <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-omni-panel-body" style="padding-top: 5px;">
@@ -879,7 +1311,7 @@ async function showOmniVisionUI() {
                 </div>
 
                 <div class="ds-omni-workspace">
-                    <!-- 左畫面：歷史觀測 (絕對凍結) -->
+                    <!-- 左視窗：歷史觀測 -->
                     <div class="ds-omni-pane">
                         <div class="ds-omni-pane-header">
                             <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (绝对锁定)</span>
@@ -890,11 +1322,11 @@ async function showOmniVisionUI() {
                     </div>
 
                     <!-- 神經網路連線畫布 (Canvas) -->
-                    <div class="ds-omni-canvas-container" id="omni-canvas-container">
+                    <div class="ds-omni-canvas-container">
                         <canvas id="omni-canvas"></canvas>
                     </div>
 
-                    <!-- 右畫面：即時沙盒預覽 -->
+                    <!-- 右視窗：即時沙盒預覽 -->
                     <div class="ds-omni-pane">
                         <div class="ds-omni-pane-header">
                             <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用设定后)</span>
@@ -908,6 +1340,8 @@ async function showOmniVisionUI() {
         </div>
     `;
     $('body').append(html);
+
+    renderOmniLeftPane(omniLeftArrayFrozen);
 
     $('.ds-omni-toggle').on('click', function() {
         const setting = $(this).data('setting');
@@ -929,7 +1363,12 @@ async function showOmniVisionUI() {
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-            syncScroll('left'); 
+            const leftPane = document.getElementById('omni-left-pane');
+            const rightPane = document.getElementById('omni-right-pane');
+            if (leftPane && rightPane) {
+                const ratio = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+                rightPane.scrollTop = ratio * (rightPane.scrollHeight - rightPane.clientHeight || 1);
+            }
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
         }
@@ -938,19 +1377,19 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 150);
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 150);
     });
 
     let inputTimeout;
     $('#omni-simulated-input').on('input', function() {
         clearTimeout(inputTimeout);
-        inputTimeout = setTimeout(() => triggerOmniRender(state), 500);
+        inputTimeout = setTimeout(() => triggerOmniRender(state), 300);
     });
 
     $('#ds-omni-modal-wrapper').on('click', '.ds-node-expand-btn', function() {
@@ -962,27 +1401,36 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 150);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
+    let isSyncingLeft = false;
+    let isSyncingRight = false;
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
-    leftPane.addEventListener('scroll', () => {
-        if (isSyncLocked && !isSyncing) syncScroll('left');
+    leftPane.addEventListener('scroll', function() {
+        if (!isSyncLocked) { requestCanvasUpdate(); return; }
+        if (isSyncingLeft) { isSyncingLeft = false; requestCanvasUpdate(); return; }
+        isSyncingRight = true;
+        const ratio = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
+        rightPane.scrollTop = ratio * (rightPane.scrollHeight - rightPane.clientHeight || 1);
         requestCanvasUpdate();
-    }, { passive: true });
-    
-    rightPane.addEventListener('scroll', () => {
-        if (isSyncLocked && !isSyncing) syncScroll('right');
+    }, {passive: true});
+
+    rightPane.addEventListener('scroll', function() {
+        if (!isSyncLocked) { requestCanvasUpdate(); return; }
+        if (isSyncingRight) { isSyncingRight = false; requestCanvasUpdate(); return; }
+        isSyncingLeft = true;
+        const ratio = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
+        leftPane.scrollTop = ratio * (leftPane.scrollHeight - leftPane.clientHeight || 1);
         requestCanvasUpdate();
-    }, { passive: true });
+    }, {passive: true});
 
     window.addEventListener('resize', () => {
         resizeCanvas();
-        cacheOmniPositions();
         updateOmniCanvas();
     });
 
@@ -992,45 +1440,53 @@ async function showOmniVisionUI() {
 window.closeOmniVision = function() {
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
-    if (canvasRafId) cancelAnimationFrame(canvasRafId);
+    omniLeftArrayFrozen = [];
 };
 
-function syncScroll(source) {
-    const leftPane = document.getElementById('omni-left-pane');
-    const rightPane = document.getElementById('omni-right-pane');
-    if (!leftPane || !rightPane) return;
-
-    isSyncing = true;
-    if (source === 'left') {
-        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
-        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
-    } else {
-        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
-        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
-    }
-    requestAnimationFrame(() => { isSyncing = false; });
+function renderOmniLeftPane(leftArray) {
+    const leftContainer = document.getElementById('omni-left-pane');
+    if (!leftContainer) return;
+    const leftFrag = document.createDocumentFragment();
+    leftArray.forEach((node, idx) => {
+        const el = document.createElement('div');
+        el.className = `ds-node-card ds-virtual-list ds-node-hit`; 
+        el.id = `omni-left-node-${idx}`;
+        el.innerHTML = `
+            <div class="ds-node-header">
+                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx} <span class="ds-omni-left-status"></span></span>
+                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
+            </div>
+            <div class="ds-node-content-wrapper">
+                <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
+                <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
+            </div>
+        `;
+        leftFrag.appendChild(el);
+    });
+    leftContainer.innerHTML = '';
+    leftContainer.appendChild(leftFrag);
 }
 
 function requestCanvasUpdate() {
-    if (canvasRafId) cancelAnimationFrame(canvasRafId);
-    canvasRafId = requestAnimationFrame(() => {
-        updateOmniCanvas();
-        canvasRafId = null;
-    });
+    if (!isDrawingCanvas) {
+        requestAnimationFrame(() => {
+            updateOmniCanvas();
+            isDrawingCanvas = false;
+        });
+        isDrawingCanvas = true;
+    }
 }
 
 function triggerOmniRender(state) {
     if (omniRenderTimeout) clearTimeout(omniRenderTimeout);
-    omniRenderTimeout = setTimeout(() => renderOmniVision(state), 100);
+    omniRenderTimeout = setTimeout(() => renderOmniVision(state), 50);
 }
 
 async function renderOmniVision(state) {
-    const leftContainer = document.getElementById('omni-left-pane');
     const rightContainer = document.getElementById('omni-right-pane');
-    if (!leftContainer || !rightContainer) return;
+    if (!rightContainer) return;
 
-    // 左侧绝对冻结
-    const leftArray = fastClone(state.lastSentSequence || []);
+    const leftArray = omniLeftArrayFrozen;
     
     let rightArray = [];
     let breakIndex = -1;
@@ -1116,29 +1572,18 @@ async function renderOmniVision(state) {
         }
     });
 
-    // 渲染左面板 (默认折叠)
-    const leftFrag = document.createDocumentFragment();
     leftArray.forEach((node, idx) => {
         const isDeleted = !leftMatched.has(idx);
-        const el = document.createElement('div');
-        el.className = `ds-node-card ${isDeleted ? 'ds-node-miss' : 'ds-node-hit'}`;
-        el.id = `omni-left-node-${idx}`;
-        el.innerHTML = `
-            <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx} ${isDeleted ? '<span style="color:var(--ds-red); font-weight:bold;">(DELETED)</span>' : ''}</span>
-                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
-            </div>
-            <div class="ds-node-content-wrapper">
-                <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
-                <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
-            </div>
-        `;
-        leftFrag.appendChild(el);
+        const el = document.getElementById(`omni-left-node-${idx}`);
+        if (el) {
+            el.className = `ds-node-card ds-virtual-list ${isDeleted ? 'ds-node-miss' : 'ds-node-hit'}`;
+            const statusSpan = el.querySelector('.ds-omni-left-status');
+            if (statusSpan) {
+                statusSpan.innerHTML = isDeleted ? '<span style="color:var(--ds-red); font-weight:bold; margin-left:6px;">(DELETED)</span>' : '';
+            }
+        }
     });
-    leftContainer.innerHTML = '';
-    leftContainer.appendChild(leftFrag);
 
-    // 渲染右面板
     const rightFrag = document.createDocumentFragment();
     rightArray.forEach((node, idx) => {
         const isMiss = breakIndex !== -1 && idx >= breakIndex;
@@ -1148,19 +1593,19 @@ async function renderOmniVision(state) {
         let newLabel = '';
         
         if (isNew) {
-            if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; font-weight:bold;">(NEW LORE)</span>'; }
-            else if (node._omniCat === 'dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold;">(NEW DYN)</span>'; }
-            else if (node._omniCat === 'history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); font-weight:bold;">(NEW HIS)</span>'; }
-            else if (node._omniCat === 'flashback') { cardClass = 'ds-node-flashback'; newLabel = '<span style="color:var(--ds-pink); font-weight:bold;">(FLASHBACK)</span>'; }
-            else if (node._omniCat === 'retcon') { cardClass = 'ds-node-retcon'; newLabel = '<span style="color:var(--ds-gray); font-weight:bold;">(RETCON)</span>'; }
-            else if (node._omniCat === 'patch') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold;">(PATCH)</span>'; }
-            else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold;">(NEW SYS)</span>'; }
+            if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; font-weight:bold; margin-left:6px;">(NEW LORE)</span>'; }
+            else if (node._omniCat === 'dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold; margin-left:6px;">(NEW DYN)</span>'; }
+            else if (node._omniCat === 'history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); font-weight:bold; margin-left:6px;">(NEW HIS)</span>'; }
+            else if (node._omniCat === 'flashback') { cardClass = 'ds-node-flashback'; newLabel = '<span style="color:var(--ds-pink); font-weight:bold; margin-left:6px;">(FLASHBACK)</span>'; }
+            else if (node._omniCat === 'retcon') { cardClass = 'ds-node-retcon'; newLabel = '<span style="color:var(--ds-gray); font-weight:bold; margin-left:6px;">(RETCON)</span>'; }
+            else if (node._omniCat === 'patch') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(PATCH)</span>'; }
+            else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold; margin-left:6px;">(NEW SYS)</span>'; }
         } else if (node._omniCat === 'patch' || node._omniCat === 'retcon' || node._omniCat === 'flashback') {
             cardClass = 'ds-node-patch';
         }
 
         const el = document.createElement('div');
-        el.className = `ds-node-card ${cardClass}`;
+        el.className = `ds-node-card ds-virtual-list ${cardClass}`;
         el.id = `omni-right-node-${idx}`;
         el.innerHTML = `
             <div class="ds-node-header">
@@ -1186,7 +1631,7 @@ async function renderOmniVision(state) {
 
 function resizeCanvas() {
     const canvas = document.getElementById('omni-canvas');
-    const container = document.getElementById('omni-canvas-container');
+    const container = canvas?.parentElement;
     if (!canvas || !container) return;
     
     const rect = container.getBoundingClientRect();
@@ -1194,132 +1639,111 @@ function resizeCanvas() {
     
     canvas.width = rect.width * dpr;
     canvas.height = rect.height * dpr;
-    
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
 }
 
 function cacheOmniPositions() {
-    const container = document.getElementById('omni-canvas-container');
-    const leftPane = document.getElementById('omni-left-pane');
-    const rightPane = document.getElementById('omni-right-pane');
-    if (!container || !leftPane || !rightPane) return;
-
-    const containerRect = container.getBoundingClientRect();
-
     omniMappings.forEach(m => {
         if (m.left !== -1) {
             const el = document.getElementById(`omni-left-node-${m.left}`);
-            if (el) {
-                const rect = el.getBoundingClientRect();
-                m.leftY = rect.top + rect.height/2 - containerRect.top;
-                m.leftVis = rect.top < containerRect.bottom && rect.bottom > containerRect.top;
-            } else {
-                m.leftVis = false;
-            }
+            if (el) { m.lTop = el.offsetTop; m.lHeight = el.offsetHeight; }
         }
         if (m.right !== -1) {
             const el = document.getElementById(`omni-right-node-${m.right}`);
-            if (el) {
-                const rect = el.getBoundingClientRect();
-                m.rightY = rect.top + rect.height/2 - containerRect.top;
-                m.rightVis = rect.top < containerRect.bottom && rect.bottom > containerRect.top;
-            } else {
-                m.rightVis = false;
-            }
+            if (el) { m.rTop = el.offsetTop; m.rHeight = el.offsetHeight; }
         }
     });
 }
 
 function updateOmniCanvas() {
     const canvas = document.getElementById('omni-canvas');
-    const container = document.getElementById('omni-canvas-container');
-    if (!canvas || !container) return;
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
+    if (!canvas || !leftPane || !rightPane) return;
 
     const ctx = canvas.getContext('2d');
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const width = canvas.width / (window.devicePixelRatio || 1);
+    const height = canvas.height / (window.devicePixelRatio || 1);
     
-    ctx.clearRect(0, 0, width, height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
-    if (omniMappings.length === 0) return;
-
-    const cpOffset = width / 2.5;
+    const lScroll = leftPane.scrollTop;
+    const rScroll = rightPane.scrollTop;
 
     omniMappings.forEach(m => {
-        if (!m.leftVis && !m.rightVis) return;
-
-        let startY = m.leftY ?? 0;
-        let endY = m.rightY ?? 0;
+        let startX = 0, startY = 0, endX = width, endY = 0;
+        let isVisible = false;
 
         if (m.type === 'deleted') {
-            if (!m.leftVis) return;
+            if (m.lTop === undefined) return;
+            startY = m.lTop - lScroll + (m.lHeight / 2);
             endY = startY;
-        } else if (m.type.startsWith('new_')) {
-            if (!m.rightVis) return;
+            endX = width / 2;
+            if (startY > -50 && startY < height + 50) isVisible = true;
+        } 
+        else if (m.type.startsWith('new_')) {
+            if (m.rTop === undefined) return;
+            endY = m.rTop - rScroll + (m.rHeight / 2);
             startY = endY;
+            startX = width / 2;
+            if (endY > -50 && endY < height + 50) isVisible = true;
+        } 
+        else {
+            if (m.lTop === undefined || m.rTop === undefined) return;
+            startY = m.lTop - lScroll + (m.lHeight / 2);
+            endY = m.rTop - rScroll + (m.rHeight / 2);
+            if ((startY > -50 && startY < height + 50) || (endY > -50 && endY < height + 50)) isVisible = true;
         }
 
+        if (!isVisible) return;
+
         ctx.beginPath();
-        
-        if (m.type === 'deleted') {
-            ctx.moveTo(0, startY);
-            ctx.bezierCurveTo(cpOffset, startY, cpOffset, startY + 30, width / 2, startY + 30);
+        ctx.moveTo(startX, startY);
+        ctx.bezierCurveTo(startX + 40, startY, endX - 40, endY, endX, endY);
+
+        ctx.lineWidth = 2;
+        if (m.type === 'fuzzy' || m.type === 'deleted' || m.type.startsWith('new_')) {
+            ctx.setLineDash([5, 5]);
+        } else {
+            ctx.setLineDash([]);
+        }
+
+        if (m.type === 'perfect') { ctx.strokeStyle = 'rgba(152,195,121,0.8)'; }
+        else if (m.type === 'fuzzy') { ctx.strokeStyle = 'rgba(229,192,123,0.8)'; }
+        else if (m.type === 'patch_link') { ctx.strokeStyle = 'rgba(198,120,221,0.8)'; }
+        else if (m.type === 'deleted') {
             const grad = ctx.createLinearGradient(0, 0, width/2, 0);
-            grad.addColorStop(0, 'rgba(224,108,117,0.9)');
+            grad.addColorStop(0, 'rgba(224,108,117,0.8)');
             grad.addColorStop(1, 'rgba(224,108,117,0)');
             ctx.strokeStyle = grad;
-            ctx.lineWidth = 2.5;
-            ctx.shadowBlur = 8;
-            ctx.shadowColor = 'rgba(224,108,117,0.5)';
-            ctx.stroke();
-        } else if (m.type.startsWith('new_')) {
-            ctx.moveTo(width / 2, endY - 30);
-            ctx.bezierCurveTo(width - cpOffset, endY - 30, width - cpOffset, endY, width, endY);
-            let color = '0,229,255';
+        }
+        else if (m.type.startsWith('new_')) {
+            const grad = ctx.createLinearGradient(width/2, 0, width, 0);
+            let color = '0,229,255'; 
             if (m.type === 'new_lorebook') color = '86,182,194';
             else if (m.type === 'new_dynamic') color = '209,154,102';
             else if (m.type === 'new_history') color = '152,195,121';
             else if (m.type === 'new_patch') color = '198,120,221';
             else if (m.type === 'new_flashback') color = '255,121,198';
             else if (m.type === 'new_retcon') color = '171,178,191';
-            const grad = ctx.createLinearGradient(width/2, 0, width, 0);
+            
             grad.addColorStop(0, `rgba(${color},0)`);
-            grad.addColorStop(1, `rgba(${color},0.9)`);
+            grad.addColorStop(1, `rgba(${color},0.8)`);
             ctx.strokeStyle = grad;
-            ctx.lineWidth = 2.5;
-            ctx.shadowBlur = 8;
-            ctx.shadowColor = `rgba(${color},0.5)`;
-            ctx.stroke();
-        } else {
-            ctx.moveTo(0, startY);
-            ctx.bezierCurveTo(cpOffset, startY, width - cpOffset, endY, width, endY);
-            ctx.lineWidth = 2.5;
-            ctx.shadowBlur = 8;
-            if (m.type === 'perfect') {
-                ctx.strokeStyle = 'rgba(152,195,121,0.7)';
-                ctx.shadowColor = 'rgba(152,195,121,0.4)';
-                ctx.setLineDash([]);
-            } else if (m.type === 'fuzzy') {
-                ctx.strokeStyle = 'rgba(229,192,123,0.9)';
-                ctx.shadowColor = 'rgba(229,192,123,0.5)';
-                ctx.setLineDash([6, 6]);
-            } else if (m.type === 'patch_link') {
-                ctx.strokeStyle = 'rgba(198,120,221,0.9)';
-                ctx.shadowColor = 'rgba(198,120,221,0.5)';
-                ctx.setLineDash([]);
-            }
-            ctx.stroke();
         }
-        ctx.shadowBlur = 0;
+        ctx.stroke();
     });
-    ctx.setLineDash([]);
+    
+    ctx.restore();
 }
 
 // ==========================================
-// 9. UI 面板與高階事件綁定 (保持原样)
+// 9. UI 面板與高階事件綁定
 // ==========================================
-// ... (所有原有 UI 渲染代码、事件绑定、启动逻辑等，完整保留)
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
     if (container.length === 0) return;
@@ -1524,9 +1948,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v53-opt-drawer">
+        <div class="inline-drawer" id="ds-v52-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v53)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v52)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -1982,7 +2406,7 @@ async function setupUI() {
         $('#ds-cache-vector').on('change', function () { Settings.vectorQuarantine = $(this).is(':checked'); safeSave(); });
         $('#ds-log-autoscroll').on('change', function () { Settings.autoScrollLog = $(this).is(':checked'); safeSave(); });
 
-        $('#ds-btn-diagnostic').on('click', showDiagnosticCenter);
+        $('#ds-btn-diagnostic').on('click', () => { if(typeof toastr !== 'undefined') toastr.info("此功能已集成于后台运算", "系统提示"); });
         $('#ds-btn-diagnostic-report').on('click', generateDiagnosticReport);
         $('#ds-btn-export-json').on('click', exportLogsAsJSON);
         $('#ds-btn-undo-action').on('click', () => restoreVaultBackup(0));
@@ -2007,7 +2431,7 @@ async function setupUI() {
         });
         
         $('#ds-btn-deep-clean').on('click', () => {
-            if(!confirm("🧹 这会删掉所有未被锁定，且【没有节点内容】或【超过30天没玩过】的旧缓存。确定执行吗？")) return;
+            if(!confirm("🧹 这会删掉所有未被锁定，且【没有节点内容】或【超过30天没聊过】的旧缓存。确定执行吗？")) return;
             createVaultBackup("深度清理前备份");
             let count = 0; const now = Date.now();
             for (let k in Settings.chats) {
@@ -2051,7 +2475,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v53_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v52_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2119,7 +2543,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v53 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v52 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
