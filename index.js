@@ -141,11 +141,17 @@ function getChatKey() {
 
 function getChatState(chatKeyInfo) {
     if (!Settings.chats[chatKeyInfo.key]) {
-        Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, character: chatKeyInfo.character, frozenSequence: [] };
+        Settings.chats[chatKeyInfo.key] = { 
+            label: chatKeyInfo.label, 
+            character: chatKeyInfo.character,
+            frozenSequence: [] 
+        };
         safeSave();
-    } else if (!Settings.chats[chatKeyInfo.key].character) {
-        Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
-        safeSave();
+    } else {
+        if (!Settings.chats[chatKeyInfo.key].character) {
+            Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
+            safeSave();
+        }
     }
     return Settings.chats[chatKeyInfo.key];
 }
@@ -186,20 +192,20 @@ const Detectors = {
     isLorebook: (msg) => {
         if (!msg.name) return false;
         const n = msg.name.toLowerCase();
-        return n.includes('lorebook') || n.includes('world');
+        return n.includes('lorebook') || n.includes('world') || n.includes('wi');
     },
     
-    // 🌟 精準來源偵測器
+    // 🌟 極致精準的來源識別
     getOriginInfo: (msg, type) => {
         if (type === 'current_user') return { source: '用戶輸入', creator: '用戶', category: 'USER' };
-        if (type === 'prefill') return { source: '預填充', creator: '用戶/ST', category: 'PREFILL' };
+        if (type === 'prefill') return { source: '預填充', creator: '大模型', category: 'PREFILL' };
         if (type === 'history_user') return { source: '用戶歷史輸入', creator: '用戶', category: 'USER' };
         if (type === 'history_ai') return { source: 'AI歷史回覆', creator: '大模型', category: 'AI' };
         if (msg.isDSPatch) return { source: '本插件', creator: 'DS Cache', category: 'PATCH' };
         
         if (msg.name) {
             const n = msg.name.toLowerCase();
-            if (n.includes('lorebook') || n.includes('world')) return { source: '世界書', creator: '用戶/ST', category: 'SYS' };
+            if (n.includes('lorebook') || n.includes('world') || n.includes('wi')) return { source: '世界書', creator: '用戶/ST', category: 'SYS' };
             if (n.includes('author')) return { source: '預設', creator: '用戶', category: 'SYS' };
             if (!Detectors.isDefaultPrompt(msg)) return { source: `其他插件(${msg.name})`, creator: msg.name, category: 'SYS' };
         }
@@ -222,35 +228,35 @@ async function interceptAndRestructurePrompt(data) {
 
         // --- 階段 1：拆解 ST 傳入的原始陣列 ---
         let currentUserMsg = null;
-        let prefills = [];
+        let prefillMsg = null;
         let incomingPool = [];
-        
-        // 🌟 精準定位最後一次的 User 輸入
-        let foundCurrentUser = false;
 
+        // 🌟 精準識別 User 與 Prefill
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             const msg = incomingStream[i];
             
             let type = 'sys';
-            if (msg.role === 'user') {
-                if (!foundCurrentUser) { type = 'current_user'; foundCurrentUser = true; }
-                else { type = 'history_user'; }
+            if (!currentUserMsg && msg.role === 'user') {
+                type = 'current_user';
+                currentUserMsg = msg;
+            } else if (!currentUserMsg && !prefillMsg && msg.role === 'assistant') {
+                type = 'prefill';
+                prefillMsg = msg;
+            } else if (msg.role === 'user') {
+                type = 'history_user';
             } else if (msg.role === 'assistant') {
-                if (!foundCurrentUser) { type = 'prefill'; }
-                else { type = 'history_ai'; }
+                type = 'history_ai';
             }
 
             const origin = Detectors.getOriginInfo(msg, type);
             
             if (origin.source.startsWith('其他插件')) {
-                otherPluginActions.push(`- 偵測到其他插件 (**${origin.creator}**) 注入了提示詞，長度: ${msg.content.length}，原始位置: ${i}`);
+                otherPluginActions.push(`- 偵測到其他插件動作: **${origin.creator}** 注入了提示詞 (長度: ${msg.content.length})`);
             }
 
             if (type === 'current_user') {
-                currentUserMsg = msg;
                 ledger.push({ ref: msg, origIdx: i, ...origin, gen: '新增', action: '置底發送', proto: '-', status: '未凍結' });
             } else if (type === 'prefill') {
-                prefills.unshift(msg);
                 ledger.push({ ref: msg, origIdx: i, ...origin, gen: '新增', action: '置底發送', proto: '-', status: '未凍結' });
             } else {
                 incomingPool.unshift({
@@ -401,7 +407,7 @@ async function interceptAndRestructurePrompt(data) {
 
         const finalStream = [...state.frozenSequence];
         if (currentUserMsg) finalStream.push(currentUserMsg);
-        prefills.forEach(p => finalStream.push(p));
+        if (prefillMsg) finalStream.push(prefillMsg);
 
         // 寫入最終索引到帳本
         ledger.forEach(entry => {
@@ -426,14 +432,12 @@ async function interceptAndRestructurePrompt(data) {
             mdLog += `| 最終排序 | 原始排序 | 分類 | 來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 提示詞內容摘要 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
             
-            // 🌟 嚴格按照最終排序輸出，被刪除的沉底
+            // 🌟 嚴格按照最終輸出給 AI 的排序
             ledger.sort((a, b) => {
-                const aFinal = a.finalIdx === '-' ? 9999 : a.finalIdx;
-                const bFinal = b.finalIdx === '-' ? 9999 : b.finalIdx;
-                if (aFinal !== bFinal) return aFinal - bFinal;
-                const aOrig = a.origIdx === '-' ? 9999 : a.origIdx;
-                const bOrig = b.origIdx === '-' ? 9999 : b.origIdx;
-                return aOrig - bOrig;
+                if (a.finalIdx === '-' && b.finalIdx === '-') return (a.origIdx === '-' ? 999 : a.origIdx) - (b.origIdx === '-' ? 999 : b.origIdx);
+                if (a.finalIdx === '-') return 1;
+                if (b.finalIdx === '-') return -1;
+                return a.finalIdx - b.finalIdx;
             });
 
             ledger.forEach(l => {
@@ -559,14 +563,14 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
-    // 🌟 注入極致橫向排版 CSS
+    // 🌟 注入極致橫向排版的 CSS
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
                 .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; white-space: nowrap; }
-                .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; white-space: nowrap; }
-                .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
+                .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 350px; overflow: hidden; text-overflow: ellipsis; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
                 .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.15); }
             </style>
@@ -632,6 +636,7 @@ async function setupUI() {
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                     <b style="font-size: 13px; color: #aaa;">📝 全景 Markdown 日誌：</b>
                     <div>
+                        <!-- 🌟 純圖示按鈕 -->
                         <button id="ds-log-copy" class="menu_button" title="複製日誌" style="padding: 4px 10px; font-size: 14px; margin: 0 2px;"><i class="fa-solid fa-copy"></i></button>
                         <button id="ds-log-export" class="menu_button" title="導出 .md" style="padding: 4px 10px; font-size: 14px; margin: 0 2px;"><i class="fa-solid fa-download"></i></button>
                         <button id="ds-log-clear" class="menu_button" title="清空日誌" style="padding: 4px 10px; font-size: 14px; margin: 0 2px;"><i class="fa-solid fa-trash"></i></button>
@@ -690,7 +695,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致監控版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致日誌重構版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
