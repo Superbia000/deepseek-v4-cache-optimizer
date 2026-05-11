@@ -2,14 +2,14 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Theory of Everything UI)
+// 1. 樣式注入 (Ultimate Truth UI)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
     const style = document.createElement('style');
     style.id = 'ds-cache-styles';
     style.innerHTML = `
-        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-blue: #61afef; --ds-bg: rgba(15, 20, 25, 0.8); --ds-border: rgba(0, 229, 255, 0.3); }
+        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-blue: #61afef; --ds-bg: rgba(15, 20, 25, 0.75); --ds-border: rgba(0, 229, 255, 0.25); }
         
         .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
@@ -19,11 +19,11 @@ const injectCSS = () => {
         .ds-scroll::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.5); border-radius: 4px; }
         .ds-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.9); box-shadow: 0 0 12px var(--ds-cyan); }
 
-        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-        .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.6); box-shadow: 0 8px 30px rgba(0, 229, 255, 0.2); }
-        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 12px rgba(0,229,255,0.5); letter-spacing: 0.5px; }
-        .ds-opt-header:hover { background: linear-gradient(90deg, rgba(0,229,255,0.25) 0%, rgba(0,0,0,0) 100%); color: #fff; }
-        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.4); border-top: 1px solid rgba(255,255,255,0.08); }
+        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.4); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.5); box-shadow: 0 8px 30px rgba(0, 229, 255, 0.15); }
+        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 12px rgba(0,229,255,0.4); letter-spacing: 0.5px; }
+        .ds-opt-header:hover { background: linear-gradient(90deg, rgba(0,229,255,0.2) 0%, rgba(0,0,0,0) 100%); color: #fff; }
+        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.3); border-top: 1px solid rgba(255,255,255,0.05); }
         .ds-opt-group.open .ds-opt-content { display: flex; animation: dsFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
 
@@ -35,7 +35,7 @@ const injectCSS = () => {
         .ds-row-text b { color: var(--ds-yellow); font-weight: 600; letter-spacing: 0.5px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
         .ds-row-text span { font-size: 11px; color: rgba(171, 178, 191, 0.8); font-weight: normal; margin-top: 4px; line-height: 1.5; }
         
-        .ds-tooltip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--ds-cyan); background: rgba(0,229,255,0.1); border-radius: 50%; width: 16px; height: 16px; font-size: 11px; font-weight: bold; cursor: help; border: 1px solid rgba(0,229,255,0.4); flex-shrink: 0; transition: 0.2s; }
+        .ds-tooltip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--ds-cyan); background: rgba(0,229,255,0.1); border-radius: 50%; width: 16px; height: 16px; font-size: 11px; font-weight: bold; cursor: help; border: 1px solid rgba(0,229,255,0.3); flex-shrink: 0; transition: 0.2s; }
         .ds-tooltip-icon:hover { background: var(--ds-cyan); color: #000; box-shadow: 0 0 10px var(--ds-cyan); transform: scale(1.1); }
         .ds-perf-badge { font-size: 9px; padding: 2px 6px; border-radius: 4px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
         .ds-perf-low { background: rgba(152,195,121,0.15); color: var(--ds-green); border: 1px solid rgba(152,195,121,0.3); }
@@ -117,7 +117,7 @@ const injectCSS = () => {
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s; }
 
         /* ==========================================
-           Omni-Vision v55 Quantum Flow Styles
+           Omni-Vision v54 Fluid Vision Styles
            ========================================== */
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 25px !important; overflow: hidden; }
         
@@ -147,14 +147,15 @@ const injectCSS = () => {
         /* 矩陣視窗區域 (Quantum Matrix Layout) */
         .ds-omni-matrix-container { display: flex; flex: 1; min-height: 0; position: relative; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 35px rgba(0,0,0,0.9); }
         
-        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; position: relative; z-index: 2; width: 50%; }
+        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; position: relative; z-index: 2; width: 45%; }
         .ds-omni-pane-header { padding: 12px 20px; background: rgba(255,255,255,0.08); border-bottom: 1px solid rgba(255,255,255,0.15); display: flex; justify-content: space-between; align-items: center; font-weight: bold; flex-shrink: 0; font-size: 14px; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; position: relative; scroll-behavior: auto; will-change: scroll-position; }
         
-        /* 100% 全覆蓋畫布橋樑 (Full-Overlay Canvas Bridge) */
-        .ds-omni-bridge { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: hidden; }
+        /* 畫布橋樑 (Canvas Bridge) - 確保 z-index 正確且不阻擋點擊 */
+        .ds-omni-bridge { position: absolute; top: 0; left: 45%; width: 10%; height: 100%; z-index: 1; pointer-events: none; overflow: visible; }
         #omni-svg-canvas { width: 100%; height: 100%; position: absolute; top: 0; left: 0; overflow: visible; }
-        #omni-svg-canvas path { will-change: d; transition: stroke 0.3s; filter: drop-shadow(0 0 3px rgba(255,255,255,0.15)); }
+        /* 移除 d 屬性的 transition，這是導致滾動卡頓和線條亂飛的元兇！ */
+        #omni-svg-canvas path { transition: stroke 0.3s, opacity 0.3s; stroke-linecap: round; }
 
         /* 卡片樣式 */
         .ds-node-card { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
@@ -173,15 +174,10 @@ const injectCSS = () => {
         .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; color: #8b92a5; border-bottom: 1px dashed rgba(255,255,255,0.2); padding-bottom: 6px; }
         
         .ds-node-content-wrapper { position: relative; }
-        .ds-node-content { line-height: 1.6; transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .ds-node-content { line-height: 1.6; }
         .ds-node-content.collapsed { max-height: 70px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
         .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 6px; background: rgba(0,229,255,0.1); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.25); font-weight: bold; }
         .ds-node-expand-btn:hover { background: rgba(0,229,255,0.25); border-color: rgba(0,229,255,0.5); box-shadow: 0 0 12px rgba(0,229,255,0.3); }
-
-        /* Toast 聚合樣式 */
-        .ds-toast-summary { font-family: 'Fira Code', monospace; font-size: 11px; margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; line-height: 1.5; }
-        .ds-toast-summary div { display: flex; justify-content: space-between; gap: 10px; }
-        .ds-toast-summary span { color: var(--ds-cyan); font-weight: bold; }
 
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -206,9 +202,9 @@ function fastClone(obj) {
 }
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v54 || extension_settings.ds_cache_v53 || {};
-    if (!extension_settings.ds_cache_v55) {
-        extension_settings.ds_cache_v55 = {
+    const oldSettings = extension_settings.ds_cache_v53 || extension_settings.ds_cache_v52 || {};
+    if (!extension_settings.ds_cache_v54) {
+        extension_settings.ds_cache_v54 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -248,13 +244,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v55;
+    Settings = extension_settings.ds_cache_v54;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v55_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v54_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -270,7 +266,7 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v55_snapshot', dataStr);
+            localStorage.setItem('ds_cache_v54_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -295,7 +291,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v55_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v54_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -350,13 +346,12 @@ const ToastManager = {
             else if (item.type === 'warning') toastr.warning(text, '终极真理协议');
             else toastr.info(text, '终极真理协议');
         } else {
-            let summaryHtml = `<div class="ds-toast-summary">`;
+            let summary = [];
             for (let k of keys) {
                 const item = this.queue[k];
-                summaryHtml += `<div>${item.icon} ${item.msg.split('：')[0]} <span>x${item.count}</span></div>`;
+                summary.push(`${item.icon} ${item.msg.split('：')[0]} (x${item.count})`);
             }
-            summaryHtml += `</div>`;
-            toastr.success(`<b>⚡ 矩阵协议批量触发</b>${summaryHtml}`, '终极真理协议');
+            toastr.success(`⚡ 矩阵协议批量触发:<br>${summary.join('<br>')}`, '终极真理协议');
         }
 
         this.queue = {};
@@ -952,18 +947,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         }
                     }
                 } else {
-                    // 系統提示詞被刪除 (ST 截斷或用戶手動刪除)
-                    if (Settings.permanentMemoryImprint && frozenItem._omniCat === 'lorebook') {
+                    if (Settings.permanentMemoryImprint) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
-                        if (!isDryRun) Logger.debug(`[🖨️ 永久记忆] 强制保留被删除的世界书: ${truncateLog(frozenItem.content)}`);
-                    } else if (Settings.voidBridging && frozenItem._omniCat !== 'dynamic') {
-                        frozenItem._omniCat = 'frozen';
-                        newFrozenSequence.push(frozenItem); 
-                        if (!isDryRun) {
-                            Logger.debug(`[🌉 虚空架桥] 强制保留被删除的系统提示词: ${truncateLog(frozenItem.content)}`);
-                            triggerToast('void', '虚空架桥：已修复上下文断层', 'info', '🌉');
-                        }
+                        if (!isDryRun) Logger.debug(`[🖨️ 永久记忆] 强制保留被删除的设定: ${truncateLog(frozenItem.content)}`);
                     }
                 }
             } 
@@ -1017,23 +1004,13 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newFrozenSequence.push(incomingItem); 
                     }
                 } else {
-                    // 歷史對話被刪除 (ST 截斷或用戶手動刪除)
                     const isPrefix = (i === 0);
-                    const isEarly = (i < state.frozenSequence.length * 0.3); // 前 30% 視為早期記憶
-                    
                     if (isPrefix && Settings.prefixAnchor) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
                         if (!isDryRun) {
                             Logger.warn(`[⚓ 绝对前缀锚点] 强制保留被截断的头部。`);
                             triggerToast('prefix', '前缀锚点：已强制保留被截断的头部', 'warning', '⚓');
-                        }
-                    } else if (isEarly && Settings.amnesiaProtocol) {
-                        frozenItem._omniCat = 'frozen';
-                        newFrozenSequence.push(frozenItem); 
-                        if (!isDryRun) {
-                            Logger.debug(`[🧠 失忆症协议] 归档早期记忆。`);
-                            triggerToast('amnesia', '失忆症协议：已归档早期记忆', 'info', '🧠');
                         }
                     } else if (Settings.retconProtocol) {
                         frozenItem._omniCat = 'frozen';
@@ -1115,10 +1092,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         for (const item of newFrozenSequence) {
             if (item.tag === 'SYS' && Settings.absoluteDeduplication) {
                 if (item._omniCat === 'sys_default' || item._omniCat === 'sys_lore' || item._omniCat === 'sys_other' || item._omniCat === 'frozen') {
-                    if (seenSysNorms.has(item.hash)) {
-                        if (!isDryRun) Logger.trace(`[🗜️ 绝对去重] 折叠了重复的系统提示词。`);
-                        continue;
-                    }
+                    if (seenSysNorms.has(item.hash)) continue;
                     seenSysNorms.add(item.hash);
                 }
             }
@@ -1310,7 +1284,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Flow)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Fluid Vision)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = []; 
@@ -1319,9 +1293,6 @@ let isSyncingLeft = false;
 let isSyncingRight = false;
 let positionCache = []; 
 let resizeObserver = null;
-let matrixRect = null;
-let lPaneRect = null;
-let rPaneRect = null;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1336,7 +1307,7 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 终极真理沙盒</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 量子矩阵沙盒</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
@@ -1356,7 +1327,7 @@ async function showOmniVisionUI() {
                     </div>
                     <div class="ds-omni-control-body">
                         <div class="ds-omni-actions-row">
-                            <button id="omni-btn-sync" class="ds-omni-action-btn active" title="影同步协议 2.0：硬件级锁定双向滚动"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
+                            <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
                             <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
                             <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
                             <button id="omni-btn-export-matrix" class="ds-omni-action-btn" title="导出当前矩阵状态以供排错"><i class="fa-solid fa-bug"></i> 导出矩阵状态</button>
@@ -1416,7 +1387,7 @@ async function showOmniVisionUI() {
                         </div>
                     </div>
 
-                    <!-- 100% 全覆蓋畫布橋樑 (Full-Overlay Canvas Bridge) -->
+                    <!-- 畫布橋樑 (Canvas Bridge) -->
                     <div class="ds-omni-bridge">
                         <svg id="omni-svg-canvas">
                             <defs>
@@ -1490,13 +1461,13 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        animateLines();
+        setTimeout(recalcOmniPositions, 250);
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        animateLines();
+        setTimeout(recalcOmniPositions, 250);
     });
     
     $('#omni-btn-export-matrix').on('click', function() {
@@ -1522,37 +1493,42 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        animateLines();
+        setTimeout(recalcOmniPositions, 250);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 零重排滾動監聽 (硬體級防回音鎖)
+    // 零重排滾動監聽 (防抖動雙向同步)
     const lPane = document.getElementById('omni-left-content');
     const rPane = document.getElementById('omni-right-content');
     
-    lPane.addEventListener('scroll', () => {
+    lPane.addEventListener('scroll', function() {
         if (!isSyncScroll) { requestAnimationFrame(drawOmniLinesFast); return; }
-        if (isSyncingRight) { isSyncingRight = false; return; }
-        isSyncingLeft = true;
-        syncScrollPositions(lPane, rPane);
+        if (!isSyncingLeft) {
+            isSyncingRight = true;
+            syncScrollPositions(lPane, rPane);
+        }
+        isSyncingLeft = false;
         requestAnimationFrame(drawOmniLinesFast);
     }, { passive: true });
 
-    rPane.addEventListener('scroll', () => {
+    rPane.addEventListener('scroll', function() {
         if (!isSyncScroll) { requestAnimationFrame(drawOmniLinesFast); return; }
-        if (isSyncingLeft) { isSyncingLeft = false; return; }
-        isSyncingRight = true;
-        syncScrollPositions(rPane, lPane);
+        if (!isSyncingRight) {
+            isSyncingLeft = true;
+            syncScrollPositions(rPane, lPane);
+        }
+        isSyncingRight = false;
         requestAnimationFrame(drawOmniLinesFast);
     }, { passive: true });
 
-    // 監聽容器尺寸變化
+    // 監聽容器尺寸變化 (解決視窗縮放或卡片展開時線條脫位)
     if (window.ResizeObserver) {
         resizeObserver = new ResizeObserver(() => {
             requestAnimationFrame(recalcOmniPositions);
         });
-        resizeObserver.observe(document.querySelector('.ds-omni-matrix-container'));
+        resizeObserver.observe(lPane);
+        resizeObserver.observe(rPane);
     }
 
     triggerOmniRender(state);
@@ -1572,18 +1548,6 @@ function syncScrollPositions(source, target) {
     if (sourceMax <= 0 || targetMax <= 0) return;
     const ratio = source.scrollTop / sourceMax;
     target.scrollTop = ratio * targetMax;
-}
-
-// 動態黏滯動畫：在卡片展開/摺疊期間，連續 300ms 重新計算座標
-function animateLines() {
-    let start = performance.now();
-    function step(time) {
-        recalcOmniPositions();
-        if (time - start < 300) {
-            requestAnimationFrame(step);
-        }
-    }
-    requestAnimationFrame(step);
 }
 
 function triggerOmniRender(state) {
@@ -1736,10 +1700,10 @@ async function renderOmniVision(state) {
     rightContainer.innerHTML = '';
     rightContainer.appendChild(rightFrag);
 
-    // 4. 初始化 SVG 與快取座標
+    // 4. 初始化 SVG 與快取座標 (延遲確保 DOM 渲染完成)
     requestAnimationFrame(() => {
         initOmniSVGPaths();
-        recalcOmniPositions();
+        setTimeout(recalcOmniPositions, 100);
     });
 }
 
@@ -1753,20 +1717,20 @@ function initOmniSVGPaths() {
 
     omniMappings.forEach(m => {
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        let color, dash = '', strokeWidth = '2';
+        let color, dash = '', strokeWidth = '2.5';
 
-        if (m.type === 'deleted') { color = 'url(#grad-red)'; strokeWidth = '1.5'; dash = '4,4'; } 
+        if (m.type === 'deleted') { color = 'url(#grad-red)'; strokeWidth = '2'; dash = '4,4'; } 
         else if (m.type.startsWith('new_')) {
             if (m.type === 'new_lorebook') color = 'url(#grad-cyan)';
             else if (m.type === 'new_dynamic') color = 'url(#grad-orange)';
             else if (m.type === 'new_history') color = 'url(#grad-green)';
             else if (m.type === 'new_vector') color = 'url(#grad-vector)';
             else color = 'url(#grad-blue)';
-            strokeWidth = '1.5'; dash = '4,4';
+            strokeWidth = '2'; dash = '4,4';
         } 
         else {
-            if (m.type === 'perfect') color = 'rgba(152,195,121,0.6)'; 
-            else if (m.type === 'fuzzy') { color = 'rgba(229,192,123,0.8)'; dash = '5,5'; } 
+            if (m.type === 'perfect') color = 'rgba(152,195,121,0.7)'; 
+            else if (m.type === 'fuzzy') { color = 'rgba(229,192,123,0.8)'; dash = '6,6'; } 
             else if (m.type === 'patch_link') color = 'rgba(198,120,221,0.8)'; 
         }
 
@@ -1780,90 +1744,81 @@ function initOmniSVGPaths() {
     });
 }
 
-// 重新計算並快取所有卡片的絕對座標 (100% 全覆蓋畫布演算法)
+// 重新計算並快取所有卡片的絕對 Y 座標 (使用 getBoundingClientRect 解決錯位)
 function recalcOmniPositions() {
-    const matrix = document.querySelector('.ds-omni-matrix-container');
     const lPane = document.getElementById('omni-left-content');
     const rPane = document.getElementById('omni-right-content');
-    if(!matrix || !lPane || !rPane) return;
-    
-    matrixRect = matrix.getBoundingClientRect();
-    lPaneRect = lPane.getBoundingClientRect();
-    rPaneRect = rPane.getBoundingClientRect();
-    
+    const svg = document.getElementById('omni-svg-canvas');
+    if (!lPane || !rPane || !svg) return;
+
+    const svgRect = svg.getBoundingClientRect();
+    const lRect = lPane.getBoundingClientRect();
+    const rRect = rPane.getBoundingClientRect();
+
+    // 計算滾動容器相對於 SVG 畫布的垂直偏移量
+    const lOffset = lRect.top - svgRect.top;
+    const rOffset = rRect.top - svgRect.top;
+
     positionCache = [];
     omniMappings.forEach(m => {
-        let cache = { pathEl: m.pathEl, type: m.type, lX: null, lY: null, rX: null, rY: null };
+        let cache = { pathEl: m.pathEl, type: m.type, lBaseY: null, rBaseY: null };
         
         if (m.left !== -1) {
             const el = document.getElementById(`omni-left-node-${m.left}`);
-            if (el) {
-                // X 是相對於矩陣容器的絕對座標 (左卡片的右邊緣)
-                cache.lX = (lPaneRect.left - matrixRect.left) + el.offsetLeft + el.offsetWidth;
-                // Y 是相對於滾動內容頂部的座標
-                cache.lY = el.offsetTop + (el.offsetHeight / 2);
-            }
+            if (el) cache.lBaseY = el.offsetTop + (el.offsetHeight / 2) + lOffset;
         }
         if (m.right !== -1) {
             const el = document.getElementById(`omni-right-node-${m.right}`);
-            if (el) {
-                // X 是相對於矩陣容器的絕對座標 (右卡片的左邊緣)
-                cache.rX = (rPaneRect.left - matrixRect.left) + el.offsetLeft;
-                cache.rY = el.offsetTop + (el.offsetHeight / 2);
-            }
+            if (el) cache.rBaseY = el.offsetTop + (el.offsetHeight / 2) + rOffset;
         }
         positionCache.push(cache);
     });
     drawOmniLinesFast();
 }
 
-// 零重排極速繪圖引擎 (在 requestAnimationFrame 中呼叫)
+// 零重排極速繪圖引擎 (純數學計算，0 DOM 讀取)
 function drawOmniLinesFast() {
     const lPane = document.getElementById('omni-left-content');
     const rPane = document.getElementById('omni-right-content');
-    if (!lPane || !rPane || !matrixRect) return;
+    const svg = document.getElementById('omni-svg-canvas');
+    if (!lPane || !rPane || !svg) return;
 
     const lScroll = lPane.scrollTop;
     const rScroll = rPane.scrollTop;
-    const svgHeight = matrixRect.height;
+    const svgWidth = svg.clientWidth;
+    const svgHeight = svg.clientHeight;
+    const ctrlOffset = svgWidth * 0.5; // 動態 S 曲線控制點
 
     positionCache.forEach(c => {
         if (!c.pathEl) return;
-        let startX, startY, endX, endY;
+        let startX = 0, startY, endX = svgWidth, endY, d = '';
 
         if (c.type === 'deleted') {
-            if (c.lY === null) return;
-            startY = c.lY - lScroll;
+            if (c.lBaseY === null) return;
+            startY = c.lBaseY - lScroll;
             if (startY < -50 || startY > svgHeight + 50) { c.pathEl.setAttribute('d', ''); return; }
-            startX = c.lX; 
-            endX = c.lX + 60; // 向右延伸並漸隱
-            endY = startY;
-            c.pathEl.setAttribute('d', `M ${startX} ${startY} L ${endX} ${endY}`);
+            d = `M ${startX} ${startY} L ${svgWidth * 0.4} ${startY}`; // 水平漸隱
         } 
         else if (c.type.startsWith('new_')) {
-            if (c.rY === null) return;
-            startY = c.rY - rScroll;
-            if (startY < -50 || startY > svgHeight + 50) { c.pathEl.setAttribute('d', ''); return; }
-            startX = c.rX - 60; // 從左側漸顯
-            endX = c.rX; 
-            endY = startY;
-            c.pathEl.setAttribute('d', `M ${startX} ${startY} L ${endX} ${endY}`);
+            if (c.rBaseY === null) return;
+            endY = c.rBaseY - rScroll;
+            if (endY < -50 || endY > svgHeight + 50) { c.pathEl.setAttribute('d', ''); return; }
+            d = `M ${svgWidth * 0.6} ${endY} L ${endX} ${endY}`; // 水平漸顯
         } 
         else {
-            if (c.lY === null || c.rY === null) return;
-            startY = c.lY - lScroll;
-            endY = c.rY - rScroll;
+            if (c.lBaseY === null || c.rBaseY === null) return;
+            startY = c.lBaseY - lScroll;
+            endY = c.rBaseY - rScroll;
+            
             if ((startY < -50 || startY > svgHeight + 50) && (endY < -50 || endY > svgHeight + 50)) {
                 c.pathEl.setAttribute('d', ''); return;
             }
-            startX = c.lX; 
-            endX = c.rX;
             
-            // 完美 S 型貝茲曲線演算法
-            const ctrlX = (startX + endX) / 2;
-            const d = `M ${startX} ${startY} C ${ctrlX} ${startY}, ${ctrlX} ${endY}, ${endX} ${endY}`;
-            c.pathEl.setAttribute('d', d);
+            // 優雅的動態 S 型流體曲線
+            d = `M ${startX} ${startY} C ${startX + ctrlOffset} ${startY}, ${endX - ctrlOffset} ${endY}, ${endX} ${endY}`;
         }
+
+        c.pathEl.setAttribute('d', d);
     });
 }
 
@@ -2078,9 +2033,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v55-opt-drawer">
+        <div class="inline-drawer" id="ds-v54-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 终极真理优化器 (v55)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 终极真理优化器 (v54)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -2125,19 +2080,19 @@ async function setupUI() {
                     </div>
                 </div>
 
-                <!-- 2. 绝对领域防御盾 (排序与防断层) -->
+                <!-- 2. 100% 缓存防御盾 -->
                 <div class="ds-opt-group open">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-shield-halved"></i> 2. 绝对领域防御盾 (排序与防断层)</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-shield-halved"></i> 2. 绝对领域防御盾 (100% Cache)</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
-                        <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.6; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; border-left:3px solid var(--ds-cyan);">开启以下功能，系统将强制接管 ST 的提示词排序，并防御各种意外截斷，保住<b style="color:var(--ds-cyan);"> 100% 的缓存</b>！</p>
+                        <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.6; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; border-left:3px solid var(--ds-cyan);">开启以下功能，即使你在聊天中途触发了世界书，或者往回修改、删除了旧对话，系统也能帮你<b style="color:var(--ds-cyan);">保住 100% 的缓存</b>！</p>
                         
                         <div class="ds-row" style="margin-top:5px;">
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-matrix" ${Settings.absoluteOrderMatrix ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan);">🧊 绝对真理追加架构 (Append-Only) <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的系统提示词排序。过去不可变，所有新增加的世界书、动态变量都会被强制追加到最底部。这是 100% 缓存的终极奥义！">?</span></b>
+                                    <b style="color:var(--ds-cyan);">🧊 绝对真理追加架构 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的系统提示词排序。过去不可变，所有新增加的世界书、动态变量都会被强制追加到最底部。这是 100% 缓存的终极奥义！">?</span></b>
                                     <span>(ST 乱序不破缓存)</span>
                                 </div>
                             </label>
@@ -2158,17 +2113,17 @@ async function setupUI() {
                                 <input type="checkbox" id="ds-cache-prefix" ${Settings.prefixAnchor ? 'checked' : ''}> 
                                 <div class="ds-row-text">
                                     <b style="color:var(--ds-cyan);">⚓ 绝对前缀锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致 ST 删除了最旧的第一句话时，系统会强制将其保留，并改为删除中间的对话。这能防止前缀改变导致 100% 缓存断裂！">?</span></b>
-                                    <span>(爆 Token 截断头部不破缓存)</span>
+                                    <span>(爆 Token 截断不破缓存)</span>
                                 </div>
                             </label>
                         </div>
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-amnesia" ${Settings.amnesiaProtocol ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-semantic" ${Settings.semanticNormalize ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🧠 失忆症协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致前 30% 的早期记忆大面积丢失时，自动归档早期记忆，完美保护后续缓存。">?</span></b>
-                                    <span>(早期记忆截断不破缓存)</span>
+                                    <b style="color:var(--ds-green);">🧹 模糊语义引擎 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="自动压缩并忽略 ST 偷偷加入的空白符、换行符、甚至全半角标点差异。只要核心文字没变，缓存就绝对不断。">?</span></b>
+                                    <span>(隐形排版与标点差异不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2177,76 +2132,18 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-void" ${Settings.voidBridging ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当 ST 意外移除了中间的某个系统提示词，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
-                                    <span>(系统提示词中途消失不破缓存)</span>
+                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某句话，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
+                                    <span>(中间删除不破缓存)</span>
                                 </div>
                             </label>
                         </div>
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-imprint" ${Settings.permanentMemoryImprint ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-warp" ${Settings.warpDriveFilter ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-yellow);">🖨️ 永久记忆烙印 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当世界书触发后，将其永久冻结在缓存中。即使 ST 移除了它，缓存也不会断裂。(会稍微增加 Token)">?</span></b>
-                                    <span>(世界书忽隐忽现不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-anchor" ${Settings.anchorStabilization ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan);">⚓ 浮动锚点稳定协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的 Author's Note 深度设定。无论它怎么浮动，系统都会将其绝对锁死在底部，防止破坏缓存。">?</span></b>
-                                    <span>(作者备注浮动不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-summary" ${Settings.summaryAnchor ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-yellow);">📜 摘要沉底锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别包含「总结、前情提要」的提示词，并强制将其沉底，防止动态总结破坏上方缓存。">?</span></b>
-                                    <span>(动态总结不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 3. 时空与记忆操纵 (修改历史) -->
-                <div class="ds-opt-group">
-                    <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-clock-rotate-left"></i> 3. 时空与记忆操纵 (修改历史)</span> <i class="fa-solid fa-chevron-down"></i>
-                    </div>
-                    <div class="ds-opt-content">
-                        <div class="ds-row" style="flex-direction:column; align-items:flex-start; gap:8px; background:rgba(0,0,0,0.3); padding:12px; border-radius:8px; border: 1px solid rgba(255,255,255,0.05);">
-                            <span style="font-size:13px; color:var(--ds-yellow); font-weight:bold;">当我修改了以前的旧对话时，系统该怎么做？</span>
-                            <select id="ds-cache-history-mode" class="ds-select-styled">
-                                <option value="1" ${Settings.historyEditMode===1?'selected':''}>🛡️ 方案 A：时空补丁 (强烈推荐！保住100%缓存，且AI知道你改了)</option>
-                                <option value="2" ${Settings.historyEditMode===2?'selected':''}>🙈 方案 B：幻象隐藏 (保住100%缓存，但AI不知道你改了)</option>
-                                <option value="0" ${Settings.historyEditMode===0?'selected':''}>💥 方案 C：真实修改 (极度不推荐！会破坏大量缓存，烧钱重算)</option>
-                            </select>
-                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*选择「时空补丁」时，系统会保留旧对话，并在最底部偷偷塞一张纸条告诉AI你修改了什么。</span>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-retcon" ${Settings.retconProtocol ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#ff8c94;">🗑️ 吃书协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你删除了旧对话，系统会保留它，并在底部告诉AI「刚才那件事被抹除了」。">?</span></b>
-                                    <span>(删除对话不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-flashback" ${Settings.flashbackInsertion ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#8be9fd;">⏪ 闪回插入协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在历史中间插入新对话，系统会把它抽到底部，告诉AI「这是闪回补充」。">?</span></b>
-                                    <span>(中间插话不破缓存)</span>
+                                    <b style="color:var(--ds-cyan);">🌌 曲率引擎过滤 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动过滤 ST 发送的纯空白或无意义符号消息，防止它们污染并切断缓存。">?</span></b>
+                                    <span>(空白消息不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2257,44 +2154,6 @@ async function setupUI() {
                                 <div class="ds-row-text">
                                     <b style="color:var(--ds-purple);">🌌 平行宇宙协议 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你切换分支或疯狂撤销时，系统会自动跳跃到最匹配的平行宇宙，保住最大缓存。">?</span></b>
                                     <span>(分支/撤销不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-hotreload" ${Settings.hotReloadPersona ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改了角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
-                                    <span>(修改设定不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-nanopatch" ${Settings.nanoPatching ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🔬 量子微创手术 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你只修改了超大角色卡里的几个字，系统会提取差异做成纳米补丁，不重算整个卡。">?</span></b>
-                                    <span>(微小修改不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 4. 语义与排版优化 -->
-                <div class="ds-opt-group">
-                    <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-broom"></i> 4. 语义与排版优化</span> <i class="fa-solid fa-chevron-down"></i>
-                    </div>
-                    <div class="ds-opt-content">
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-semantic" ${Settings.semanticNormalize ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🧹 模糊语义引擎 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="自动压缩并忽略 ST 偷偷加入的空白符、换行符、甚至全半角标点差异。只要核心文字没变，缓存就绝对不断。">?</span></b>
-                                    <span>(隐形排版与标点差异不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2321,10 +2180,20 @@ async function setupUI() {
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-warp" ${Settings.warpDriveFilter ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-anchor" ${Settings.anchorStabilization ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan);">🌌 曲率引擎过滤 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动过滤 ST 发送的纯空白或无意义符号消息，防止它们污染并切断缓存。">?</span></b>
-                                    <span>(空白消息不破缓存)</span>
+                                    <b style="color:var(--ds-cyan);">⚓ 浮动锚点稳定协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的 Author's Note 深度设定。无论它怎么浮动，系统都会将其绝对锁死在底部，防止破坏缓存。">?</span></b>
+                                    <span>(作者备注浮动不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-imprint" ${Settings.permanentMemoryImprint ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-yellow);">🖨️ 永久记忆烙印 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当世界书触发后，将其永久冻结在缓存中。即使 ST 移除了它，缓存也不会断裂。(会稍微增加 Token)">?</span></b>
+                                    <span>(世界书忽隐忽现不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2338,13 +2207,83 @@ async function setupUI() {
                                 </div>
                             </label>
                         </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-amnesia" ${Settings.amnesiaProtocol ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-green);">🧠 失忆症协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致头部记忆大面积丢失时，自动归档早期记忆，完美保护后续缓存。">?</span></b>
+                                    <span>(头部记忆截断不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-nanopatch" ${Settings.nanoPatching ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-green);">🔬 量子微创手术 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你只修改了超大角色卡里的几个字，系统会提取差异做成纳米补丁，不重算整个卡。">?</span></b>
+                                    <span>(微小修改不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-summary" ${Settings.summaryAnchor ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-yellow);">📜 摘要沉底锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别包含「总结、前情提要」的提示词，并强制将其沉底，防止动态总结破坏上方缓存。">?</span></b>
+                                    <span>(动态总结不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-retcon" ${Settings.retconProtocol ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#ff8c94;">🗑️ 吃书协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你删除了旧对话，系统会保留它，并在底部告诉AI「刚才那件事被抹除了」。">?</span></b>
+                                    <span>(删除对话不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-hotreload" ${Settings.hotReloadPersona ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改了角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
+                                    <span>(修改设定不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-flashback" ${Settings.flashbackInsertion ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#8be9fd;">⏪ 闪回插入协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在历史中间插入新对话，系统会把它抽到底部，告诉AI「这是闪回补充」。">?</span></b>
+                                    <span>(中间插话不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+                        
+                        <div class="ds-row" style="flex-direction:column; align-items:flex-start; gap:8px; background:rgba(0,0,0,0.3); padding:12px; border-radius:8px; border: 1px solid rgba(255,255,255,0.05);">
+                            <span style="font-size:13px; color:var(--ds-yellow); font-weight:bold;">当我修改了以前的旧对话时，系统该怎么做？</span>
+                            <select id="ds-cache-history-mode" class="ds-select-styled">
+                                <option value="1" ${Settings.historyEditMode===1?'selected':''}>🛡️ 方案 A：时空补丁 (强烈推荐！保住100%缓存，且AI知道你改了)</option>
+                                <option value="2" ${Settings.historyEditMode===2?'selected':''}>🙈 方案 B：幻象隐藏 (保住100%缓存，但AI不知道你改了)</option>
+                                <option value="0" ${Settings.historyEditMode===0?'selected':''}>💥 方案 C：真实修改 (极度不推荐！会破坏大量缓存，烧钱重算)</option>
+                            </select>
+                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*选择「时空补丁」时，系统会保留旧对话，并在最底部偷偷塞一张纸条告诉AI你修改了什么。</span>
+                        </div>
                     </div>
                 </div>
 
-                <!-- 5. 动态提示词诊断中心 -->
+                <!-- 3. 动态提示词诊断中心 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-stethoscope"></i> 5. 缓存杀手体检中心</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-stethoscope"></i> 3. 缓存杀手体检中心</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.5;">如果你的缓存命中率一直很低，可能是因为预设中包含了每次都会改变的变量（如时间、天气）。点击下方按钮进行体检。</p>
@@ -2364,10 +2303,10 @@ async function setupUI() {
                     </div>
                 </div>
 
-                <!-- 6. 弹窗与提醒 -->
+                <!-- 4. 弹窗与提醒 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-bell"></i> 6. 弹窗与提醒设置</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-bell"></i> 4. 弹窗与提醒设置</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <div class="ds-row">
@@ -2408,10 +2347,10 @@ async function setupUI() {
                     </div>
                 </div>
                 
-                <!-- 7. 极客高级设置 -->
+                <!-- 5. 极客高级设置 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-gears"></i> 7. 极客高级设置 (小白勿动)</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-gears"></i> 5. 极客高级设置 (小白勿动)</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <div class="ds-row">
@@ -2457,10 +2396,10 @@ async function setupUI() {
                     </div>
                 </div>
 
-                <!-- 8. 存档管理与日志 -->
+                <!-- 6. 存档管理与日志 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-database"></i> 8. 记忆矩阵与 Omni-Log <span id="ds-storage-badge" class="ds-badge">...</span></span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-database"></i> 6. 记忆矩阵与 Omni-Log <span id="ds-storage-badge" class="ds-badge">...</span></span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <div style="font-size:11px; color:#abb2bf; margin-bottom:-5px; display:flex; justify-content:space-between;">
@@ -2561,7 +2500,7 @@ async function setupUI() {
 
         $('#ds-btn-reset-settings').on('click', () => {
             if(confirm("⚠️ 确定要恢复所有设置为默认值吗？")) {
-                delete extension_settings.ds_cache_v55;
+                delete extension_settings.ds_cache_v54;
                 initSettings();
                 safeSave();
                 location.reload();
@@ -2632,7 +2571,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v55_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v54_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2700,7 +2639,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 终极真理优化器 v55 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 终极真理优化器 v54 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
