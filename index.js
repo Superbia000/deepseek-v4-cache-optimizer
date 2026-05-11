@@ -143,7 +143,7 @@ const injectCSS = () => {
         .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
         
-        .ds-omni-canvas-container { width: 120px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
+        .ds-omni-canvas-container { width: 140px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
         #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
         .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
@@ -191,9 +191,9 @@ function fastClone(obj) {
 }
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v51 || extension_settings.ds_cache_v50 || {};
-    if (!extension_settings.ds_cache_v52) {
-        extension_settings.ds_cache_v52 = {
+    const oldSettings = extension_settings.ds_cache_v52 || extension_settings.ds_cache_v51 || {};
+    if (!extension_settings.ds_cache_v53) {
+        extension_settings.ds_cache_v53 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -233,13 +233,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v52;
+    Settings = extension_settings.ds_cache_v53;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v52_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v53_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -255,7 +255,7 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v52_snapshot', dataStr);
+            localStorage.setItem('ds_cache_v53_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -280,7 +280,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v52_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v53_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -1236,6 +1236,8 @@ let omniMappings = [];
 let isSyncLocked = true;
 let isSyncing = false;
 let isDrawingCanvas = false;
+let leftOffsetY = 0;
+let rightOffsetY = 0;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1359,7 +1361,7 @@ async function showOmniVisionUI() {
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-            syncScroll('left'); // 立即同步一次
+            syncScroll('left'); 
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
         }
@@ -1397,22 +1399,23 @@ async function showOmniVisionUI() {
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 綁定滾動事件
+    // 綁定滾動事件 (使用 passive 提升流暢度)
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
     leftPane.addEventListener('scroll', () => {
         if (isSyncLocked && !isSyncing) syncScroll('left');
         requestCanvasUpdate();
-    });
+    }, { passive: true });
     
     rightPane.addEventListener('scroll', () => {
         if (isSyncLocked && !isSyncing) syncScroll('right');
         requestCanvasUpdate();
-    });
+    }, { passive: true });
 
     window.addEventListener('resize', () => {
         resizeCanvas();
+        cacheOmniPositions();
         updateOmniCanvas();
     });
 
@@ -1437,7 +1440,6 @@ function syncScroll(source) {
         const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
         leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
     }
-    // 延遲解除鎖定，防止無限迴圈
     setTimeout(() => { isSyncing = false; }, 50);
 }
 
@@ -1633,6 +1635,19 @@ function resizeCanvas() {
 }
 
 function cacheOmniPositions() {
+    const canvas = document.getElementById('omni-canvas');
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
+    if (!canvas || !leftPane || !rightPane) return;
+
+    // 獲取絕對邊界，計算出滾動視窗相對於 Canvas 的 Y 軸偏移量
+    const cRect = canvas.getBoundingClientRect();
+    const lRect = leftPane.getBoundingClientRect();
+    const rRect = rightPane.getBoundingClientRect();
+
+    leftOffsetY = lRect.top - cRect.top;
+    rightOffsetY = rRect.top - cRect.top;
+
     omniMappings.forEach(m => {
         if (m.left !== -1) {
             const el = document.getElementById(`omni-left-node-${m.left}`);
@@ -1659,51 +1674,65 @@ function updateOmniCanvas() {
 
     const lScroll = leftPane.scrollTop;
     const rScroll = rightPane.scrollTop;
+    const cpOffset = width / 2.5; // 動態控制點，讓 S 曲線更平滑
 
     omniMappings.forEach(m => {
-        let startX = 0, startY = 0, endX = width, endY = 0;
+        let startY = 0, endY = 0;
         let isVisible = false;
 
+        // 根據快取的 offsetTop、當前 scrollTop 以及絕對偏移量，計算出精準的 Y 座標
+        if (m.left !== -1) startY = m.lTop - lScroll + (m.lHeight / 2) + leftOffsetY;
+        if (m.right !== -1) endY = m.rTop - rScroll + (m.rHeight / 2) + rightOffsetY;
+
         if (m.type === 'deleted') {
-            if (m.lTop === undefined) return;
-            startY = m.lTop - lScroll + (m.lHeight / 2);
-            endY = startY;
-            endX = width / 2;
             if (startY > -50 && startY < height + 50) isVisible = true;
-        } 
-        else if (m.type.startsWith('new_')) {
-            if (m.rTop === undefined) return;
-            endY = m.rTop - rScroll + (m.rHeight / 2);
-            startY = endY;
-            startX = width / 2;
+        } else if (m.type.startsWith('new_')) {
             if (endY > -50 && endY < height + 50) isVisible = true;
-        } 
-        else {
-            if (m.lTop === undefined || m.rTop === undefined) return;
-            startY = m.lTop - lScroll + (m.lHeight / 2);
-            endY = m.rTop - rScroll + (m.rHeight / 2);
+        } else {
             if ((startY > -50 && startY < height + 50) || (endY > -50 && endY < height + 50)) isVisible = true;
         }
 
         if (!isVisible) return;
 
         ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.bezierCurveTo(startX + 40, startY, endX - 40, endY, endX, endY);
+        
+        if (m.type === 'deleted') {
+            // 刪除線：從左側延伸並向下消散
+            ctx.moveTo(0, startY);
+            ctx.bezierCurveTo(cpOffset, startY, cpOffset, startY + 30, width / 2, startY + 30);
+        } else if (m.type.startsWith('new_')) {
+            // 新增線：從虛空上升並連接到右側
+            ctx.moveTo(width / 2, endY - 30);
+            ctx.bezierCurveTo(width - cpOffset, endY - 30, width - cpOffset, endY, width, endY);
+        } else {
+            // 正常連接線：平滑的 S 曲線
+            ctx.moveTo(0, startY);
+            ctx.bezierCurveTo(cpOffset, startY, width - cpOffset, endY, width, endY);
+        }
 
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2.5;
+        ctx.shadowBlur = 8; // 霓虹發光特效
+
         if (m.type === 'fuzzy') {
-            ctx.setLineDash([5, 5]);
-            ctx.strokeStyle = 'rgba(229,192,123,0.8)';
+            ctx.setLineDash([6, 6]);
+            ctx.strokeStyle = 'rgba(229,192,123,0.9)';
+            ctx.shadowColor = 'rgba(229,192,123,0.5)';
         } else {
             ctx.setLineDash([]);
-            if (m.type === 'perfect') ctx.strokeStyle = 'rgba(152,195,121,0.6)';
-            else if (m.type === 'patch_link') ctx.strokeStyle = 'rgba(198,120,221,0.8)';
+            if (m.type === 'perfect') {
+                ctx.strokeStyle = 'rgba(152,195,121,0.7)';
+                ctx.shadowColor = 'rgba(152,195,121,0.4)';
+            }
+            else if (m.type === 'patch_link') {
+                ctx.strokeStyle = 'rgba(198,120,221,0.9)';
+                ctx.shadowColor = 'rgba(198,120,221,0.5)';
+            }
             else if (m.type === 'deleted') {
                 const grad = ctx.createLinearGradient(0, 0, width/2, 0);
-                grad.addColorStop(0, 'rgba(224,108,117,0.8)');
+                grad.addColorStop(0, 'rgba(224,108,117,0.9)');
                 grad.addColorStop(1, 'rgba(224,108,117,0)');
                 ctx.strokeStyle = grad;
+                ctx.shadowColor = 'rgba(224,108,117,0.5)';
             }
             else if (m.type.startsWith('new_')) {
                 const grad = ctx.createLinearGradient(width/2, 0, width, 0);
@@ -1716,11 +1745,13 @@ function updateOmniCanvas() {
                 else if (m.type === 'new_retcon') color = '171,178,191';
                 
                 grad.addColorStop(0, `rgba(${color},0)`);
-                grad.addColorStop(1, `rgba(${color},0.8)`);
+                grad.addColorStop(1, `rgba(${color},0.9)`);
                 ctx.strokeStyle = grad;
+                ctx.shadowColor = `rgba(${color},0.5)`;
             }
         }
         ctx.stroke();
+        ctx.shadowBlur = 0; // 重置 shadow 避免影響效能
     });
 }
 
@@ -1931,9 +1962,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v52-opt-drawer">
+        <div class="inline-drawer" id="ds-v53-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v52)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v53)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -2458,7 +2489,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v52_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v53_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2526,7 +2557,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v52 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v53 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
