@@ -110,6 +110,7 @@ const injectCSS = () => {
         .ds-btn-omni:hover { border-color: var(--ds-purple); box-shadow: 0 0 20px rgba(198,120,221,0.4); background: linear-gradient(90deg, rgba(198,120,221,0.25) 0%, rgba(0,0,0,0) 100%); color: #fff; }
 
         /* Omni-Vision UI Styles (v8.0 Quantum) */
+                /* Omni-Vision UI Styles (v8.0 Quantum) */
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
         .ds-omni-body { display: flex; gap: 15px; flex: 1; min-height: 0; position: relative; }
@@ -118,9 +119,10 @@ const injectCSS = () => {
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
         
         .ds-node-row { display: flex; width: 100%; margin-bottom: 10px; align-items: stretch; position: relative; }
-        .ds-node-cell { flex: 1; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; display: flex; flex-direction: column; z-index: 2; }
+        .ds-omni-col { flex: 0 0 47%; display: flex; flex-direction: column; min-width: 0; align-self: stretch; }
+        .ds-node-cell { flex: 1 1 auto; height: 100%; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; display: flex; flex-direction: column; z-index: 2; box-sizing: border-box; }
         .ds-node-cell:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
-        .ds-node-empty { background: transparent; border: 1px dashed rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.2); font-style: italic; z-index: 2; }
+        .ds-node-empty { flex: 1 1 auto; height: 100%; min-height: 60px; background: transparent; border: 1px dashed rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.2); font-style: italic; z-index: 2; box-sizing: border-box; }
         
         .ds-status-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.05) 0%, rgba(0,0,0,0) 100%); }
         .ds-status-miss { border-left: 4px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.05) 0%, rgba(0,0,0,0) 100%); } 
@@ -1116,7 +1118,7 @@ async function showOmniVisionUI() {
         return;
     }
 
-    const html = `
+        const html = `
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
@@ -1145,8 +1147,15 @@ async function showOmniVisionUI() {
 
                 <div class="ds-omni-toolbar">
                     <span style="font-size:12px; color:#abb2bf; font-weight:bold; margin-right:10px;"><i class="fa-solid fa-sliders"></i> 即时沙盒开关:</span>
-                    <div class="ds-omni-toggle ${Settings.absoluteOrderMatrix?'active':''}" data-setting="absoluteOrderMatrix" title="绝对真理追加架构"><i class="fa-solid fa-sort"></i> 绝对真理追加架构</div>
-                    <div class="ds-omni-toggle ${Settings.smartAutoPatch?'active':''}" data-setting="smartAutoPatch" title="智慧无痕修补"><i class="fa-solid fa-wand-magic-sparkles"></i> 智慧无痕修补</div>
+                    <div class="ds-omni-toggle ${Settings.dynamicMode===1?'active':''}" data-setting="dynamicMode" title="写日记模式"><i class="fa-solid fa-book-journal-whills"></i> 日记模式</div>
+                    <div class="ds-omni-toggle ${Settings.absoluteOrderMatrix?'active':''}" data-setting="absoluteOrderMatrix" title="绝对真理追加架构"><i class="fa-solid fa-sort"></i> 追加架构</div>
+                    <div class="ds-omni-toggle ${Settings.smartAutoPatch?'active':''}" data-setting="smartAutoPatch" title="智慧无痕修补"><i class="fa-solid fa-wand-magic-sparkles"></i> 无痕修补</div>
+                    <div class="ds-omni-toggle ${Settings.phantomSync?'active':''}" data-setting="phantomSync" title="幻影同步"><i class="fa-solid fa-ghost"></i> 幻影同步</div>
+                    <div class="ds-omni-toggle ${Settings.vectorQuarantine?'active':''}" data-setting="vectorQuarantine" title="向量隔离"><i class="fa-solid fa-bullseye"></i> 向量隔离</div>
+                    <div class="ds-omni-toggle ${Settings.entropyShield?'active':''}" data-setting="entropyShield" title="熵减护盾"><i class="fa-solid fa-shield-halved"></i> 熵减护盾</div>
+                    <div class="ds-omni-toggle ${Settings.semanticNormalize?'active':''}" data-setting="semanticNormalize" title="模糊语义"><i class="fa-solid fa-broom"></i> 模糊语义</div>
+                    <div class="ds-omni-toggle ${Settings.voidBridging?'active':''}" data-setting="voidBridging" title="虚空架桥"><i class="fa-solid fa-bridge"></i> 虚空架桥</div>
+                    <div class="ds-omni-toggle ${Settings.absoluteDeduplication?'active':''}" data-setting="absoluteDeduplication" title="绝对去重"><i class="fa-solid fa-compress"></i> 绝对去重</div>
                     <div style="flex:1;"></div>
                     <span id="omni-sync-badge" style="font-size:11px; color:var(--ds-green); margin-right:15px; display:none;"><i class="fa-solid fa-check-circle"></i> 预览已同步</span>
                     <button id="ds-btn-omni-refresh" class="ds-btn ds-btn-accept" style="padding: 6px 12px; font-size: 12px; margin-right:10px;"><i class="fa-solid fa-rotate-right"></i> 强制刷新</button>
@@ -1195,9 +1204,15 @@ async function showOmniVisionUI() {
 
     $('.ds-omni-toggle').on('click', function() {
         const setting = $(this).data('setting');
-        Settings[setting] = !Settings[setting];
-        $(this).toggleClass('active', Settings[setting]);
-        $(`#ds-cache-${setting.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}`).prop('checked', Settings[setting]);
+        if (setting === 'dynamicMode') {
+            Settings.dynamicMode = Settings.dynamicMode === 1 ? 0 : 1;
+            $(this).toggleClass('active', Settings.dynamicMode === 1);
+            $('#ds-cache-dynamic-mode').val(Settings.dynamicMode);
+        } else {
+            Settings[setting] = !Settings[setting];
+            $(this).toggleClass('active', Settings[setting]);
+            $(`#ds-cache-${setting.replace(/[A-Z]/g, m => '-' + m.toLowerCase())}`).prop('checked', Settings[setting]);
+        }
         safeSave();
         $('#omni-sync-badge').hide();
         triggerOmniRender(state);
@@ -1258,21 +1273,39 @@ async function renderOmniVision(state) {
 
     try {
         let dryRunStream = [];
-        // 為了真實預覽，我們使用 lastRawStream 作為基礎，並附加最新的 mock input
-        if (state.lastRawStream && state.lastRawStream.length > 0) {
+        
+        // 1. 基礎：讀取上一次真實發送的絕對快照
+        if (state.lastSentSequence && state.lastSentSequence.length > 0) {
+            dryRunStream = JSON.parse(JSON.stringify(state.lastSentSequence));
+        } else if (state.lastRawStream && state.lastRawStream.length > 0) {
             dryRunStream = JSON.parse(JSON.stringify(state.lastRawStream));
         }
-        
-        const mockText = $('#omni-mock-input').val();
-        if (mockText && mockText.trim() !== '') {
-            // 移除舊的最後一個 user message，替換為 mock input
-            for (let i = dryRunStream.length - 1; i >= 0; i--) {
-                if (dryRunStream[i].role === 'user') {
-                    dryRunStream.splice(i, 1);
-                    break;
+
+        // 2. 補全上下文：從 ST 抓取 AI 的最新回覆並附加 (模擬真實發送時的歷史增長)
+        const context = getContext();
+        if (context && context.chat && context.chat.length > 0) {
+            const lastMsg = context.chat[context.chat.length - 1];
+            if (!lastMsg.is_user) {
+                // 確保不會重複添加
+                const lastDryMsg = dryRunStream[dryRunStream.length - 1];
+                if (!lastDryMsg || lastDryMsg.content !== lastMsg.mes) {
+                    dryRunStream.push({ role: 'assistant', content: lastMsg.mes });
                 }
             }
+        }
+
+        // 3. 附加用戶輸入：讀取沙盒輸入框或 ST 實際輸入框
+        const mockText = $('#omni-mock-input').val();
+        if (mockText && mockText.trim() !== '') {
             dryRunStream.push({ role: 'user', content: mockText });
+        } else {
+            const stInput = $('#send_textarea').val();
+            if (stInput && stInput.trim() !== '') {
+                dryRunStream.push({ role: 'user', content: stInput });
+            } else {
+                // 如果完全為空，加入一個佔位符以觸發正常的 User 輪次邏輯
+                dryRunStream.push({ role: 'user', content: "..." });
+            }
         }
 
         if (dryRunStream.length > 0) {
@@ -1426,9 +1459,9 @@ async function renderOmniVision(state) {
         
         // 構建三段式 Flex 佈局 (左 - 線 - 右)
         el.innerHTML = `
-            <div style="flex: 0 0 47%; display: flex; flex-direction: column; min-width: 0;">${leftHtml}</div>
+            <div class="ds-omni-col">${leftHtml}</div>
             <div style="flex: 0 0 40px; position: relative; display: flex; align-items: center; justify-content: center; z-index: 1;">${svgHtml}</div>
-            <div style="flex: 0 0 47%; display: flex; flex-direction: column; min-width: 0;">${rightHtml}</div>
+            <div class="ds-omni-col">${rightHtml}</div>
         `;
         frag.appendChild(el);
 
