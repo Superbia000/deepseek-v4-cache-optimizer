@@ -143,11 +143,9 @@ function getChatState(chatKeyInfo) {
     if (!Settings.chats[chatKeyInfo.key]) {
         Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, character: chatKeyInfo.character, frozenSequence: [] };
         safeSave();
-    } else {
-        if (!Settings.chats[chatKeyInfo.key].character) {
-            Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
-            safeSave();
-        }
+    } else if (!Settings.chats[chatKeyInfo.key].character) {
+        Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
+        safeSave();
     }
     return Settings.chats[chatKeyInfo.key];
 }
@@ -191,10 +189,10 @@ const Detectors = {
         return n.includes('lorebook') || n.includes('world');
     },
     
-    // 🌟 極致精準的來源分類器
+    // 🌟 精準來源偵測器
     getOriginInfo: (msg, type) => {
         if (type === 'current_user') return { source: '用戶輸入', creator: '用戶', category: 'USER' };
-        if (type === 'prefill') return { source: '預填充', creator: '大模型', category: 'PREFILL' };
+        if (type === 'prefill') return { source: '預填充', creator: '用戶/ST', category: 'PREFILL' };
         if (type === 'history_user') return { source: '用戶歷史輸入', creator: '用戶', category: 'USER' };
         if (type === 'history_ai') return { source: 'AI歷史回覆', creator: '大模型', category: 'AI' };
         if (msg.isDSPatch) return { source: '本插件', creator: 'DS Cache', category: 'PATCH' };
@@ -203,7 +201,7 @@ const Detectors = {
             const n = msg.name.toLowerCase();
             if (n.includes('lorebook') || n.includes('world')) return { source: '世界書', creator: '用戶/ST', category: 'SYS' };
             if (n.includes('author')) return { source: '預設', creator: '用戶', category: 'SYS' };
-            if (!Detectors.isDefaultPrompt(msg)) return { source: '其他插件', creator: msg.name, category: 'SYS' };
+            if (!Detectors.isDefaultPrompt(msg)) return { source: `其他插件(${msg.name})`, creator: msg.name, category: 'SYS' };
         }
         return { source: '預設', creator: 'ST核心', category: 'SYS' };
     }
@@ -222,29 +220,30 @@ async function interceptAndRestructurePrompt(data) {
         let ledger = [];
         let otherPluginActions = [];
 
-        // --- 階段 1：拆解 ST 傳入的原始陣列 (精準來源偵測) ---
+        // --- 階段 1：拆解 ST 傳入的原始陣列 ---
         let currentUserMsg = null;
         let prefills = [];
         let incomingPool = [];
-        let currentUserMsgFound = false;
+        
+        // 🌟 精準定位最後一次的 User 輸入
+        let foundCurrentUser = false;
 
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             const msg = incomingStream[i];
+            
             let type = 'sys';
-
-            // 🌟 逆向掃描：精準區分當前輸入、預填充與歷史記錄
             if (msg.role === 'user') {
-                if (!currentUserMsgFound) { type = 'current_user'; currentUserMsgFound = true; } 
+                if (!foundCurrentUser) { type = 'current_user'; foundCurrentUser = true; }
                 else { type = 'history_user'; }
             } else if (msg.role === 'assistant') {
-                if (!currentUserMsgFound) { type = 'prefill'; } 
+                if (!foundCurrentUser) { type = 'prefill'; }
                 else { type = 'history_ai'; }
             }
 
             const origin = Detectors.getOriginInfo(msg, type);
             
-            if (origin.source === '其他插件') {
-                otherPluginActions.push(`- 偵測到其他插件 (**${origin.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
+            if (origin.source.startsWith('其他插件')) {
+                otherPluginActions.push(`- 偵測到其他插件 (**${origin.creator}**) 注入了提示詞，長度: ${msg.content.length}，原始位置: ${i}`);
             }
 
             if (type === 'current_user') {
@@ -427,12 +426,14 @@ async function interceptAndRestructurePrompt(data) {
             mdLog += `| 最終排序 | 原始排序 | 分類 | 來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 提示詞內容摘要 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
             
-            // 嚴格按照最終排序升序排列，已刪除沉底
+            // 🌟 嚴格按照最終排序輸出，被刪除的沉底
             ledger.sort((a, b) => {
-                if (a.finalIdx === '-' && b.finalIdx === '-') return (a.origIdx === '-' ? 999 : a.origIdx) - (b.origIdx === '-' ? 999 : b.origIdx);
-                if (a.finalIdx === '-') return 1;
-                if (b.finalIdx === '-') return -1;
-                return a.finalIdx - b.finalIdx;
+                const aFinal = a.finalIdx === '-' ? 9999 : a.finalIdx;
+                const bFinal = b.finalIdx === '-' ? 9999 : b.finalIdx;
+                if (aFinal !== bFinal) return aFinal - bFinal;
+                const aOrig = a.origIdx === '-' ? 9999 : a.origIdx;
+                const bOrig = b.origIdx === '-' ? 9999 : b.origIdx;
+                return aOrig - bOrig;
             });
 
             ledger.forEach(l => {
@@ -475,7 +476,7 @@ function renderChatsUI() {
         const groupHtml = $(`
             <div style="margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden;">
                 <div class="ds-char-header" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.05); cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.05)'">
-                    <b style="font-size: 13px; color: #00e5ff; white-space: nowrap;">👤 ${charName} <span style="color:#aaa; font-size:11px;">(${chats.length} 個存檔)</span></b>
+                    <b style="font-size: 13px; color: #00e5ff;">👤 ${charName} <span style="color:#aaa; font-size:11px;">(${chats.length} 個存檔)</span></b>
                     <span class="fa-solid fa-chevron-down" style="font-size: 12px; color: #aaa; transition: transform 0.3s; transform: rotate(-90deg);"></span>
                 </div>
                 <div class="ds-char-content" style="display: none; padding: 8px; background: rgba(0,0,0,0.2);"></div>
@@ -488,7 +489,7 @@ function renderChatsUI() {
             const chatHtml = $(`
                 <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); padding:6px 10px; margin-bottom:4px; border-radius:4px; border: 1px solid rgba(255,255,255,0.02);">
                     <span style="font-size:0.8em; color:#ccc; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${chat.label}">${cleanLabel} <span style="color:#00e5ff;">(${chat.frozenSequence.length} 節點)</span></span>
-                    <button class="menu_button interactable ds-reset-btn" data-key="${chat.key}" style="font-size:0.75em; padding:2px 6px; margin:0; white-space: nowrap;">清空</button>
+                    <button class="menu_button interactable ds-reset-btn" data-key="${chat.key}" style="font-size:0.75em; padding:2px 6px; margin:0;">清空</button>
                 </div>
             `);
             contentDiv.append(chatHtml);
@@ -538,7 +539,7 @@ function createToggle(id, title, desc, checked) {
             <input type="checkbox" id="ds-opt-${id}" ${checked ? 'checked' : ''} style="cursor: pointer; width: 16px; height: 16px;">
         </div>
         <div style="flex-grow: 1;">
-            <label for="ds-opt-${id}" style="font-weight: bold; cursor: pointer; display: block; color: #e0e0e0; font-size: 14px; margin-bottom: 4px; white-space: nowrap;">${title}</label>
+            <label for="ds-opt-${id}" style="font-weight: bold; cursor: pointer; display: block; color: #e0e0e0; font-size: 14px; margin-bottom: 4px;">${title}</label>
             <span style="font-size: 12px; color: #888; display: block; line-height: 1.4;">${desc}</span>
         </div>
     </div>`;
@@ -548,7 +549,7 @@ function createCategory(id, icon, title, contentHtml) {
     return `
     <div style="margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden;">
         <div class="ds-category-header" data-target="ds-cat-${id}" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: rgba(255,255,255,0.05); cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.05)'">
-            <b style="font-size: 14px; color: #fff; white-space: nowrap;">${icon} ${title}</b>
+            <b style="font-size: 14px; color: #fff;">${icon} ${title}</b>
             <span class="fa-solid fa-chevron-down" style="font-size: 12px; color: #aaa; transition: transform 0.3s;"></span>
         </div>
         <div id="ds-cat-${id}" style="display: none; padding: 10px; background: rgba(0,0,0,0.15);">
@@ -565,7 +566,7 @@ async function setupUI() {
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
                 .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; white-space: nowrap; }
                 .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; white-space: nowrap; }
-                .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
                 .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.15); }
             </style>
@@ -575,14 +576,14 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v13-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b style="white-space: nowrap;">DeepSeek V4 Pro 絕對防禦矩陣 (v13.0 旗艦版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v13.0 旗艦版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
             
             <div style="margin-bottom: 15px; padding: 12px; background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.3); border-radius: 8px; display: flex; align-items: center;">
                 <input type="checkbox" id="ds-opt-enabled" ${Settings.enabled ? 'checked' : ''} style="width: 18px; height: 18px; margin-right: 12px; cursor: pointer;">
-                <label for="ds-opt-enabled" style="font-size: 16px; font-weight: bold; color: #00e5ff; cursor: pointer; margin: 0; white-space: nowrap;">🛡️ 啟用絕對不可變序列 (總開關)</label>
+                <label for="ds-opt-enabled" style="font-size: 16px; font-weight: bold; color: #00e5ff; cursor: pointer; margin: 0;">🛡️ 啟用絕對不可變序列 (總開關)</label>
             </div>
 
             ${createCategory('core', '🧱', '核心架構與防禦矩陣', 
@@ -613,8 +614,8 @@ async function setupUI() {
             )}
 
             ${createCategory('system', '⚙️', '系統與全景日誌管理', `
-                <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; flex-wrap: nowrap;">
-                    <span style="font-size: 14px; font-weight: bold; color: #e0e0e0; white-space: nowrap;">日誌輸出等級</span>
+                <div style="margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px;">
+                    <span style="font-size: 14px; font-weight: bold; color: #e0e0e0;">日誌輸出等級</span>
                     <select id="ds-opt-logLevel" class="text_pole" style="width: 120px; padding: 4px;">
                         <option value="0" ${Settings.logLevel===0?'selected':''}>0: 關閉</option>
                         <option value="1" ${Settings.logLevel===1?'selected':''}>1: 基礎警告</option>
@@ -624,17 +625,16 @@ async function setupUI() {
                     </select>
                 </div>
                 
-                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 5px; white-space: nowrap;">📂 存檔凍結池管理 (按角色分類)：</b>
+                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 5px;">📂 存檔凍結池管理 (按角色分類)：</b>
                 <div id="ds-chat-list-container" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 5px; background: rgba(0,0,0,0.2);"></div>
-                <button id="ds-cache-factory-reset" class="menu_button" style="width: 100%; margin-bottom: 15px; background: #8b0000; color: white; border-radius: 6px; padding: 8px; white-space: nowrap;">⚠️ 廠級清空所有凍結池 (還原 ST 默認)</button>
+                <button id="ds-cache-factory-reset" class="menu_button" style="width: 100%; margin-bottom: 15px; background: #8b0000; color: white; border-radius: 6px; padding: 8px;">⚠️ 廠級清空所有凍結池 (還原 ST 默認)</button>
                 
-                <!-- 🌟 純圖示按鈕與橫向排版 -->
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; flex-wrap: nowrap;">
-                    <b style="font-size: 13px; color: #aaa; white-space: nowrap;">📝 全景 Markdown 日誌：</b>
-                    <div style="display: flex; gap: 6px; flex-wrap: nowrap;">
-                        <button id="ds-log-copy" class="menu_button" title="複製日誌" style="padding: 4px 10px; margin: 0; display: flex; align-items: center; justify-content: center;"><i class="fa-solid fa-copy"></i></button>
-                        <button id="ds-log-export" class="menu_button" title="導出 .md" style="padding: 4px 10px; margin: 0; display: flex; align-items: center; justify-content: center;"><i class="fa-solid fa-download"></i></button>
-                        <button id="ds-log-clear" class="menu_button" title="清空日誌" style="padding: 4px 10px; margin: 0; display: flex; align-items: center; justify-content: center;"><i class="fa-solid fa-trash"></i></button>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <b style="font-size: 13px; color: #aaa;">📝 全景 Markdown 日誌：</b>
+                    <div>
+                        <button id="ds-log-copy" class="menu_button" title="複製日誌" style="padding: 4px 10px; font-size: 14px; margin: 0 2px;"><i class="fa-solid fa-copy"></i></button>
+                        <button id="ds-log-export" class="menu_button" title="導出 .md" style="padding: 4px 10px; font-size: 14px; margin: 0 2px;"><i class="fa-solid fa-download"></i></button>
+                        <button id="ds-log-clear" class="menu_button" title="清空日誌" style="padding: 4px 10px; font-size: 14px; margin: 0 2px;"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
                 <div id="ds-cache-log-viewer" style="width: 100%; height: 350px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1);"></div>
@@ -690,7 +690,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致 UI 體驗版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致監控版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
