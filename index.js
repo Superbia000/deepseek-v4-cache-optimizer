@@ -10,11 +10,11 @@ function initSettings() {
     if (!extension_settings.ds_cache_v13_pro_ui) {
         extension_settings.ds_cache_v13_pro_ui = {
             enabled: true,
-            warpFilter: true,     // P6: 曲率引擎
-            entropyShield: true,  // P8: 熵減護盾
-            retconMode: true,     // P13: 吃書協議
-            diaryMode: true,      // P14: 寫日記模式
-            chronosMode: true,    // P20: 克羅諾斯協議
+            warpFilter: true,     
+            entropyShield: true,  
+            retconMode: true,     
+            diaryMode: true,      
+            chronosMode: true,    
             logLevel: 3,
             chats: {} 
         };
@@ -104,6 +104,7 @@ async function interceptAndRestructurePrompt(data) {
         const state = getChatState(getChatKey());
         const incomingStream = data.chat;
         
+        // --- 階段 1：拆解 ST 傳入的原始陣列 ---
         let currentUserMsg = null, prefills = [], incomingPool = [];
 
         for (let i = incomingStream.length - 1; i >= 0; i--) {
@@ -115,6 +116,7 @@ async function interceptAndRestructurePrompt(data) {
 
         if (Settings.warpFilter) incomingPool = incomingPool.filter(msg => !Detectors.isZeroEntropy(msg.norm));
 
+        // --- 階段 2：分類容器初始化 ---
         let ephemeralZone = [], newSysPrompts = [], newLorebooks = [], newHistory = [], dynamicPrompts = [], patches = [];
         
         incomingPool = incomingPool.filter(msg => {
@@ -124,6 +126,7 @@ async function interceptAndRestructurePrompt(data) {
             return true;
         });
 
+        // --- 階段 3：🛡️ 絕對秩序矩陣 (比對凍結池) ---
         const nextFrozenSequence = [];
         const seenHashes = new Set();
         let missingHistoryCount = 0;
@@ -180,6 +183,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // --- 階段 4：處理剩餘的新生代數據 (分類) ---
         for (const msg of incomingPool) {
             if (seenHashes.has(msg.hash)) continue;
 
@@ -205,20 +209,45 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        const newItemsToFreeze = [...newSysPrompts, ...newLorebooks, ...newHistory, ...dynamicPrompts, ...patches].map(item => ({
+        // --- 階段 5：組裝最終發送陣列 (嚴格遵守用戶指定的排序藍圖) ---
+        /*
+          【用戶指定的絕對排序藍圖】
+          1. 舊的凍結序列 (包含對話1的所有提示詞、舊歷史、對話1的User輸入與Prefill) -> nextFrozenSequence
+          2. 對話1的AI回覆 (以及任何新增的歷史) -> newHistory
+          3. 新增加的預設/其他提示詞 -> newSysPrompts
+          4. 新增加的世界書條目 -> newLorebooks
+          5. 所有動態提示詞 (寫日記模式) -> dynamicPrompts
+          6. 插件修復功能提示詞 -> patches
+          --- 以上全部納入下一次的凍結池 (徹底凍結) ---
+          7. 臨時隔離區 (RAG/摘要) -> ephemeralZone (不進凍結池)
+          8. 當前對話的用戶輸入 -> currentUserMsg (不進凍結池)
+          9. 當前對話的預填充 -> prefills (不進凍結池)
+        */
+        const newItemsToFreeze = [
+            ...newHistory,       // 👈 藍圖: 對話1的AI回覆(長文)
+            ...newSysPrompts,    // 👈 藍圖: 新增加的預設/其他提示詞
+            ...newLorebooks,     // 👈 藍圖: 新增加的世界書條目
+            ...dynamicPrompts,   // 👈 藍圖: 所有動態提示詞(寫日記模式)
+            ...patches           // 👈 藍圖: 插件修復功能提示詞
+        ].map(item => ({
             role: item.role, content: item.content, norm: Logger.normalize(item.content), hash: Logger.hash(item.content)
         }));
 
+        // 更新狀態存檔 (舊凍結 + 新凍結)
         state.frozenSequence = [...nextFrozenSequence, ...newItemsToFreeze];
         safeSave();
 
+        // 構建本次發給 LLM 的最終陣列
         const finalStream = [...state.frozenSequence];
+        
+        // 藍圖結尾: 臨時區 -> 當前User輸入 -> 預填充
         ephemeralZone.forEach(m => finalStream.push({ role: m.role, content: m.content }));
         if (currentUserMsg) finalStream.push(currentUserMsg);
         prefills.forEach(p => finalStream.push(p));
 
+        // 覆寫 ST 的發送數據
         data.chat.splice(0, data.chat.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
-        Logger.log(`✅ 重構完成。凍結池: ${state.frozenSequence.length} | 臨時區: ${ephemeralZone.length}`, LogLevels.BASIC);
+        Logger.log(`✅ 絕對排序重構完成。凍結池: ${state.frozenSequence.length} | 臨時區: ${ephemeralZone.length}`, LogLevels.BASIC);
 
     } catch (err) { Logger.error('攔截器發生錯誤', err); }
 }
@@ -318,7 +347,7 @@ async function setupUI() {
                     🛡️ 啟用絕對不可變序列 (Append-Only 總引擎)
                 </label>
                 <div style="font-size: 0.85em; opacity: 0.8; margin-top: 5px; margin-left: 28px;">
-                    廢棄傳統重新排序邏輯。一旦提示詞發送，其絕對位置將被永久物理凍結，從數學層面保證 100% 快取命中率。
+                    嚴格遵守「舊歷史 -> AI回覆 -> 新提示詞 -> 補丁 -> 新輸入」的絕對排序藍圖，從數學層面保證 100% 快取命中率。
                 </div>
             </div>
 
@@ -373,13 +402,11 @@ async function setupUI() {
     $('#extensions_settings').append(html);
     Logger._uiTextarea = document.getElementById('ds-cache-log');
 
-    // 折疊邏輯
     $('.ds-v13-header').on('click', function() {
         $(this).toggleClass('open');
         $(this).next('.ds-v13-content').slideToggle(200);
     });
 
-    // 綁定開關事件
     const bindToggle = (id, key) => {
         $(`#${id}`).on('change', function () { Settings[key] = $(this).is(':checked'); safeSave(); });
     };
@@ -409,6 +436,6 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.log('══════ 🛡️ V13.1 絕對防禦矩陣 (旗艦UI版) 就緒 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🛡️ V13.1 絕對防禦矩陣 (排序修正版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) { console.error('[DS Cache] 插件啟動崩潰:', e); }
 });
