@@ -513,7 +513,6 @@ function processLogQueue() {
     isLogRendering = false;
 }
 
-// 完美修復 3：實現日誌過濾器功能
 function applyLogFilters() {
     const activeFilter = $('.ds-log-filter.active').data('filter') || 'all';
     const searchTerm = ($('#ds-log-search').val() || '').toLowerCase();
@@ -947,7 +946,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const handledIncomingSys = new Set();
         const handledIncomingHis = new Set();
         let lastHandledIncomingHisIdx = -1;
-        let hasMatchedAnyHistory = false; // 用於精準判斷 Overflow vs Retcon
+        let hasMatchedAnyHistory = false; 
 
         // 4. 核心比對：遍歷凍結的過去 (The Holy Grail Order)
         for (let i = 0; i < state.frozenSequence.length; i++) {
@@ -966,13 +965,11 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     newFrozenSequence.push(frozenItem);
                     handledIncomingSys.add(bestIdx);
                 } else if (bestIdx !== -1 && frozenItem.fuzzyHash === incomingSysPool[bestIdx].fuzzyHash) {
-                    // 模糊命中 (排版、標點、或時序變量改變)
                     frozenItem._omniCat = 'frozen';
                     newFrozenSequence.push(frozenItem);
                     handledIncomingSys.add(bestIdx);
                     
                     if (Settings.timeVarNeutralizer && frozenItem.content !== incomingSysPool[bestIdx].content) {
-                        // 衝突修復 3：時序變量中和器導致的時間停滯
                         const patch = createMsg({role: 'system', content: `[系统提示：状态更新。最新状态为：\n${truncateLog(incomingSysPool[bestIdx].content, 100)}]`}, 'SYS');
                         patch._omniCat = 'patch_time';
                         patch._sourceHash = frozenItem.hash;
@@ -991,7 +988,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     newFrozenSequence.push(frozenItem); 
                     handledIncomingSys.add(bestIdx);
 
-                    // 衝突修復 2：優先嘗試量子微創，失敗才降級熱更新
                     let addedText = null;
                     if (Settings.nanoPatching && bestScore > 0.85) {
                         addedText = extractAddedText(frozenItem.content, incomingItem.content);
@@ -1028,18 +1024,15 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         }
                     }
                 } else {
-                    // 節點被刪除 (No Match)
                     frozenItem._omniCat = 'frozen';
                     newFrozenSequence.push(frozenItem); 
                     
-                    // 衝突修復 1：Prefix Anchor 嚴格限制在前 3 個 SYS 節點
                     if (i < 3 && Settings.prefixAnchor) {
                         if (!isDryRun) {
                             Logger.warn(`[⚓ 绝对前缀锚点] 强制保留被截断的头部。`);
                             QuantumToastAggregator.add('prefix', '前缀锚点：已强制保留被截断的头部', 'warning', '⚓');
                         }
                     } else if (Settings.voidBridging && frozenItem.content.length > 30) {
-                        // 衝突修復 4：動態節點 (如舊向量) 消失時，觸發虛空架橋作廢它
                         const patch = createMsg({role: 'system', content: `[系统提示：设定已解除。之前的规则 "${truncateLog(frozenItem.content, 20)}" 已不再适用。]`}, 'SYS');
                         patch._omniCat = 'patch_void';
                         patch._sourceHash = frozenItem.hash;
@@ -1069,7 +1062,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     lastHandledIncomingHisIdx = Math.max(lastHandledIncomingHisIdx, bestIdx);
                     hasMatchedAnyHistory = true;
                     
-                    // 衝突修復 5：CoT 幻象同步提示
                     if (bestScore < 1 && frozenItem.content !== incomingHistoryPool[bestIdx].content && !isDryRun) {
                         Logger.trace(`[👻 影同步] 忽略 CoT 或排版修改，强行发送旧版内容以保住缓存。`);
                     }
@@ -1110,11 +1102,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newFrozenSequence.push(incomingItem); 
                     }
                 } else {
-                    // 歷史節點被刪除 (No Match)
                     frozenItem._omniCat = 'frozen';
                     newFrozenSequence.push(frozenItem); 
                     
-                    // 衝突修復 1：精準判斷 Overflow vs Retcon
                     if (!hasMatchedAnyHistory && Settings.overflowCompression) {
                         const patch = createMsg({role: 'system', content: `[系统提示：早期记忆已归档。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已转入潜意识。]`}, 'SYS');
                         patch._omniCat = 'patch_amnesia';
@@ -1190,8 +1180,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         let assembledSequence = [];
         assembledSequence.push(...newFrozenSequence);
         
-        // 衝突修復 6：動態模式的精準組裝
-        if (Settings.dynamicMode === 3) { // 假装没看见 (放回顶部)
+        if (Settings.dynamicMode === 3) { 
             assembledSequence.push(...newAdditions.dynamic);
         }
         
@@ -1199,10 +1188,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         assembledSequence.push(...newAdditions.lorebooks);
         assembledSequence.push(...newAdditions.history);
         
-        if (Settings.dynamicMode === 1 || Settings.dynamicMode === 2) { // 日记模式/垫底模式
+        if (Settings.dynamicMode === 1 || Settings.dynamicMode === 2) { 
             assembledSequence.push(...newAdditions.dynamic);
         }
-        // 如果是 5 (直接删掉)，则不 push dynamic
         
         assembledSequence.push(...newAdditions.patches);
 
@@ -1212,12 +1200,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         for (let i = 0; i < assembledSequence.length; i++) {
             const item = assembledSequence[i];
             if (item.tag === 'SYS' && Settings.absoluteDeduplication) {
-                // 致命衝突修復 1：絕對不能對 frozen 節點去重，否則會從中間挖空快取導致斷裂！
                 if (item._omniCat === 'sys' || item._omniCat === 'lorebook') {
                     if (seenSysNorms.has(item.hash)) continue;
                     seenSysNorms.add(item.hash);
                 } else if (item._omniCat === 'frozen') {
-                    // 凍結節點只記錄 hash，不去重自己
                     seenSysNorms.add(item.hash);
                 }
             }
@@ -1419,6 +1405,15 @@ let omniNeedsRedraw = false;
 let isOmniRendering = false;
 let resizeObserver = null;
 let nodePositionCache = { left: {}, right: {} };
+let currentOmniRenderId = 0; // 渲染世代鎖，防止非同步競態條件
+
+// 全域 Resize 處理器，防止記憶體洩漏
+const omniResizeHandler = () => {
+    if (!isOmniRendering) return;
+    resizeCanvas();
+    cacheNodePositions();
+    requestCanvasUpdate();
+};
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1572,10 +1567,10 @@ async function showOmniVisionUI() {
         }
     });
 
-    // 完美修復 4：展開/折疊動畫期間實時重繪連線
     function animateCanvasDuringTransition() {
         let start = performance.now();
         function step(time) {
+            if (!isOmniRendering) return;
             cacheNodePositions();
             requestCanvasUpdate();
             if (time - start < 350) requestAnimationFrame(step);
@@ -1640,6 +1635,8 @@ async function showOmniVisionUI() {
         let minDiff = Infinity;
         const sourceCache = nodePositionCache[sourceSide];
 
+        if (Object.keys(sourceCache).length === 0) return;
+
         for (const id in sourceCache) {
             const nodeCenterY = sourceCache[id].baseY;
             const diff = Math.abs(nodeCenterY - sourceCenterY);
@@ -1681,19 +1678,20 @@ async function showOmniVisionUI() {
         syncScroll('right');
     }, {passive: true});
 
-    window.addEventListener('resize', () => {
-        resizeCanvas();
-        cacheNodePositions();
-        requestCanvasUpdate();
-    });
+    window.removeEventListener('resize', omniResizeHandler);
+    window.addEventListener('resize', omniResizeHandler);
 
     isOmniRendering = true;
     omniRenderLoop();
 
     resizeObserver = new ResizeObserver(() => {
+        if (!isOmniRendering) return;
+        resizeCanvas(); 
         cacheNodePositions();
         requestCanvasUpdate();
     });
+    resizeObserver.observe(document.getElementById('omni-left-pane'));
+    resizeObserver.observe(document.getElementById('omni-right-pane'));
 
     triggerOmniRender(state);
 }
@@ -1704,6 +1702,7 @@ window.closeOmniVision = function() {
         resizeObserver.disconnect();
         resizeObserver = null;
     }
+    window.removeEventListener('resize', omniResizeHandler);
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
     omniLeftArrayLastSent = [];
@@ -1781,11 +1780,11 @@ function triggerOmniRender(state) {
     omniRenderTimeout = setTimeout(() => renderOmniVision(state), 50);
 }
 
+let syncLockTimeout = null;
 window.jumpToOmniNode = function(side, id) {
     const targetPane = document.getElementById(`omni-${side}-pane`);
     const targetNode = document.getElementById(`omni-${side}-node-${id}`);
     if (targetPane && targetNode) {
-        const wasSyncLocked = isSyncLocked;
         isSyncLocked = false;
         
         targetPane.scrollTo({
@@ -1797,11 +1796,15 @@ window.jumpToOmniNode = function(side, id) {
         void targetNode.offsetWidth; 
         targetNode.classList.add('highlight-pulse');
         
-        setTimeout(() => { isSyncLocked = wasSyncLocked; }, 800);
+        if (syncLockTimeout) clearTimeout(syncLockTimeout);
+        syncLockTimeout = setTimeout(() => {
+            isSyncLocked = $('#omni-btn-sync').hasClass('active');
+        }, 800);
     }
 };
 
 async function renderOmniVision(state) {
+    const renderId = ++currentOmniRenderId;
     const rightContainer = document.getElementById('omni-right-pane');
     if (!rightContainer) return;
 
@@ -1834,6 +1837,8 @@ async function renderOmniVision(state) {
         }
 
         const dryRunResult = await interceptAndRestructurePrompt({ chat: simulatedStream }, true);
+        if (renderId !== currentOmniRenderId) return; 
+        
         if (dryRunResult) {
             rightArray = dryRunResult.proposedStream;
             breakIndex = dryRunResult.breakIndex;
@@ -1961,7 +1966,6 @@ async function renderOmniVision(state) {
     rightContainer.appendChild(rightFrag);
 
     if (resizeObserver) {
-        resizeObserver.disconnect();
         document.querySelectorAll('.ds-node-content').forEach(el => resizeObserver.observe(el));
     }
 
@@ -1992,6 +1996,7 @@ async function renderOmniVision(state) {
     document.getElementById('omni-arrows-layer').innerHTML = arrowsHtml;
 
     requestAnimationFrame(() => {
+        if (renderId !== currentOmniRenderId) return;
         resizeCanvas();
         cacheNodePositions();
         requestCanvasUpdate();
@@ -2030,6 +2035,12 @@ function updateOmniCanvas() {
     ctx.lineJoin = 'round';
     
     const halfWidth = width / 2;
+    
+    if (omniMappings.length > 50) {
+        ctx.shadowBlur = 0; 
+    } else {
+        ctx.shadowBlur = 5;
+    }
 
     for (let i = 0; i < omniMappings.length; i++) {
         const m = omniMappings[i];
@@ -2079,7 +2090,6 @@ function updateOmniCanvas() {
         ctx.bezierCurveTo(startX + cpOffset, startY, endX - cpOffset, endY, endX, endY);
 
         ctx.lineWidth = 1.8; 
-        ctx.shadowBlur = 5;  
 
         let colorHex = '0,229,255';
         if (m.type === 'perfect') colorHex = '152,195,121';
@@ -2116,7 +2126,7 @@ function updateOmniCanvas() {
             ctx.strokeStyle = `rgba(${colorHex},${alpha})`;
         }
         
-        ctx.shadowColor = `rgba(${colorHex},0.4)`;
+        if (ctx.shadowBlur > 0) ctx.shadowColor = `rgba(${colorHex},0.4)`;
         ctx.stroke();
 
         if (arrowL) {
@@ -2797,4 +2807,235 @@ async function setupUI() {
                         <div id="ds-chat-list-container" class="ds-chat-container ds-scroll ds-gpu-accel"></div>
                         <div class="ds-row">
                             <button id="ds-btn-deep-clean" class="menu_button" style="flex:1; font-size:12px; color:var(--ds-yellow); border:1px solid rgba(229,192,123,0.3); background:rgba(229,192,123,0.05); justify-content:center; padding:10px; border-radius:6px;" title="清理所有没被锁定，且超过30天没玩过的旧存档">🧹 深度清理垃圾</button>
-                            <button id="ds-btn-purge-orphans" class="menu_button"
+                            <button id="ds-btn-purge-orphans" class="menu_button" style="flex:1; font-size:12px; color:var(--ds-purple); border:1px solid rgba(198,120,221,0.3); background:rgba(198,120,221,0.05); justify-content:center; padding:10px; border-radius:6px;" title="清除在 ST 中已被删除，但快取依然残留的幽灵存档，并重新索引矩阵">👻 矩阵碎片整理</button>
+                            <button id="ds-cache-factory-reset" class="menu_button" style="flex:1; font-size:12px; color:var(--ds-red); border:1px solid rgba(224,108,117,0.3); background:rgba(224,108,117,0.05); justify-content:center; padding:10px; border-radius:6px;" title="删掉所有记录，一切重来">💀 格式化全部</button>
+                        </div>
+                        
+                        <div class="ds-row" style="margin-top:10px;">
+                            <select id="ds-vault-select" class="ds-select-styled" style="flex:2; font-size:11px; padding:6px;">
+                                <option value="">-- 选择多重宇宙备份 --</option>
+                            </select>
+                            <button id="ds-btn-restore-vault" class="menu_button" style="flex:1; font-size:11px; color:var(--ds-cyan); border:1px solid rgba(0,229,255,0.3); background:rgba(0,229,255,0.05); justify-content:center; padding:6px; border-radius:6px;" title="恢复选定的备份">⏪ 恢复备份</button>
+                        </div>
+                        <div class="ds-row" id="ds-btn-undo-action" style="display:none;">
+                            <button class="menu_button" style="flex:1; font-size:12px; color:var(--ds-cyan); border:1px solid rgba(0,229,255,0.3); background:rgba(0,229,255,0.05); justify-content:center; padding:10px; border-radius:6px;" title="恢复刚才被清理的存档">⏪ 撤销刚才的清理 (时光机)</button>
+                        </div>
+                        
+                        <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); width:100%; margin:15px 0;">
+                        
+                        <div class="ds-log-toolbar">
+                            <input type="text" id="ds-log-search" class="ds-input-styled" placeholder="🔍 搜索日志关键字..." style="margin-bottom: 8px;">
+                            <span class="ds-log-filter active" data-filter="all">全部</span>
+                            <span class="ds-log-filter" data-filter="info">常规</span>
+                            <span class="ds-log-filter" data-filter="warn">警告</span>
+                            <span class="ds-log-filter" data-filter="debug">除错</span>
+                            <span class="ds-log-filter" data-filter="error">报错</span>
+                            <div style="flex:1;"></div>
+                            <span id="ds-btn-pause-log" class="ds-mini-btn" title="暂停/恢复日志滚动" style="color:var(--ds-yellow); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-pause"></i></span>
+                            <label style="color:#abb2bf; font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer; margin-right:10px;">
+                                <input type="checkbox" id="ds-log-autoscroll" ${Settings.autoScrollLog ? 'checked' : ''} style="margin:0;"> 自动滚动
+                            </label>
+                            <span id="ds-btn-copy-payload" class="ds-mini-btn" title="复制最终发送给大模型的 API 阵列" style="color:var(--ds-green); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-clipboard-list"></i></span>
+                            <span id="ds-btn-export-json" class="ds-mini-btn" title="导出 JSON 结构化日志" style="color:var(--ds-yellow); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-file-code"></i></span>
+                            <span id="ds-btn-diagnostic-report" class="ds-mini-btn" title="生成诊断报告" style="color:var(--ds-purple); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-file-medical"></i></span>
+                            <span id="ds-btn-copylog" class="ds-mini-btn" title="复制所有日志" style="color:var(--ds-cyan); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-copy"></i></span>
+                            <span id="ds-btn-clearlog" class="ds-mini-btn" title="清空日志文字" style="color:var(--ds-red); cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-trash"></i></span>
+                        </div>
+                        <div id="ds-cache-log-container" class="ds-log-terminal ds-scroll ds-gpu-accel ds-strict-contain"></div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+        
+        $('#extensions_settings').append(html);
+
+        $('#ds-btn-omni-vision').on('click', showOmniVisionUI);
+        $('#ds-btn-one-click').on('click', applyOneClickOptimize);
+        
+        $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); updateTopBarState(); });
+        $('#ds-cache-zen').on('change', function () { Settings.zenMode = $(this).is(':checked'); safeSave(); updateTopBarState(); });
+        $('#ds-toast-his').on('change', function () { Settings.toastHistory = $(this).is(':checked'); safeSave(); });
+        $('#ds-toast-reset').on('change', function () { Settings.showResetPrompt = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-auto-accept').on('change', function () { Settings.autoAccept = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-hotkeys').on('change', function () { Settings.hotkeysEnabled = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-tolerance').on('change', function () { Settings.tolerance = parseInt($(this).val()); safeSave(); });
+        $('#ds-cache-loglevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
+        $('#ds-cache-maxsize').on('change', function () { Settings.maxCacheSize = parseInt($(this).val()) || 30; safeSave(); performGarbageCollection(); });
+        $('#ds-cache-autopin').on('change', function () { Settings.autoPinThreshold = parseInt($(this).val()) || 0; safeSave(); });
+        
+        $('#ds-cache-dynamic-mode').on('change', function () { 
+            Settings.dynamicMode = parseInt($(this).val()); 
+            $('.ds-omni-toggle[data-setting="dynamicMode"]').removeClass('active');
+            if(Settings.dynamicMode === 1) $('.ds-omni-toggle[data-setting="dynamicMode"]').addClass('active');
+            safeSave(); 
+        });
+        
+        $('#ds-cache-history-mode').on('change', function () { Settings.historyEditMode = parseInt($(this).val()); safeSave(); });
+        $('#ds-cache-lorebook-sink').on('change', function () { Settings.lorebookSink = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-retcon').on('change', function () { Settings.retconProtocol = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-hotreload').on('change', function () { Settings.hotReloadPersona = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-flashback').on('change', function () { Settings.flashbackInsertion = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-multiverse').on('change', function () { Settings.multiverseProtocol = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-nanopatch').on('change', function () { Settings.nanoPatching = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-gravity').on('change', function () { Settings.gravityProtocol = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-summary').on('change', function () { Settings.summaryAnchor = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-tailend').on('change', function () { Settings.tailEndExemption = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-chronos').on('change', function () { Settings.chronosProtocol = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-amnesia').on('change', function () { Settings.amnesiaProtocol = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-anchor').on('change', function () { Settings.anchorStabilization = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-imprint').on('change', function () { Settings.permanentMemoryImprint = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-entropy').on('change', function () { Settings.entropyShield = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-dedup').on('change', function () { Settings.absoluteDeduplication = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-void').on('change', function () { Settings.voidBridging = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-warp').on('change', function () { Settings.warpDriveFilter = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-prefix').on('change', function () { Settings.prefixAnchor = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-semantic').on('change', function () { Settings.semanticNormalize = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-autobackup').on('change', function () { Settings.autoBackup = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-matrix').on('change', function () { Settings.absoluteOrderMatrix = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-vector').on('change', function () { Settings.vectorQuarantine = $(this).is(':checked'); safeSave(); });
+        $('#ds-log-autoscroll').on('change', function () { Settings.autoScrollLog = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-cot').on('change', function () { Settings.cotIsolation = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-timevar').on('change', function () { Settings.timeVarNeutralizer = $(this).is(':checked'); safeSave(); });
+        $('#ds-cache-overflow').on('change', function () { Settings.overflowCompression = $(this).is(':checked'); safeSave(); });
+
+        $('.ds-toast-toggle').on('change', function() {
+            const key = $(this).data('key');
+            Settings.toastToggles[key] = $(this).is(':checked');
+            safeSave();
+        });
+
+        $('#ds-btn-diagnostic').on('click', () => { if(typeof toastr !== 'undefined') toastr.info("此功能已集成于后台运算", "系统提示"); });
+        $('#ds-btn-diagnostic-report').on('click', generateDiagnosticReport);
+        $('#ds-btn-export-json').on('click', exportLogsAsJSON);
+        $('#ds-btn-copy-payload').on('click', copyApiPayload);
+        $('#ds-btn-undo-action').on('click', () => restoreVaultBackup(0));
+
+        $('#ds-btn-pause-log').on('click', function() {
+            isLogPaused = !isLogPaused;
+            if (isLogPaused) {
+                $(this).html('<i class="fa-solid fa-play"></i>').css('color', 'var(--ds-green)');
+                if (typeof toastr !== 'undefined') toastr.info("日志已暂停滚动");
+            } else {
+                $(this).html('<i class="fa-solid fa-pause"></i>').css('color', 'var(--ds-yellow)');
+                if (typeof toastr !== 'undefined') toastr.info("日志已恢复滚动");
+                requestAnimationFrame(processLogQueue);
+            }
+        });
+
+        $('#ds-cache-factory-reset').on('click', () => { 
+            if (confirm("💀 危险操作：确定要删除所有的缓存存档吗？一切将从零开始！")) { 
+                createVaultBackup("格式化前备份");
+                Settings.chats = {}; Settings.pinnedChats = {}; safeSave(); renderChatsUI(); 
+            } 
+        });
+        
+        $('#ds-btn-deep-clean').on('click', () => {
+            if(!confirm("🧹 这会删掉所有未被锁定，且【没有节点内容】或【超过30天没聊过】的旧缓存。确定执行吗？")) return;
+            createVaultBackup("深度清理前备份");
+            performGarbageCollection(true);
+            if (typeof toastr !== 'undefined') toastr.success(`🧹 深度清理完毕！`);
+        });
+
+        $('#ds-btn-purge-orphans').on('click', () => {
+            if(!confirm("👻 矩阵碎片整理：这会强制清除所有未被锁定的缓存，并重新索引记忆矩阵。确定执行吗？")) return;
+            createVaultBackup("碎片整理前备份");
+            let count = 0;
+            for (let k in Settings.chats) {
+                if (Settings.pinnedChats[k]) continue;
+                delete Settings.chats[k]; count++;
+            }
+            bigramCache.clear(); 
+            safeSave(); renderChatsUI();
+            if (typeof toastr !== 'undefined') toastr.success(`👻 碎片整理完毕！共清除了 ${count} 个未锁定的缓存，并释放了内存池。`);
+        });
+        
+        $('.ds-log-filter').on('click', function() {
+            $('.ds-log-filter').removeClass('active'); 
+            $(this).addClass('active'); 
+            applyLogFilters();
+        });
+
+        $('#ds-log-search').on('input', function() { applyLogFilters(); });
+        $('#ds-btn-clearlog').on('click', () => { $('#ds-cache-log-container').empty(); logQueue = []; });
+        
+        $('#ds-btn-copylog').on('click', () => {
+            const text = Array.from(document.querySelectorAll('#ds-cache-log-container .ds-log-line')).map(el => el.innerText).join('\n');
+            navigator.clipboard.writeText(text).then(() => { if(typeof toastr !== 'undefined') toastr.success("📋 日志已复制到剪贴板！"); });
+        });
+
+        $('#ds-btn-export').on('click', () => {
+            const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob); const a = document.createElement("a");
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v52_${new Date().getTime()}.json`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+            if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
+        });
+        $('#ds-btn-import').on('click', () => $('#ds-file-import').click());
+        $('#ds-file-import').on('change', function(e) {
+            const f = e.target.files[0]; if(!f) return;
+            const r = new FileReader();
+            r.onload = (ev) => {
+                try { Object.assign(Settings, JSON.parse(ev.target.result)); safeSave(); renderChatsUI(); updateTopBarState(); alert("✅ 恢复成功！"); } 
+                catch (err) { alert("❌ 文件格式错误"); }
+                e.target.value = '';
+            };
+            r.readAsText(f);
+        });
+
+        const updateVaultSelect = () => {
+            const select = $('#ds-vault-select');
+            select.empty().append('<option value="">-- 选择多重宇宙备份 --</option>');
+            backupVault.forEach((v, i) => {
+                select.append(`<option value="${i}">[${v.label}] ${v.time}</option>`);
+            });
+        };
+        updateVaultSelect();
+        
+        $('#ds-btn-restore-vault').on('click', () => {
+            const val = $('#ds-vault-select').val();
+            if (val !== "") restoreVaultBackup(parseInt(val));
+        });
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                isLogVisible = entry.isIntersecting;
+                if (isLogVisible && logQueue.length > 0 && !isLogRendering && !isLogPaused) {
+                    isLogRendering = true;
+                    requestAnimationFrame(processLogQueue);
+                }
+            });
+        }, { threshold: 0.1 });
+        
+        const logContainer = document.getElementById('ds-cache-log-container');
+        if (logContainer) observer.observe(logContainer);
+
+        renderChatsUI();
+    } catch (e) { console.error('[DS Cache] UI初始化崩潰', e); }
+}
+
+jQuery(async () => {
+    try {
+        initSettings(); 
+        await setupUI();
+        setupGlobalHotkeys(); 
+        
+        setTimeout(() => { ensureTopMenuButton(); }, 2000);
+        addResetMenuEntry(); 
+        
+        if (eventSource) {
+            eventSource.on(event_types.CHAT_CHANGED, () => { 
+                ensureTopMenuButton(); 
+                renderChatsUI(); 
+                sessionSnoozeReset = false; 
+            });
+            if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
+            
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, () => QuantumToastAggregator.add('his_del', '您删除了历史对话，已标记断层！下次发送将原位修补。', 'warning', '🗑️'));
+            if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => QuantumToastAggregator.add('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
+        }
+
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v52 引擎上线 ══════', LogLevels.BASIC);
+    } catch (e) {
+        console.error('[DS Cache] 插件启动失败:', e);
+    }
+});
