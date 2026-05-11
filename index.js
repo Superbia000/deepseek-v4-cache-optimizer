@@ -256,7 +256,13 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v52_snapshot', dataStr);
+            try {
+                localStorage.setItem('ds_cache_v52_snapshot', dataStr);
+            } catch(e) {
+                if (e.name === 'QuotaExceededError') {
+                    Logger.warn("Local storage full, skipping snapshot.");
+                }
+            }
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -280,9 +286,29 @@ function createVaultBackup(label = "手动备份") {
         data: JSON.stringify({ chats: Settings.chats, pinnedChats: Settings.pinnedChats })
     };
     backupVault.unshift(snapshot);
-    if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v52_vault', JSON.stringify(backupVault));
-    $('#ds-btn-undo-action').show();
+    
+    // 優雅降級：如果超過 Quota，自動減少備份數量直到存入成功
+    let saved = false;
+    while (backupVault.length > 0 && !saved) {
+        try {
+            if (backupVault.length > 3) backupVault.length = 3; // 限制最多 3 個備份
+            localStorage.setItem('ds_cache_v52_vault', JSON.stringify(backupVault));
+            saved = true;
+        } catch (e) {
+            if (e.name === 'QuotaExceededError' || e.message.includes('quota')) {
+                backupVault.pop(); // 彈出最舊的備份，重試
+            } else {
+                Logger.error("Vault backup failed", e);
+                break;
+            }
+        }
+    }
+    
+    if (backupVault.length > 0) {
+        $('#ds-btn-undo-action').show();
+    } else {
+        Logger.warn("Local storage full, vault backup disabled.");
+    }
 }
 
 function restoreVaultBackup(index = 0) {
@@ -358,13 +384,27 @@ function formatBytes(bytes) {
 }
 
 function performGarbageCollection() {
-    const unpinnedKeys = Object.keys(Settings.chats).filter(k => !Settings.pinnedChats[k]);
-    if (unpinnedKeys.length <= Settings.maxCacheSize) return;
-    const sortedKeys = unpinnedKeys.sort((a, b) => (Settings.chats[a].lastAccessed || 0) - (Settings.chats[b].lastAccessed || 0));
-    const toRemove = sortedKeys.slice(0, unpinnedKeys.length - Settings.maxCacheSize);
-    toRemove.forEach(k => delete Settings.chats[k]);
+    const now = Date.now();
+    const keys = Object.keys(Settings.chats);
+    
+    // 1. 深度休眠壓縮：超過 24 小時未訪問的存檔，清空 multiverse 和 lastRawStream 釋放大量空間
+    keys.forEach(k => {
+        const chat = Settings.chats[k];
+        if (chat.lastAccessed && (now - chat.lastAccessed > 24 * 60 * 60 * 1000)) {
+            if (chat.multiverse && chat.multiverse.length > 0) chat.multiverse = [];
+            if (chat.lastRawStream && chat.lastRawStream.length > 0) chat.lastRawStream = [];
+        }
+    });
+
+    // 2. 刪除超量的未鎖定存檔
+    const unpinnedKeys = keys.filter(k => !Settings.pinnedChats[k]);
+    if (unpinnedKeys.length > Settings.maxCacheSize) {
+        const sortedKeys = unpinnedKeys.sort((a, b) => (Settings.chats[a].lastAccessed || 0) - (Settings.chats[b].lastAccessed || 0));
+        const toRemove = sortedKeys.slice(0, unpinnedKeys.length - Settings.maxCacheSize);
+        toRemove.forEach(k => delete Settings.chats[k]);
+        Logger.warn(`[自动清理] 垃圾车出动！已清理 ${toRemove.length} 个很久没碰过的旧存档，释放空间。`);
+    }
     safeSave();
-    Logger.warn(`[自动清理] 垃圾车出动！已清理 ${toRemove.length} 个很久没碰过的旧存档，释放空间。`);
     renderChatsUI();
 }
 
@@ -480,7 +520,9 @@ const Logger = {
         logAt(level, 'error', err ? `${msg} ${err}` : msg);
         if (err && Settings.logLevel >= LogLevels.DEBUG) {
             console.error("Crash Dump Triggered:", err);
-            localStorage.setItem('ds_cache_crash_dump', JSON.stringify({ error: err.toString(), stack: err.stack, time: new Date().toISOString() }));
+            try {
+                localStorage.setItem('ds_cache_crash_dump', JSON.stringify({ error: err.toString(), stack: err.stack, time: new Date().toISOString() }));
+            } catch(e) {}
         }
     },
     debug: (msg) => logAt(LogLevels.DEBUG, 'debug', msg),
@@ -2502,7 +2544,7 @@ async function setupUI() {
             }
             bigramCache.clear(); 
             safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success(`👻 碎片整理完毕！共清清除 ${count} 个未锁定的缓存，并释放了内存池。`);
+            if (typeof toastr !== 'undefined') toastr.success(`👻 碎片整理完毕！共清除了 ${count} 个未锁定的缓存，并释放了内存池。`);
         });
         
         $('.ds-log-filter').on('click', function() {
