@@ -148,7 +148,6 @@ function getChatState(chatKeyInfo) {
         };
         safeSave();
     } else {
-        // 舊版數據遷移：補上角色名稱
         if (!Settings.chats[chatKeyInfo.key].character) {
             Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
             safeSave();
@@ -196,9 +195,10 @@ const Detectors = {
         return n.includes('lorebook') || n.includes('world');
     },
     
+    // 🌟 絕對精準的來源辨認器
     getOriginInfo: (msg, type) => {
         if (type === 'current_user') return { source: '用戶輸入', creator: '用戶', category: 'USER' };
-        if (type === 'prefill') return { source: 'AI回覆(預填充)', creator: '大模型', category: 'PREFILL' };
+        if (type === 'prefill') return { source: '預填充', creator: '大模型', category: 'PREFILL' };
         if (type === 'history_user') return { source: '用戶歷史輸入', creator: '用戶', category: 'USER' };
         if (type === 'history_ai') return { source: 'AI歷史回覆', creator: '大模型', category: 'AI' };
         if (msg.isDSPatch) return { source: '本插件', creator: 'DS Cache', category: 'PATCH' };
@@ -230,15 +230,20 @@ async function interceptAndRestructurePrompt(data) {
         let currentUserMsg = null;
         let prefills = [];
         let incomingPool = [];
+        let foundCurrentUser = false;
 
+        // 🌟 逆向掃描，精準辨認 User/AI 歷史與預填充
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             const msg = incomingStream[i];
             
             let type = 'sys';
-            if (!currentUserMsg && msg.role === 'user') type = 'current_user';
-            else if (!currentUserMsg && msg.role === 'assistant') type = 'prefill';
-            else if (msg.role === 'user') type = 'history_user';
-            else if (msg.role === 'assistant') type = 'history_ai';
+            if (msg.role === 'user') {
+                if (!foundCurrentUser) { type = 'current_user'; foundCurrentUser = true; }
+                else { type = 'history_user'; }
+            } else if (msg.role === 'assistant') {
+                if (!foundCurrentUser) { type = 'prefill'; }
+                else { type = 'history_ai'; }
+            }
 
             const origin = Detectors.getOriginInfo(msg, type);
             
@@ -426,6 +431,7 @@ async function interceptAndRestructurePrompt(data) {
             mdLog += `| 最終排序 | 原始排序 | 分類 | 來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 提示詞內容摘要 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
             
+            // 🌟 嚴格按照最終排序升序排列，被刪除的沉底
             ledger.sort((a, b) => {
                 if (a.finalIdx === '-' && b.finalIdx === '-') return (a.origIdx === '-' ? 999 : a.origIdx) - (b.origIdx === '-' ? 999 : b.origIdx);
                 if (a.finalIdx === '-') return 1;
@@ -461,7 +467,6 @@ function renderChatsUI() {
         return;
     }
 
-    // 🌟 角色卡分組邏輯
     const groups = {};
     keys.forEach(key => {
         const chat = Settings.chats[key];
@@ -470,7 +475,6 @@ function renderChatsUI() {
         groups[charName].push({ key, ...chat });
     });
 
-    // 🌟 渲染分組折疊面板
     for (const [charName, chats] of Object.entries(groups)) {
         const groupHtml = $(`
             <div style="margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden;">
@@ -512,7 +516,6 @@ function renderChatsUI() {
     });
 }
 
-// 🌟 魔法棒選單按鈕注入
 function setupMagicWandButton() {
     if ($('#ds_reset_current_chat').length === 0) {
         const btn = $(`<div id="ds_reset_current_chat" class="list-group-item interactable"><span class="fa-solid fa-broom" style="margin-right: 8px; color: #00e5ff;"></span>重置當前 DS 快取</div>`);
@@ -559,15 +562,18 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
+    // 🌟 強制純橫向排版的 CSS
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
                 .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; white-space: nowrap; }
-                .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
-                .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
+                .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; white-space: nowrap; }
+                .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
                 .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.15); }
+                .ds-icon-btn { background: rgba(255,255,255,0.1); border: none; color: #ccc; padding: 4px 8px; border-radius: 4px; cursor: pointer; transition: 0.2s; margin-left: 4px; }
+                .ds-icon-btn:hover { background: rgba(0, 229, 255, 0.3); color: #fff; }
             </style>
         `);
     }
@@ -631,9 +637,9 @@ async function setupUI() {
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                     <b style="font-size: 13px; color: #aaa;">📝 全景 Markdown 日誌：</b>
                     <div>
-                        <button id="ds-log-copy" class="menu_button" style="padding: 2px 8px; font-size: 11px; margin: 0 2px;">📋 複製</button>
-                        <button id="ds-log-export" class="menu_button" style="padding: 2px 8px; font-size: 11px; margin: 0 2px;">💾 導出 .md</button>
-                        <button id="ds-log-clear" class="menu_button" style="padding: 2px 8px; font-size: 11px; margin: 0 2px;">🗑️ 清空</button>
+                        <button id="ds-log-copy" class="ds-icon-btn" title="複製日誌"><i class="fa-solid fa-copy"></i></button>
+                        <button id="ds-log-export" class="ds-icon-btn" title="導出 .md"><i class="fa-solid fa-download"></i></button>
+                        <button id="ds-log-clear" class="ds-icon-btn" title="清空日誌"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
                 <div id="ds-cache-log-viewer" style="width: 100%; height: 350px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1);"></div>
@@ -674,7 +680,7 @@ async function setupUI() {
     $('#ds-log-clear').on('click', Logger.clear);
     
     renderChatsUI();
-    setupMagicWandButton(); // 注入魔法棒按鈕
+    setupMagicWandButton();
 }
 
 jQuery(async () => {
@@ -689,7 +695,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (UI 體驗升級版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致監控版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
