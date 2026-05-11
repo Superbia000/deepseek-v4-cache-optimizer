@@ -36,7 +36,6 @@ let rawMarkdownLogs = [];
 const Logger = {
     _uiViewer: null,
     
-    // 核心工具
     normalize: (text) => Settings.semanticNorm ? text.replace(/\s+/g, ' ').replace(/[“”]/g, '"').replace(/[‘’]/g, "'").trim() : text.trim(),
     hash: (text) => {
         let hash = 0, str = Logger.normalize(text);
@@ -53,52 +52,54 @@ const Logger = {
         return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     },
 
-    // 寫入純文本/Markdown日誌
     write: (markdownText, level = LogLevels.STANDARD) => {
         if (Settings.logLevel < level) return;
         const time = Logger.getTime();
         const entry = `**[${time}]** ${markdownText}\n`;
         rawMarkdownLogs.push(entry);
         Logger.updateUI(entry);
-        
         if (level === LogLevels.EXTREME) console.log(`[DS Cache EXTREME]`, markdownText);
     },
 
-    // 渲染 Markdown 到 UI
     updateUI: (newEntry) => {
         if (!Logger._uiViewer) return;
         
-        // 輕量級 Markdown 轉 HTML (處理粗體與表格)
         let html = newEntry
             .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
             .replace(/^- (.*)/gm, '<li>$1</li>');
             
         if (html.includes('|')) {
             const lines = html.split('\n');
-            let tableHtml = '<table class="ds-log-table">';
+            let tableHtml = '<div class="ds-log-container"><table class="ds-log-table">';
             let inTable = false;
+            let isFirstRow = true;
             for (let line of lines) {
                 if (line.trim().startsWith('|')) {
                     if (!inTable) inTable = true;
                     const cells = line.split('|').filter(c => c.trim() !== '');
-                    const isHeader = line.includes('---');
-                    if (isHeader) continue;
+                    const isSeparator = line.includes('---');
+                    if (isSeparator) continue;
                     
-                    tableHtml += '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
+                    if (isFirstRow) {
+                        tableHtml += '<tr>' + cells.map(c => `<th>${c.trim()}</th>`).join('') + '</tr>';
+                        isFirstRow = false;
+                    } else {
+                        tableHtml += '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
+                    }
                 } else {
-                    if (inTable) { tableHtml += '</table>'; inTable = false; }
+                    if (inTable) { tableHtml += '</table></div>'; inTable = false; isFirstRow = true; }
                     tableHtml += line + '<br>';
                 }
             }
-            if (inTable) tableHtml += '</table>';
+            if (inTable) tableHtml += '</table></div>';
             html = tableHtml;
         }
 
         const div = document.createElement('div');
         div.innerHTML = html;
-        div.style.marginBottom = '8px';
+        div.style.marginBottom = '12px';
         div.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
-        div.style.paddingBottom = '8px';
+        div.style.paddingBottom = '12px';
         
         Logger._uiViewer.appendChild(div);
         Logger._uiViewer.scrollTop = Logger._uiViewer.scrollHeight;
@@ -180,18 +181,20 @@ const Detectors = {
     },
     
     // 深度偵測來源與創造者
-    analyzeOrigin: (msg) => {
-        let source = 'ST預設', creator = 'ST核心', category = 'SYS';
-        if (msg.role === 'user') { source = '用戶輸入'; creator = '用戶'; category = 'USER'; }
-        else if (msg.role === 'assistant') { source = 'AI回覆'; creator = '大模型'; category = 'AI'; }
-        else if (msg.isDSPatch) { source = '本插件'; creator = 'DS Cache'; category = 'PATCH'; }
-        else if (msg.name) {
+    getOriginInfo: (msg, type) => {
+        if (type === 'current_user') return { source: '用戶輸入', creator: '用戶', category: 'USER' };
+        if (type === 'prefill') return { source: 'AI回覆(預填充)', creator: '大模型', category: 'PREFILL' };
+        if (type === 'history_user') return { source: '用戶歷史輸入', creator: '用戶', category: 'USER' };
+        if (type === 'history_ai') return { source: 'AI歷史回覆', creator: '大模型', category: 'AI' };
+        if (msg.isDSPatch) return { source: '本插件', creator: 'DS Cache', category: 'PATCH' };
+        
+        if (msg.name) {
             const n = msg.name.toLowerCase();
-            if (n.includes('lorebook') || n.includes('world')) { source = '世界書'; creator = '用戶/ST'; }
-            else if (n.includes('author')) { source = 'ST預設'; creator = '用戶'; }
-            else if (!Detectors.isDefaultPrompt(msg)) { source = '其他插件'; creator = msg.name; }
+            if (n.includes('lorebook') || n.includes('world')) return { source: '世界書', creator: '用戶/ST', category: 'SYS' };
+            if (n.includes('author')) return { source: '預設', creator: '用戶', category: 'SYS' };
+            if (!Detectors.isDefaultPrompt(msg)) return { source: '其他插件', creator: msg.name, category: 'SYS' };
         }
-        return { source, creator, category };
+        return { source: '預設', creator: 'ST核心', category: 'SYS' };
     }
 };
 
@@ -205,7 +208,6 @@ async function interceptAndRestructurePrompt(data) {
         const state = getChatState(getChatKey());
         const incomingStream = data.chat;
         
-        // 帳本系統初始化
         let ledger = [];
         let otherPluginActions = [];
 
@@ -216,19 +218,26 @@ async function interceptAndRestructurePrompt(data) {
 
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             const msg = incomingStream[i];
-            const origin = Detectors.analyzeOrigin(msg);
             
-            // 偵測其他插件的動作 (要求4)
+            let type = 'sys';
+            if (!currentUserMsg && msg.role === 'user') type = 'current_user';
+            else if (!currentUserMsg && msg.role === 'assistant') type = 'prefill';
+            else if (msg.role === 'user') type = 'history_user';
+            else if (msg.role === 'assistant') type = 'history_ai';
+
+            const origin = Detectors.getOriginInfo(msg, type);
+            
+            // 偵測其他插件的動作
             if (origin.source === '其他插件') {
                 otherPluginActions.push(`- 偵測到其他插件 (**${origin.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
             }
 
-            if (!currentUserMsg && msg.role === 'user') {
+            if (type === 'current_user') {
                 currentUserMsg = msg;
                 ledger.push({ ref: msg, origIdx: i, ...origin, gen: '新增', action: '置底發送', proto: '-', status: '未凍結' });
-            } else if (!currentUserMsg && msg.role === 'assistant') {
+            } else if (type === 'prefill') {
                 prefills.unshift(msg);
-                ledger.push({ ref: msg, origIdx: i, ...origin, category: 'PREFILL', gen: '新增', action: '置底發送', proto: '-', status: '未凍結' });
+                ledger.push({ ref: msg, origIdx: i, ...origin, gen: '新增', action: '置底發送', proto: '-', status: '未凍結' });
             } else {
                 incomingPool.unshift({
                     ...msg, norm: Logger.normalize(msg.content), hash: Logger.hash(msg.content), originalIndex: i, ...origin
@@ -239,7 +248,7 @@ async function interceptAndRestructurePrompt(data) {
         if (Settings.warpFilter) {
             incomingPool = incomingPool.filter(msg => {
                 if (Detectors.isZeroEntropy(msg.norm)) {
-                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '捨棄', action: '剔除', proto: '協議6', status: '-', content: msg.content });
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '捨棄', action: '剔除', proto: '協議6', status: '已刪除', content: msg.content });
                     return false;
                 }
                 return true;
@@ -262,6 +271,7 @@ async function interceptAndRestructurePrompt(data) {
         const seenHashes = new Set();
         let missingHistoryCount = 0;
         let patches = [];
+        let maxMatchedHistoryIdx = -1;
 
         const createPatch = (content, proto) => {
             const p = { role: 'system', content, isDSPatch: true };
@@ -274,7 +284,7 @@ async function interceptAndRestructurePrompt(data) {
             nextFrozenSequence.push(frozenMsg); 
             seenHashes.add(frozenMsg.hash);
             
-            const origin = Detectors.analyzeOrigin(frozenMsg);
+            const origin = Detectors.getOriginInfo(frozenMsg, frozenMsg.role === 'user' ? 'history_user' : (frozenMsg.role === 'assistant' ? 'history_ai' : 'sys'));
 
             let bestMatchIdx = -1;
             let bestSim = 0;
@@ -288,12 +298,14 @@ async function interceptAndRestructurePrompt(data) {
                 const matched = incomingPool.splice(bestMatchIdx, 1)[0];
                 ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '繼承', action: '原位凍結', proto: '協議1', status: '已凍結' });
                 missingHistoryCount = 0;
+                if (frozenMsg.role === 'user' || frozenMsg.role === 'assistant') maxMatchedHistoryIdx = Math.max(maxMatchedHistoryIdx, matched.originalIndex);
             } 
             else if (Settings.entropyShield && bestSim > 0.99) {
                 const matched = incomingPool.splice(bestMatchIdx, 1)[0];
                 ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '修改', action: '原位凍結', proto: '協議8', status: '已凍結' });
                 createPatch(`[系統微調] 之前的對話已修正微小細節。`, '協議8');
                 missingHistoryCount = 0;
+                if (frozenMsg.role === 'user' || frozenMsg.role === 'assistant') maxMatchedHistoryIdx = Math.max(maxMatchedHistoryIdx, matched.originalIndex);
             }
             else if (bestSim > 0.85 && frozenMsg.role === 'system') {
                 const matched = incomingPool.splice(bestMatchIdx, 1)[0];
@@ -310,6 +322,7 @@ async function interceptAndRestructurePrompt(data) {
                 ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '修改', action: '原位凍結', proto: '協議9', status: '已凍結' });
                 createPatch(`[時空修正] 之前的事件已發生改變，最新情況為：\n${matched.content}`, '協議9');
                 missingHistoryCount = 0;
+                if (frozenMsg.role === 'user' || frozenMsg.role === 'assistant') maxMatchedHistoryIdx = Math.max(maxMatchedHistoryIdx, matched.originalIndex);
             }
             else {
                 ledger.push({ ref: frozenMsg, origIdx: '-', ...origin, gen: '消失', action: '強制保留', proto: '協議3/16', status: '已凍結' });
@@ -331,7 +344,7 @@ async function interceptAndRestructurePrompt(data) {
 
         for (const msg of incomingPool) {
             if (Settings.deduplication && seenHashes.has(msg.hash)) {
-                ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '重複', action: '抹除', proto: '協議5', status: '-' });
+                ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '重複', action: '抹除', proto: '協議5', status: '已刪除', content: msg.content });
                 continue;
             }
 
@@ -355,7 +368,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (Settings.chronos && Detectors.isChronos(msg.norm)) {
                     createPatch(`[敘事過渡] ${msg.content}`, '協議20');
                 }
-                else if (Settings.flashback && msg.originalIndex < incomingStream.length - 3) {
+                else if (Settings.flashback && maxMatchedHistoryIdx !== -1 && msg.originalIndex < maxMatchedHistoryIdx) {
                     createPatch(`[閃回補充] 在之前的事件中，還發生了以下細節：\n${msg.role}: ${msg.content}`, '協議10');
                 }
                 else {
@@ -365,7 +378,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // --- 階段 5：雙軌排序引擎 ---
+        // --- 階段 5：雙軌排序引擎 (嚴格遵守用戶藍圖) ---
         let rawNewItems = [];
         if (state.frozenSequence.length === 0) {
             rawNewItems = [...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...newHistory, ...dynamicPrompts, ...patches];
@@ -387,10 +400,11 @@ async function interceptAndRestructurePrompt(data) {
 
         // 寫入最終索引到帳本
         ledger.forEach(entry => {
-            if (entry.action === '剔除' || entry.action === '抹除') {
+            if (entry.status === '已刪除' || entry.action === '剔除' || entry.action === '抹除') {
                 entry.finalIdx = '-';
             } else {
-                const idx = finalStream.findIndex(m => m.content === entry.ref.content);
+                let idx = finalStream.indexOf(entry.ref);
+                if (idx === -1) idx = finalStream.findIndex(m => m.content === (entry.ref.content || entry.content) && m.role === entry.ref.role);
                 entry.finalIdx = idx !== -1 ? idx : '-';
             }
         });
@@ -404,19 +418,19 @@ async function interceptAndRestructurePrompt(data) {
                 mdLog += `**🔌 其他插件動態：**\n${otherPluginActions.join('\n')}\n\n`;
             }
             
-            mdLog += `| 原序 | 新序 | 分類 | 來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 內容摘要 |\n`;
+            mdLog += `| 最終排序 | 原始排序 | 分類 | 來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 提示詞內容摘要 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
             
-            // 按照最終順序排序帳本輸出，被剔除的放最後
+            // 嚴格按照最終排序輸出，被刪除的沉底
             ledger.sort((a, b) => {
-                if (a.finalIdx === '-' && b.finalIdx === '-') return 0;
+                if (a.finalIdx === '-' && b.finalIdx === '-') return (a.origIdx === '-' ? 999 : a.origIdx) - (b.origIdx === '-' ? 999 : b.origIdx);
                 if (a.finalIdx === '-') return 1;
                 if (b.finalIdx === '-') return -1;
                 return a.finalIdx - b.finalIdx;
             });
 
             ledger.forEach(l => {
-                mdLog += `| ${l.origIdx} | ${l.finalIdx} | ${l.category} | ${l.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.proto} | ${l.status} | ${Logger.truncate(l.ref.content || l.content)} |\n`;
+                mdLog += `| ${l.finalIdx} | ${l.origIdx} | ${l.category} | ${l.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.proto} | ${l.status} | ${Logger.truncate(l.ref?.content || l.content)} |\n`;
             });
 
             Logger.write(mdLog, LogLevels.DETAILED);
@@ -487,14 +501,16 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
-    // 注入 Markdown 表格的 CSS
+    // 注入商業級 Markdown 表格 CSS
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
-                .ds-log-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; color: #ccc; }
-                .ds-log-table th, .ds-log-table td { border: 1px solid rgba(255,255,255,0.1); padding: 4px 6px; text-align: left; word-break: break-all; }
+                .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
+                .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; white-space: nowrap; }
+                .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
+                .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
-                .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.1); }
+                .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.15); }
             </style>
         `);
     }
@@ -563,7 +579,7 @@ async function setupUI() {
                         <button id="ds-log-clear" class="menu_button" style="padding: 2px 8px; font-size: 11px; margin: 0 2px;">🗑️ 清空</button>
                     </div>
                 </div>
-                <div id="ds-cache-log-viewer" style="width: 100%; height: 300px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1);"></div>
+                <div id="ds-cache-log-viewer" style="width: 100%; height: 350px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1);"></div>
             `)}
         </div>
     </div>`;
@@ -615,7 +631,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極日誌旗艦版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
