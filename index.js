@@ -131,7 +131,7 @@ const injectCSS = () => {
         .ds-health-bar { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 5px; overflow: hidden; }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.3s, background 0.3s; }
 
-        /* Omni-Vision UI Styles (v53 Enhanced) */
+        /* Omni-Vision UI Styles (v52 Enhanced) */
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
         .ds-omni-body { display: flex; gap: 15px; flex: 1; min-height: 0; position: relative; }
@@ -176,9 +176,6 @@ const injectCSS = () => {
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes dsShimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
-        
-        /* SVG Line Container */
-        .ds-svg-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
     `;
     document.head.appendChild(style);
 };
@@ -190,8 +187,8 @@ let Settings = {};
 let sessionSnoozeReset = false; 
 let backupVault = []; 
 
-// 🚀 核心修復：帶有時間衰減機制的實體發送按鍵守衛 (Req 1, 3, 11, 13)
-// 徹底防止 ST 背景任務 (如自動 Token 計算、擴充套件掃描) 污染快取矩陣
+// 🚀 核心修復：帶有時間衰減機制的實體發送按鍵守衛 (Req 10, 11)
+// 防止 ST 背景任務 (如自動 Token 計算、擴充套件掃描) 污染快取矩陣
 let isUserActionPending = false;
 let userActionTimeout = null;
 
@@ -378,7 +375,7 @@ function performGarbageCollection() {
 }
 
 // ==========================================
-// 3. Omni-Log 全知日誌系統 (Req 4)
+// 3. Omni-Log 全知日誌系統
 // ==========================================
 const LogLevels = { SILENT: 0, BASIC: 1, DETAILED: 2, DEBUG: 3, TRACE: 4 };
 let logQueue = [];
@@ -955,7 +952,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
     const startTime = performance.now();
     const chatKeyInfo = getChatKey();
 
-    // 🚀 Req 1, 3, 11, 13: 嚴格判定是否為真實發送，防止 ST 背景任務污染快取
+    // 🚀 Req 10: 嚴格判定是否為真實發送，防止 ST 背景任務污染快取
     let isActualSend = isUserActionPending;
     if (data && (data.dryRun || data.isDryRun || (data.type !== undefined && data.type !== 'chat'))) {
         isActualSend = false; // ST 明確標示為背景任務
@@ -1139,7 +1136,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             if (state.dynamicAnomalies.length > 10) state.dynamicAnomalies.shift();
         }
 
-        // 🚀 Req 11: 只有在真實發送時才允許彈出設定視窗
+        // 🚀 Req 10: 只有在真實發送時才允許彈出設定視窗
         if (needsAsk && !isDryRun && isActualSend) {
             Settings.dynamicMode = await askDynamicPromptStrategyAsync();
             safeSave();
@@ -1214,7 +1211,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
-        // 🚀 增強日誌輸出，精確顯示最終陣列的結構透視 (Req 4)
+        // 🚀 增強日誌輸出，精確顯示最終陣列的結構透視
         if (Settings.logLevel >= LogLevels.DEBUG && !isDryRun) {
             Logger.debug(`[最终排序发送阵列] 总节点数: ${proposedStream.length}`);
             if (Settings.logLevel >= LogLevels.TRACE) {
@@ -1228,7 +1225,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         // ==========================================
-        // 7. 🚀 智慧前綴感知：消滅無效彈窗 (Req 11)
+        // 7. 精準流失率演算法與自適應彈窗防護
         // ==========================================
         let requireResetConfirm = false;
         let dropPercentStr = "0.0";
@@ -1243,7 +1240,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             const L = state.lastSentSequence;
             const P = proposedStream;
 
-            // 尋找前綴斷裂點 (Prefix Breakpoint)
             for (let i = 0; i < Math.min(L.length, P.length); i++) {
                 if (L[i].role !== P[i].role || L[i].hash !== P[i].hash) { breakIndex = i; break; }
             }
@@ -1260,10 +1256,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             let totalLen = preservedLen + recomputeLen;
             let recomputeRatio = 0;
             
-            // 🚀 核心突破：如果斷裂點等於舊陣列長度，代表只是「追加」內容，前綴完全命中，流失率為 0%！
             if (breakIndex === L.length) {
                 recomputeRatio = 0; 
-                if (!isDryRun && recomputeLen > 0) Logger.trace(`[智慧前缀感知] 侦测到 ${Math.floor(recomputeLen/3.5)} Tokens 的纯追加内容，前缀缓存 100% 命中，免除弹窗。`);
             } else {
                 recomputeRatio = totalLen === 0 ? 0 : (recomputeLen / totalLen);
             }
@@ -1281,7 +1275,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             
             dropPercentStr = (recomputeRatio * 100).toFixed(1);
 
-            // 🚀 只有在真實發送 (isActualSend) 的當下，且真的發生了「內部斷裂」，才允許彈出警告視窗
+            // 🚀 Req 10: 只有在真實發送 (isActualSend) 的當下，才允許彈出警告視窗
             if (recomputeRatio >= 0.10 && recomputeTokens > 500 && Settings.showResetPrompt && !justSetDynamicMode && !isTailEndMutation && !sessionSnoozeReset && isActualSend) {
                 requireResetConfirm = true;
                 
@@ -1394,7 +1388,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             if (currentTurn.user) finalStream.push(currentTurn.user);
             for (const p of currentTurn.prefills) finalStream.push(p);
 
-            // 🚀 深層拷貝，徹底隔離 ST UI 污染 (Req 1, 3, 11)
+            // 🚀 深層拷貝，徹底隔離 ST UI 污染 (Req 9 修復)
             state.lastSentSequence = JSON.parse(JSON.stringify(finalStream));
             
             if (Settings.multiverseProtocol) {
@@ -1435,7 +1429,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 7.5 (Req 10, 13, 14)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 7.5 (Req 6-14)
 // ==========================================
 let omniRenderTimeout = null;
 let isOmniCollapsed = true; 
@@ -1512,8 +1506,7 @@ async function showOmniVisionUI() {
                     <div id="omni-minimap" class="ds-minimap-container" title="全域快取雷达 (点击跳转)"></div>
                     
                     <div id="omni-dual-scroll" class="ds-scroll ds-strict-contain" style="position:absolute; top:45px; left:0; right:20px; bottom:0; overflow-y:auto; padding:15px;">
-                        <div id="omni-svg-layer" class="ds-svg-layer"></div>
-                        <div id="omni-dual-content" style="display:flex; flex-direction:column; gap:10px; position:relative; z-index:2;">
+                        <div id="omni-dual-content" style="display:flex; flex-direction:column; gap:10px;">
                             <div style="text-align:center; padding:40px; color:var(--ds-cyan);">
                                 <div class="ds-spinner"></div>
                                 正在启动量子沙盒模拟，请稍候...
@@ -1551,7 +1544,6 @@ async function showOmniVisionUI() {
             $(this).html('<i class="fa-solid fa-compress"></i> 折叠长文本');
             $('.ds-node-text').removeClass('ds-collapsed');
         }
-        setTimeout(drawOmniLines, 350); // 等待動畫結束後重繪線條
     });
 
     $('#ds-btn-omni-refresh').on('click', function() {
@@ -1574,11 +1566,6 @@ async function showOmniVisionUI() {
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) $(this).remove(); });
-    
-    // 🚀 綁定滾動事件以即時重繪 SVG 連接線
-    $('#omni-dual-scroll').on('scroll', () => {
-        requestAnimationFrame(drawOmniLines);
-    });
 
     triggerOmniRender(state);
 }
@@ -1586,47 +1573,6 @@ async function showOmniVisionUI() {
 function triggerOmniRender(state) {
     if (omniRenderTimeout) clearTimeout(omniRenderTimeout);
     omniRenderTimeout = setTimeout(() => renderOmniVision(state), 200);
-}
-
-// 🚀 獨立的 SVG 繪製函數，確保滾動時線條精準對齊
-function drawOmniLines() {
-    const svgLayer = document.getElementById('omni-svg-layer');
-    const scrollContainer = document.getElementById('omni-dual-scroll');
-    if (!svgLayer || !scrollContainer) return;
-    
-    svgLayer.innerHTML = '';
-    const containerRect = scrollContainer.getBoundingClientRect();
-    const scrollTop = scrollContainer.scrollTop;
-    
-    let svgHtml = `<svg width="100%" height="${scrollContainer.scrollHeight}" style="position:absolute; top:0; left:0; pointer-events:none;">`;
-    document.querySelectorAll('.ds-node-row').forEach(row => {
-        const leftCell = row.querySelector('.ds-node-left');
-        const rightCell = row.querySelector('.ds-node-right');
-        if (!leftCell || !rightCell) return;
-        const status = row.getAttribute('data-status');
-        let strokeColor = 'rgba(255,255,255,0.1)';
-        if (status === 'hit') strokeColor = 'var(--ds-green)';
-        else if (status === 'phantom') strokeColor = 'var(--ds-yellow)';
-        else if (status === 'patch') strokeColor = 'var(--ds-purple)';
-        else if (status === 'break') strokeColor = 'var(--ds-red)';
-        const leftRect = leftCell.getBoundingClientRect();
-        const rightRect = rightCell.getBoundingClientRect();
-        // 計算相對於 scrollContainer 的 Y 座標
-        const y1 = leftRect.top - containerRect.top + scrollTop + 20; // 左側節點頂部往下 20px
-        const y2 = rightRect.top - containerRect.top + scrollTop + 20; // 右側節點頂部往下 20px
-        const x1 = leftRect.right - containerRect.left;
-        const x2 = rightRect.left - containerRect.left;
-        if (status === 'miss-left') {
-            svgHtml += `<path d="M ${x1},${y1} L ${x1+20},${y1}" stroke="var(--ds-red)" stroke-width="2" stroke-dasharray="4" fill="none" style="opacity:0.5;" /><circle cx="${x1+20}" cy="${y1}" r="3" fill="var(--ds-red)" />`;
-        } else if (status === 'miss-right') {
-            svgHtml += `<path d="M ${x2-20},${y2} L ${x2},${y2}" stroke="var(--ds-cyan)" stroke-width="2" stroke-dasharray="4" fill="none" style="opacity:0.5;" /><circle cx="${x2-20}" cy="${y2}" r="3" fill="var(--ds-cyan)" />`;
-        } else {
-            // 繪製貝茲曲線連接左右
-            svgHtml += `<path d="M ${x1},${y1} C ${x1+20},${y1} ${x2-20},${y2} ${x2},${y2}" stroke="${strokeColor}" stroke-width="3" fill="none" style="filter: drop-shadow(0 0 5px ${strokeColor});" />`;
-        }
-    });
-    svgHtml += `</svg>`;
-    svgLayer.innerHTML = svgHtml;
 }
 
 async function renderOmniVision(state) {
@@ -1706,12 +1652,12 @@ async function renderOmniVision(state) {
             l++; r++;
         } else if (leftNode && (!rightNode || !rightArray.slice(r, r+20).some(n => n.hash === leftNode.hash))) {
             row.left = leftNode;
-            row.status = 'miss-left'; // 左側有，右側無 (被刪除)
+            row.status = 'miss'; // 左側有，右側無 (被刪除)
             l++;
         } else if (rightNode) {
             row.right = rightNode;
             if (rightNode.isPatched) row.status = 'patch';
-            else row.status = (breakIndex !== -1 && r >= breakIndex) ? (parseFloat(dropPercent) === 0 ? 'miss-right' : 'break') : 'hit';
+            else row.status = (breakIndex !== -1 && r >= breakIndex) ? (parseFloat(dropPercent) === 0 ? 'miss' : 'break') : 'hit';
             r++;
         } else {
             l++; r++;
@@ -1727,13 +1673,12 @@ async function renderOmniVision(state) {
         const el = document.createElement('div');
         el.className = 'ds-node-row ds-virtual-list';
         el.id = `omni-row-${idx}`;
-        el.setAttribute('data-status', row.status);
         
-        let leftHtml = '<div class="ds-node-cell ds-node-empty ds-node-left" style="opacity:0.3;">[已删除 / 无对应节点]</div>';
+        let leftHtml = '<div class="ds-node-cell ds-node-empty" style="opacity:0.3;">[已删除 / 无对应节点]</div>';
         if (row.left) {
             const tokenEst = Math.floor((row.left.content?.length || 0) / 3.5);
             leftHtml = `
-                <div class="ds-node-cell ds-node-left">
+                <div class="ds-node-cell">
                     <div class="ds-node-header">
                         <span><span class="ds-tag ds-tag-${row.left.tag}">[${row.left.tag}]</span> <span style="color:#5c6370;">~${tokenEst} T</span></span>
                         <span>Hash: ${row.left.hash.toString(16).substring(0,8)}</span>
@@ -1743,17 +1688,17 @@ async function renderOmniVision(state) {
             `;
         }
         
-        let rightHtml = '<div class="ds-node-cell ds-node-empty ds-node-right" style="opacity:0.3;">[已删除 / 无对应节点]</div>';
+        let rightHtml = '<div class="ds-node-cell ds-node-empty" style="opacity:0.3;">[已删除 / 无对应节点]</div>';
         let minimapColor = 'var(--ds-red)';
         
         if (row.right) {
-            let statusClass = `ds-status-${row.status.replace('-right', '')}`;
-            let statusIcon = row.status === 'hit' ? '🟢' : row.status === 'phantom' ? '🟡' : row.status === 'patch' ? '🟣' : (row.status === 'miss-right' ? '🔵' : '🔴');
+            let statusClass = `ds-status-${row.status}`;
+            let statusIcon = row.status === 'hit' ? '🟢' : row.status === 'phantom' ? '🟡' : row.status === 'patch' ? '🟣' : (row.status === 'miss' ? '🔵' : '🔴');
             
             if (row.status === 'hit') minimapColor = 'var(--ds-green)';
             else if (row.status === 'phantom') minimapColor = 'var(--ds-yellow)';
             else if (row.status === 'patch') minimapColor = 'var(--ds-purple)';
-            else if (row.status === 'miss-right') minimapColor = 'var(--ds-cyan)'; 
+            else if (row.status === 'miss') minimapColor = 'var(--ds-cyan)'; 
 
             let contentToShow = escapeHtml(row.right.content).replace(/\n/g, '<br>');
             
@@ -1764,13 +1709,13 @@ async function renderOmniVision(state) {
                 contentToShow = `<div style="color:var(--ds-yellow); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(229,192,123,0.3); padding-bottom:5px;">[👻 幻影同步生效: 已强制还原为旧版内容]</div>` + escapeHtml(row.right.originalContent).replace(/\n/g, '<br>');
             } else if (row.right.isPatched) {
                 contentToShow = `<div style="color:var(--ds-purple); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(198,120,221,0.3); padding-bottom:5px;">[🛡️ 智慧修补生效: 强制保留原位 (AI将看到旧版)]</div>` + contentToShow;
-            } else if (row.status === 'miss-right') {
+            } else if (row.status === 'miss') {
                 contentToShow = `<div style="color:var(--ds-cyan); font-style:italic; margin-bottom:5px; border-bottom:1px dashed rgba(0,229,255,0.3); padding-bottom:5px;">[➕ 追加事件: 附加于尾部]</div>` + contentToShow;
             }
 
             const tokenEst = Math.floor((row.right.content?.length || 0) / 3.5);
             rightHtml = `
-                <div class="ds-node-cell ds-node-right ${statusClass}">
+                <div class="ds-node-cell ${statusClass}">
                     <div class="ds-node-header">
                         <span>${statusIcon} <span class="ds-tag ds-tag-${row.right.tag}">[${row.right.tag}]</span> <span style="color:#5c6370;">~${tokenEst} T</span></span>
                         <span>Hash: ${row.right.hash.toString(16).substring(0,8)}</span>
@@ -1780,10 +1725,34 @@ async function renderOmniVision(state) {
             `;
         }
 
-        // 🚀 構建三段式 Flex 佈局 (左 - 空白 - 右)，線條由 drawOmniLines 統一繪製
+        // 🚀 生成視覺化神經連接線 SVG
+        let svgHtml = '';
+        if (row.left && row.right) {
+            let strokeColor = 'rgba(255,255,255,0.1)';
+            if (row.status === 'hit') strokeColor = 'var(--ds-green)';
+            else if (row.status === 'phantom') strokeColor = 'var(--ds-yellow)';
+            else if (row.status === 'patch') strokeColor = 'var(--ds-purple)';
+            else if (row.status === 'break') strokeColor = 'var(--ds-red)';
+
+            svgHtml = `<svg width="100%" height="40" style="overflow: visible; position: absolute; top: 50%; transform: translateY(-50%); left: 0; pointer-events: none;">
+                           <path d="M 0,20 L 40,20" stroke="${strokeColor}" stroke-width="3" fill="none" style="filter: drop-shadow(0 0 5px ${strokeColor});" />
+                       </svg>`;
+        } else if (row.left && !row.right) {
+            svgHtml = `<svg width="100%" height="40" style="overflow: visible; position: absolute; top: 50%; transform: translateY(-50%); left: 0; pointer-events: none;">
+                           <path d="M 0,20 L 20,20" stroke="var(--ds-red)" stroke-width="2" stroke-dasharray="4" fill="none" style="opacity:0.5;" />
+                           <circle cx="20" cy="20" r="3" fill="var(--ds-red)" />
+                       </svg>`;
+        } else if (!row.left && row.right) {
+            svgHtml = `<svg width="100%" height="40" style="overflow: visible; position: absolute; top: 50%; transform: translateY(-50%); left: 0; pointer-events: none;">
+                           <path d="M 20,20 L 40,20" stroke="var(--ds-cyan)" stroke-width="2" stroke-dasharray="4" fill="none" style="opacity:0.5;" />
+                           <circle cx="20" cy="20" r="3" fill="var(--ds-cyan)" />
+                       </svg>`;
+        }
+        
+        // 🚀 構建三段式 Flex 佈局 (左 - 線 - 右)
         el.innerHTML = `
             <div style="flex: 0 0 47%; display: flex; flex-direction: column; min-width: 0;">${leftHtml}</div>
-            <div style="flex: 0 0 40px; position: relative; display: flex; align-items: center; justify-content: center; z-index: 1;"></div>
+            <div style="flex: 0 0 40px; position: relative; display: flex; align-items: center; justify-content: center; z-index: 1;">${svgHtml}</div>
             <div style="flex: 0 0 47%; display: flex; flex-direction: column; min-width: 0;">${rightHtml}</div>
         `;
         frag.appendChild(el);
@@ -1803,9 +1772,6 @@ async function renderOmniVision(state) {
     
     minimapContainer.innerHTML = '';
     minimapContainer.appendChild(minimapFrag);
-    
-    // 延遲繪製線條以確保 DOM 已渲染
-    setTimeout(drawOmniLines, 50);
     
     $('#omni-sync-badge').fadeIn(200);
 }
@@ -2025,7 +1991,7 @@ async function setupUI() {
         const html = `
         <div class="inline-drawer" id="ds-v52-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v53 全知矩阵版)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v52 全知矩阵版)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -2582,7 +2548,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v53_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v52_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2658,7 +2624,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v53 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v52 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
