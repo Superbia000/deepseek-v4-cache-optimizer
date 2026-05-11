@@ -74,9 +74,21 @@ const injectCSS = () => {
         .ds-btn:hover { background: rgba(255,255,255,0.15); transform: translateY(-2px); }
         .ds-btn-blue { border-color: rgba(0,229,255,0.5); color: var(--ds-cyan); }
         .ds-btn-blue:hover { background: rgba(0,229,255,0.1); box-shadow: 0 0 15px rgba(0,229,255,0.3); }
+        .ds-btn-accept { border-color: rgba(152,195,121,0.5); color: var(--ds-green); }
+        .ds-btn-accept:hover { background: rgba(152,195,121,0.1); box-shadow: 0 0 15px rgba(152,195,121,0.3); }
+        .ds-btn-revert { border-color: rgba(198,120,221,0.5); color: var(--ds-purple); }
+        .ds-btn-revert:hover { background: rgba(198,120,221,0.1); box-shadow: 0 0 15px rgba(198,120,221,0.3); }
+        .ds-btn-abort { border-color: rgba(224,108,117,0.5); color: var(--ds-red); }
+        .ds-btn-abort:hover { background: rgba(224,108,117,0.1); box-shadow: 0 0 15px rgba(224,108,117,0.3); }
 
         .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); backdrop-filter: blur(10px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s; }
-        .ds-modal { background: #15181e; border: 1px solid var(--ds-cyan); padding: 30px; border-radius: 12px; max-width: 600px; width: 90%; color: #fff; box-shadow: 0 20px 50px rgba(0,0,0,0.8); }
+        .ds-modal { background: #15181e; border: 1px solid var(--ds-cyan); padding: 30px; border-radius: 12px; max-width: 600px; width: 90%; color: #fff; box-shadow: 0 20px 50px rgba(0,0,0,0.8); max-height: 90vh; overflow-y: auto; }
+        .ds-modal-title { color: var(--ds-cyan); margin: 0 0 20px 0; display: flex; align-items: center; gap: 12px; font-size: 20px; font-weight: bold; }
+        .ds-map-box { background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; color: #abb2bf; margin: 15px 0; border: 1px solid rgba(255,255,255,0.1); max-height: 200px; overflow-y: auto; }
+        .ds-diff-del { background: rgba(224, 108, 117, 0.15); border-left: 3px solid var(--ds-red); padding: 8px; margin-bottom: 5px; color: #ff8c94; }
+        .ds-diff-add { background: rgba(152, 195, 121, 0.15); border-left: 3px solid var(--ds-green); padding: 8px; color: #b5e890; }
+        .ds-progress-container { background: rgba(0,0,0,0.8); border-radius: 8px; height: 10px; margin: 15px 0; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
+        .ds-progress-bar { height: 100%; width: 0%; transition: width 1s; }
         
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
     `;
@@ -91,16 +103,16 @@ let RuntimeState = {}; // 🚀 純 RAM 儲存區 (存放 Multiverse 等巨量資
 let sessionSnoozeReset = false; 
 
 function initSettings() {
-    const old = extension_settings.ds_cache_v45 || extension_settings.ds_cache_v44 || {};
-    if (!extension_settings.ds_cache_v46) {
-        extension_settings.ds_cache_v46 = {
+    const old = extension_settings.ds_cache_v46 || extension_settings.ds_cache_v45 || {};
+    if (!extension_settings.ds_cache_v47) {
+        extension_settings.ds_cache_v47 = {
             enabled: old.enabled ?? true,
             zenMode: old.zenMode ?? false,
             // 🚀 4 大核心引擎開關
-            engineStasis: true,    // 絕對靜止引擎
-            enginePatching: true,  // 量子補丁矩陣
-            engineSink: true,      // 流形沉澱池
-            engineNavigator: true, // 時間線導航儀
+            engineStasis: old.engineStasis ?? true,    
+            enginePatching: old.enginePatching ?? true,  
+            engineSink: old.engineSink ?? true,      
+            engineNavigator: old.engineNavigator ?? true, 
             
             // 核心策略選擇
             dynamicMode: old.dynamicMode ?? 1, 
@@ -111,14 +123,14 @@ function initSettings() {
             showResetPrompt: old.showResetPrompt ?? true,
             autoAccept: old.autoAccept ?? false,
             logLevel: old.logLevel ?? 2,
-            maxCacheSize: 15, // 降低預設值防崩潰
+            maxCacheSize: 15, 
             autoPinThreshold: old.autoPinThreshold ?? 0,
             
             chats: old.chats || {},
             pinnedChats: old.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v46;
+    Settings = extension_settings.ds_cache_v47;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
 }
@@ -131,8 +143,8 @@ function flushSaveSync() {
         try { 
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             // 🛡️ 防崩潰裝甲：攔截 localStorage 錯誤
-            try { localStorage.setItem('ds_cache_v46_backup', JSON.stringify(Settings)); } 
-            catch (e) { console.warn("[DS Cache] LocalStorage 空間不足，已跳過本地備份，但不影響主程式運行。"); }
+            try { localStorage.setItem('ds_cache_v47_backup', JSON.stringify(Settings)); } 
+            catch (e) { console.warn("[DS Cache] LocalStorage 空間不足，已跳過本地備份。"); }
         } catch (e) { console.error("[DS Cache] 儲存設定失敗", e); }
         pendingSave = false; saveTimeout = null;
     }
@@ -164,15 +176,6 @@ function getChatState(chatKeyInfo) {
     // 🚀 初始化 RAM 儲存區
     if (!RuntimeState[key]) RuntimeState[key] = { multiverse: [] };
     return { disk: Settings.chats[key], ram: RuntimeState[key] };
-}
-
-function performGarbageCollection() {
-    const unpinnedKeys = Object.keys(Settings.chats).filter(k => !Settings.pinnedChats[k]);
-    if (unpinnedKeys.length <= Settings.maxCacheSize) return;
-    const sortedKeys = unpinnedKeys.sort((a, b) => (Settings.chats[a].lastAccessed || 0) - (Settings.chats[b].lastAccessed || 0));
-    const toRemove = sortedKeys.slice(0, unpinnedKeys.length - Settings.maxCacheSize);
-    toRemove.forEach(k => { delete Settings.chats[k]; delete RuntimeState[k]; });
-    safeSave(); renderChatsUI();
 }
 
 // ==========================================
@@ -212,6 +215,7 @@ const Logger = {
     map: (msg, lvl = 1) => logAt(lvl, 'map', msg),
     error: (msg, err, lvl = 1) => logAt(lvl, 'error', err ? `${msg} ${err}` : msg),
     debug: (msg) => logAt(3, 'debug', msg),
+    trace: (msg) => logAt(4, 'debug', msg),
     divider: (msg) => logAt(1, 'divider', msg),
     normalize: (text) => text ? text.replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim() : ''
 };
@@ -232,13 +236,40 @@ function createMsg(msg, tag) {
     return { role: msg.role, content, norm, hash, originalHash: hash, tag };
 }
 
+// 🛡️ 恢復高精度 Bigram 演算法 (用於量子微創手術)
+class LRUCache {
+    constructor(maxSize) { this.cache = new Map(); this.maxSize = maxSize; }
+    get(key) {
+        if (!this.cache.has(key)) return null;
+        const val = this.cache.get(key); this.cache.delete(key); this.cache.set(key, val); return val;
+    }
+    set(key, value) {
+        if (this.cache.has(key)) this.cache.delete(key);
+        else if (this.cache.size >= this.maxSize) this.cache.delete(this.cache.keys().next().value); 
+        this.cache.set(key, value);
+    }
+    clear() { this.cache.clear(); }
+}
+const bigramCache = new LRUCache(2000);
+function getBigrams(str) {
+    const cached = bigramCache.get(str); if (cached) return cached;
+    const bigrams = new Set();
+    for (let i = 0; i < str.length - 1; i++) bigrams.add(str.substring(i, i+2));
+    bigramCache.set(str, bigrams); return bigrams;
+}
+
 function getSimilarity(msg1, msg2) {
     if (msg1.hash === msg2.hash || (msg1.originalHash && msg2.originalHash && msg1.originalHash === msg2.originalHash)) return 1;
     const s1 = msg1.norm; const s2 = msg2.norm;
     if (Math.abs(s1.length - s2.length) > Math.max(s1.length, s2.length) * 0.5) return 0;
     if (s1 === s2) return 1;
     if (s1.length > 10 && s2.includes(s1)) return 0.95;
-    return 0; // 簡化比對邏輯，提升效能
+    
+    const bigrams1 = getBigrams(s1);
+    let matchCount = 0;
+    for (let i = 0; i < s2.length - 1; i++) { if (bigrams1.has(s2.substring(i, i+2))) matchCount++; }
+    const union = (s1.length - 1) + (s2.length - 1) - matchCount;
+    return union <= 0 ? 1 : matchCount / union;
 }
 
 function findBestMatch(targetMsg, poolArray, excludeSet) {
@@ -253,11 +284,118 @@ function findBestMatch(targetMsg, poolArray, excludeSet) {
     return { index: bestIdx, score: bestScore };
 }
 
+function extractAddedText(oldStr, newStr) {
+    const cleanOld = stripHtml(oldStr); const cleanNew = stripHtml(newStr);
+    if (cleanNew.length < cleanOld.length) return null; 
+    if (cleanNew.length - cleanOld.length > 300) return null; 
+    const oldSentences = cleanOld.split(/([。！？.!?\n]+)/);
+    const newSentences = cleanNew.split(/([。！？.!?\n]+)/);
+    const oldSet = new Set(oldSentences.map(s => s.trim()).filter(s => s.length > 2));
+    let added = [];
+    for (let s of newSentences) { let t = s.trim(); if (t.length > 2 && !oldSet.has(t)) added.push(t); }
+    return added.length > 0 ? added.join(' ') : null;
+}
+
 function escapeHtml(text) { return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+function stripHtml(html) { return html ? html.replace(/<[^>]+>/g, '') : ''; }
 function truncateLog(str, len = 30) { const s = String(str||'').replace(/\n/g, ' '); return s.length > len ? s.substring(0, len) + '...' : s; }
 
+function simpleDiffHighlight(oldStr, newStr) {
+    let start = 0;
+    while(start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) start++;
+    let endOld = oldStr.length - 1; let endNew = newStr.length - 1;
+    while(endOld >= start && endNew >= start && oldStr[endOld] === newStr[endNew]) { endOld--; endNew--; }
+    const prefix = escapeHtml(oldStr.substring(0, start));
+    const suffix = escapeHtml(oldStr.substring(endOld + 1));
+    const delText = escapeHtml(oldStr.substring(start, endOld + 1));
+    const insText = escapeHtml(newStr.substring(start, endNew + 1));
+    let result = prefix;
+    if (delText) result += `<del style="color:#e06c75; background:rgba(224,108,117,0.2); text-decoration:line-through; font-weight:bold; padding:0 2px;">${delText}</del>`;
+    if (insText) result += `<ins style="color:#98c379; background:rgba(152,195,121,0.2); text-decoration:none; font-weight:bold; padding:0 2px;">${insText}</ins>`;
+    result += suffix; return result.replace(/\n/g, '<br>');
+}
+
 // ==========================================
-// 4. 核心攔截器 (v46 Singularity Engine)
+// 4. 恢復 UI 彈窗 (診斷中心與警告)
+// ==========================================
+function showDiagnosticCenter() {
+    const chatKeyInfo = getChatKey(); const state = Settings.chats[chatKeyInfo.key];
+    let contentHtml = '';
+    if (!state || !state.dynamicAnomalies || state.dynamicAnomalies.length === 0) {
+        contentHtml = `<div style="text-align:center; padding: 30px; color:var(--ds-green);"><i class="fa-solid fa-shield-heart" style="font-size:50px; margin-bottom:20px;"></i><br><b style="font-size:18px;">太棒了！您的缓存处于完美健康状态！</b><br><br><span style="color:#abb2bf; font-size:14px;">当前对话没有检测到任何会破坏缓存的「动态提示词」。</span></div>`;
+    } else {
+        const anomaly = state.dynamicAnomalies[state.dynamicAnomalies.length - 1]; 
+        const diffHtml = simpleDiffHighlight(anomaly.oldText, anomaly.newText);
+        contentHtml = `
+            <p style="color:#abb2bf; font-size:14px; line-height:1.6;">
+                <b>大模型就像在看一本长篇小说。</b><br>
+                如果小说中间有一句话每次都在变（比如时间、天气），它每次都要把那句话后面的所有内容<b style="color:var(--ds-red);">全部重新读一遍</b>！<br>
+                系统抓到了这个捣蛋鬼（如下方的红绿高亮处）。
+            </p>
+            <div class="ds-map-box">${diffHtml}</div>
+            <div style="background:rgba(0,0,0,0.4); padding:15px; border-radius:8px; border-left:4px solid var(--ds-cyan);">
+                <b style="color:var(--ds-cyan);">💡 建议解决方案：</b><br>
+                在设置面板的「流形沉淀池」中，将动态变量处理方式改为 <b>"写日记模式"</b>。
+            </div>
+        `;
+    }
+    const html = `
+        <div class="ds-overlay ds-gpu-accel" id="ds-modal-diagnostic">
+            <div class="ds-modal ds-scroll ds-gpu-accel" onclick="event.stopPropagation();">
+                <h2 class="ds-modal-title"><span class="fa-solid fa-stethoscope"></span> 🏥 缓存杀手体检中心</h2>
+                ${contentHtml}
+                <button class="ds-btn ds-btn-blue" style="width:100%; margin-top:25px;" onclick="$('#ds-modal-diagnostic').remove();">关闭视窗</button>
+            </div>
+        </div>
+    `;
+    $('body').append(html);
+    $('#ds-modal-diagnostic').on('click', function(e) { if(e.target === this) $(this).remove(); });
+}
+
+function askUserForResetAsync(dropPercent, mapInfo, causeText) {
+    return new Promise(resolve => {
+        let progColor = dropPercent >= 50 ? 'var(--ds-red)' : (dropPercent >= 20 ? 'var(--ds-yellow)' : 'var(--ds-green)'); 
+        const html = `
+            <div class="ds-overlay ds-gpu-accel" id="ds-modal-wrapper">
+                <div class="ds-modal ds-scroll ds-gpu-accel" onclick="event.stopPropagation();">
+                    <h2 class="ds-modal-title" style="color:var(--ds-red);"><span class="fa-solid fa-heart-crack"></span> 💔 糟糕！缓存断裂了</h2>
+                    <p style="line-height: 1.6; font-size: 14px; color:#abb2bf;">
+                        系统检测到您 <b>${causeText}</b>，导致约 <b style="color:${progColor}; font-size:18px;">${dropPercent}%</b> 的内容需要重新阅读。<br>
+                        请问要如何处理本次发送？
+                    </p>
+                    <div class="ds-progress-container"><div class="ds-progress-bar" id="ds-prog-bar" style="background: ${progColor};"></div></div>
+                    <div class="ds-map-box ds-scroll">${mapInfo}</div>
+                    <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">
+                        <button class="ds-btn ds-btn-accept" id="ds-btn-accept"><i class="fa-solid fa-check"></i> 没关系，帮我无缝修补并发送 (推荐)</button>
+                        <button class="ds-btn ds-btn-revert" id="ds-btn-revert"><i class="fa-solid fa-clock-rotate-left"></i> 时空回溯：假装我没改过，用旧版发送</button>
+                        <button class="ds-btn ds-btn-abort" id="ds-btn-abort"><i class="fa-solid fa-ban"></i> 物理拔管！立刻停止发送</button>
+                    </div>
+                    <div style="margin-top: 15px; text-align: center;">
+                        <label style="color:#abb2bf; font-size:12px; cursor:pointer;"><input type="checkbox" id="ds-snooze-checkbox"> 本次对话期间不再弹出此警告</label>
+                    </div>
+                </div>
+            </div>
+        `;
+        $('body').append(html);
+        setTimeout(() => { $('#ds-prog-bar').css('width', `${Math.min(dropPercent, 100)}%`); }, 50);
+
+        let isCleaned = false;
+        const cleanup = () => { 
+            if(isCleaned) return; isCleaned = true;
+            if ($('#ds-snooze-checkbox').is(':checked')) sessionSnoozeReset = true;
+            $('#ds-modal-wrapper').remove(); document.removeEventListener('keydown', keyHandler, true); 
+        };
+        $('#ds-btn-accept').click(() => { cleanup(); resolve('accept'); });
+        $('#ds-btn-revert').click(() => { cleanup(); resolve('revert'); });
+        $('#ds-btn-abort').click(() => { cleanup(); resolve('abort'); });
+        $('#ds-modal-wrapper').on('click', function(e) { if(e.target === this) { cleanup(); resolve('abort'); } });
+        const keyHandler = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cleanup(); resolve('abort'); } };
+        document.addEventListener('keydown', keyHandler, true);
+    });
+}
+
+// ==========================================
+// 5. 核心攔截器 (v47 Singularity Absolute)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (!Settings.enabled || data.dryRun) return;
@@ -269,7 +407,7 @@ async function interceptAndRestructurePrompt(data) {
         if (!data?.chat?.length) return;
         const stream = data.chat;
 
-        Logger.divider(`===== 🌌 奇点引擎启动: ${chatKeyInfo.label} =====`);
+        Logger.divider(`===== 🌌 奇点完全体启动: ${chatKeyInfo.label} =====`);
 
         // --- 階段 1：解析與過濾 ---
         const incomingSys = []; const incomingHis = [];
@@ -324,6 +462,7 @@ async function interceptAndRestructurePrompt(data) {
         const frozen = state.frozenSequence || [];
         let nextFrozen = []; let patches = []; let dynamicAppends = []; let newSysAppends = []; let ephemeralBottom = []; 
         let matchedIncomingHis = new Set(); let matchedIncomingSys = new Set();
+        let detectedAnomalies = [];
         
         let headTruncationCount = 0; let middleDeletionCount = 0;
         let hasMatchedAnyHistory = false; let maxMatchedIncomingIdx = -1;   
@@ -341,7 +480,7 @@ async function interceptAndRestructurePrompt(data) {
                     matchedIncomingHis.add(match.index); maxMatchedIncomingIdx = Math.max(maxMatchedIncomingIdx, match.index); hasMatchedAnyHistory = true;
                     // 🧬 量子補丁：歷史修改
                     if (Settings.enginePatching) {
-                        if (match.score > 0.95) patches.push(createMsg({role: 'system', content: `[系统提示：错字修正。"${truncateLog(fNode.content)}" -> "${truncateLog(parsedHis[match.index].content)}"]`}, 'PATCH'));
+                        if (match.score > 0.95) patches.push(createMsg({role: 'system', content: `[系统提示：错字修正。"${truncateLog(fNode.content, 15)}" -> "${truncateLog(parsedHis[match.index].content, 15)}"]`}, 'PATCH'));
                         else if (Settings.historyEditMode === 1) patches.push(createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话已改变，最新情况为："${parsedHis[match.index].content}"]`}, 'PATCH'));
                         else { keepFrozen = false; nextFrozen.push(parsedHis[match.index]); }
                     } else { keepFrozen = false; nextFrozen.push(parsedHis[match.index]); }
@@ -352,7 +491,7 @@ async function interceptAndRestructurePrompt(data) {
                         else { headTruncationCount++; keepFrozen = false; }
                     } else {
                         middleDeletionCount++; keepFrozen = false;
-                        if (Settings.enginePatching && middleDeletionCount <= 3) patches.push(createMsg({role: 'system', content: `[系统提示：记忆抹除。事件 "${truncateLog(fNode.content)}" 已被抹除。]`}, 'PATCH'));
+                        if (Settings.enginePatching && middleDeletionCount <= 3) patches.push(createMsg({role: 'system', content: `[系统提示：记忆抹除。事件 "${truncateLog(fNode.content, 20)}" 已被抹除。]`}, 'PATCH'));
                     }
                 }
             } else if (fNode.tag === 'SYS') {
@@ -361,9 +500,14 @@ async function interceptAndRestructurePrompt(data) {
                     matchedIncomingSys.add(match.index);
                 } else if (match.score > 0.1) {
                     matchedIncomingSys.add(match.index);
+                    detectedAnomalies.push({ oldText: fNode.content, newText: incomingSys[match.index].content, score: match.score });
+                    let addedText = extractAddedText(fNode.content, incomingSys[match.index].content);
+
                     // 🧬 量子補丁：設定修改
                     if (Settings.enginePatching && i === 0) {
                         patches.push(createMsg({role: 'system', content: `[系统提示：角色设定热更新：\n${incomingSys[match.index].content}]`}, 'PATCH'));
+                    } else if (Settings.enginePatching && match.score > 0.85 && addedText) {
+                        patches.push(createMsg({role: 'system', content: `[系统提示：设定微调补充。新增细节：${addedText}]`}, 'PATCH'));
                     } else if (Settings.engineSink) {
                         // 🌊 流形沉澱池：動態提示詞
                         if (Settings.dynamicMode === 1 && fNode.content.length < 300) dynamicAppends.push({...incomingSys[match.index], tag: 'DIARY'});
@@ -383,6 +527,7 @@ async function interceptAndRestructurePrompt(data) {
             if (headTruncationCount > 5) patches.push(createMsg({role: 'system', content: `[系统提示：早期记忆已归档。]`}, 'PATCH'));
             if (middleDeletionCount > 3 && middleDeletionCount <= 5) patches.push(createMsg({role: 'system', content: `[系统提示：上下文发生跳跃。]`}, 'PATCH'));
         }
+        if (detectedAnomalies.length > 0) state.dynamicAnomalies = detectedAnomalies;
 
         // 處理未匹配的歷史 (新對話 / 閃回)
         for (let i = 0; i < parsedHis.length; i++) {
@@ -417,7 +562,66 @@ async function interceptAndRestructurePrompt(data) {
         if (currentTurn.user) proposedStream.push(currentTurn.user);
         for (const p of currentTurn.prefills) proposedStream.push(p);
 
-        // --- 階段 5：狀態更新與 RAM 寫入 ---
+        // --- 階段 5：精準流失率演算法與警告彈窗 ---
+        let requireResetConfirm = false; let dropPercentStr = "0.0"; let mapInfoText = ""; let causeText = "";
+        
+        if (Settings.showResetPrompt && !sessionSnoozeReset && state.lastSentSequence && state.lastSentSequence.length > 0) {
+            const L = state.lastSentSequence; const P = proposedStream;
+            let breakIndex = -1;
+            for (let i = 0; i < Math.min(L.length, P.length); i++) {
+                if (L[i].role !== P[i].role || L[i].hash !== P[i].hash) { breakIndex = i; break; }
+            }
+            if (breakIndex === -1) breakIndex = Math.min(L.length, P.length);
+
+            let preservedLen = 0; let recomputeLen = 0;
+            for (let i = 0; i < P.length; i++) {
+                let len = P[i].content?.length || 0;
+                if (i < breakIndex) preservedLen += len; else recomputeLen += len;
+            }
+
+            let totalLen = preservedLen + recomputeLen;
+            let recomputeRatio = breakIndex === L.length ? 0 : (totalLen === 0 ? 0 : (recomputeLen / totalLen));
+            
+            if (recomputeRatio >= 0.10 && !(breakIndex >= L.length - 2 && P[breakIndex]?.tag !== 'SYS')) {
+                requireResetConfirm = true;
+                dropPercentStr = (recomputeRatio * 100).toFixed(1);
+                causeText = P[breakIndex]?.tag === 'SYS' ? "大幅修改了【设定/世界书】" : "修改了【历史聊天记录】";
+                
+                const oldContent = escapeHtml(L[breakIndex]?.content || '∅').substring(0, 100);
+                const newContent = escapeHtml(P[breakIndex]?.content || '∅').substring(0, 100);
+                mapInfoText = `
+                    <div style="margin-bottom:10px; color:var(--ds-cyan);">📍 断裂点: [索引 ${breakIndex}]</div>
+                    <div class="ds-diff-del">- 原内容: ${oldContent}...</div>
+                    <div class="ds-diff-add">+ 新内容: ${newContent}...</div>
+                    <div style="margin-top:10px; color:var(--ds-red);">⚠️ 必须重算: 约 ${Math.floor(recomputeLen/3.5)} Tokens</div>
+                `;
+            }
+        }
+
+        let decision = 'accept';
+        if (requireResetConfirm) {
+            if (Settings.autoAccept) { Logger.warn(`[自动修复] 已放行断层重组`); decision = 'accept'; } 
+            else { decision = await askUserForResetAsync(dropPercentStr, mapInfoText, causeText); }
+        }
+
+        if (decision === 'abort') {
+            Logger.error('[物理拦截] 已拦截本次发送。', null, 1);
+            data.chat.length = 0; data.chat.push({ role: "invalid_abort_role", content: "ABORT" });
+            setTimeout(() => { if (typeof StopGenerating === 'function') StopGenerating(); }, 10);
+            throw new Error("Generation aborted."); 
+        }
+
+        if (decision === 'revert') {
+            Logger.warn('[时空回溯] 强行使用旧版缓存。');
+            const finalStream = [...state.frozenSequence];
+            if (currentTurn.user) finalStream.push(currentTurn.user);
+            for (const p of currentTurn.prefills) finalStream.push(p);
+            state.lastSentSequence = finalStream; safeSave();
+            stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
+            return;
+        }
+
+        // --- 階段 6：狀態更新與 RAM 寫入 ---
         let finalFrozen = [...nextFrozen, ...newSysAppends, ...dynamicAppends, ...patches];
         
         // 垃圾回收：限制 DIARY 和 PATCH 數量
@@ -441,16 +645,15 @@ async function interceptAndRestructurePrompt(data) {
 
         safeSave();
         stream.splice(0, stream.length, ...proposedStream.map(i => ({ role: i.role, content: i.content })));
-        Logger.log(`🌌 奇点引擎处理完成。节点数: ${proposedStream.length} | 耗时: ${(performance.now() - startTime).toFixed(1)}ms`, 1);
+        Logger.log(`🌌 奇点完全体处理完成。节点数: ${proposedStream.length} | 耗时: ${(performance.now() - startTime).toFixed(1)}ms`, 1);
 
     } catch (err) {
-        setTopBarStatus('#e06c75', '缓存: 发生崩溃');
         Logger.error('核心运算崩溃', err); throw err;
     }
 }
 
 // ==========================================
-// 5. UI 面板 (Singularity UI)
+// 6. UI 面板 (Singularity UI)
 // ==========================================
 function renderChatsUI() {
     const container = $('#ds-chat-list-container'); if (container.length === 0) return;
@@ -492,9 +695,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v46-opt-drawer">
+        <div class="inline-drawer" id="ds-v47-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan);"><span class="fa-solid fa-infinity"></span> DeepSeek 奇点引擎 (v46)</b>
+                <b style="color:var(--ds-cyan);"><span class="fa-solid fa-infinity"></span> DeepSeek 奇点完全体 (v47)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -555,12 +758,14 @@ async function setupUI() {
                     <div class="ds-engine-tags"><span class="ds-engine-tag">平行宇宙</span><span class="ds-engine-tag">前缀锚点</span><span class="ds-engine-tag">曲率过滤</span></div>
                 </div>
 
-                <!-- 記憶矩陣管理 -->
+                <!-- 診斷與管理 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-database"></i> 记忆矩阵管理</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-stethoscope"></i> 诊断与记忆矩阵管理</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
+                        <button id="ds-btn-diagnostic" class="ds-btn ds-btn-blue" style="width:100%;"><i class="fa-solid fa-magnifying-glass"></i> 扫描当前对话的「缓存杀手」</button>
+                        <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); width:100%; margin:4px 0;">
                         <div id="ds-chat-list-container" class="ds-chat-container ds-scroll ds-gpu-accel"></div>
                         <div class="ds-row">
                             <button id="ds-btn-deep-clean" class="ds-btn" style="flex:1; font-size:12px; color:var(--ds-yellow); border:1px solid rgba(229,192,123,0.3);">🧹 清理垃圾</button>
@@ -584,12 +789,14 @@ async function setupUI() {
         $('#extensions_settings').append(html);
 
         // UI 事件綁定
-        $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); updateTopBarState(); });
+        $('#ds-cache-enable').on('change', function () { Settings.enabled = $(this).is(':checked'); safeSave(); });
         $('#ds-eng-stasis').on('change', function () { Settings.engineStasis = $(this).is(':checked'); safeSave(); });
         $('#ds-eng-patch').on('change', function () { Settings.enginePatching = $(this).is(':checked'); safeSave(); });
         $('#ds-eng-sink').on('change', function () { Settings.engineSink = $(this).is(':checked'); safeSave(); });
         $('#ds-eng-nav').on('change', function () { Settings.engineNavigator = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-dynamic-mode').on('change', function () { Settings.dynamicMode = parseInt($(this).val()); safeSave(); });
+
+        $('#ds-btn-diagnostic').on('click', showDiagnosticCenter);
 
         $('#ds-cache-factory-reset').on('click', () => { 
             if (confirm("💀 确定要删除所有的缓存存档吗？一切将从零开始！")) { 
@@ -616,13 +823,11 @@ async function setupUI() {
 
 jQuery(async () => {
     try {
-        initSettings(); await setupUI(); setupGlobalHotkeys(); 
-        setTimeout(() => { ensureTopMenuButton(); }, 2000); addResetMenuEntry(); 
-        
+        initSettings(); await setupUI(); 
         if (eventSource) {
-            eventSource.on(event_types.CHAT_CHANGED, () => { ensureTopMenuButton(); renderChatsUI(); sessionSnoozeReset = false; });
+            eventSource.on(event_types.CHAT_CHANGED, () => { renderChatsUI(); sessionSnoozeReset = false; });
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
         }
-        Logger.log('══════ 🌌 DeepSeek 奇点引擎 v46 上线 ══════', 1);
+        Logger.log('══════ 🌌 DeepSeek 奇点完全体 v47 上线 ══════', 1);
     } catch (e) { console.error('[DS Cache] 插件启动失败:', e); }
 });
