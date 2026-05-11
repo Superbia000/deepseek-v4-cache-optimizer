@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Quantum Canvas UI 3.0)
+// 1. 樣式注入 (Quantum Canvas UI 3.0 - GPU Accelerated)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -11,8 +11,10 @@ const injectCSS = () => {
     style.innerHTML = `
         :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-pink: #ff79c6; --ds-gray: #abb2bf; --ds-bg: rgba(15, 20, 25, 0.7); --ds-border: rgba(0, 229, 255, 0.2); }
         
-        .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
+        /* 極限 GPU 加速與虛擬渲染 */
+        .ds-gpu-accel { transform: translate3d(0,0,0); will-change: transform, scroll-position; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
+        .ds-virtual-list { content-visibility: auto; contain-intrinsic-size: auto 80px; }
         
         .ds-scroll::-webkit-scrollbar { width: 6px; }
         .ds-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); border-radius: 4px; }
@@ -94,7 +96,6 @@ const injectCSS = () => {
         .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.2); box-shadow: 0 0 15px rgba(224,108,117,0.3); }
         .ds-btn-reset i { color: var(--ds-red); }
 
-        /* Req 1: 懸浮工具列與面板設計，極大化視窗高度 */
         .ds-omni-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; flex-shrink: 0; background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); position: relative; }
         .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; font-weight: bold; }
         .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
@@ -112,7 +113,6 @@ const injectCSS = () => {
         .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
         .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
 
-        /* 雙視窗 + Canvas 佈局 (極大化工作區) */
         .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; margin-top: 0; }
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
         .ds-omni-pane-header { padding: 10px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
@@ -122,7 +122,6 @@ const injectCSS = () => {
         #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         #omni-arrows-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
         
-        /* 智能跳轉箭頭 */
         .ds-omni-arrow { position: absolute; width: 22px; height: 22px; background: rgba(15, 20, 25, 0.9); border: 1px solid currentColor; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10; font-size: 11px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 0 10px currentColor; pointer-events: auto; opacity: 0.7; }
         .ds-omni-arrow:hover { opacity: 1; transform: scale(1.3); background: currentColor; color: #000 !important; z-index: 20; }
         .ds-omni-arrow-left { left: 10px; transform: translateY(-50%); }
@@ -170,6 +169,16 @@ let Settings = {};
 let sessionSnoozeReset = false; 
 let backupVault = []; 
 let cachedStorageBytes = 0; 
+
+function cloneStream(arr) {
+    if (!arr) return [];
+    const len = arr.length;
+    const res = new Array(len);
+    for (let i = 0; i < len; i++) {
+        res[i] = { ...arr[i] };
+    }
+    return res;
+}
 
 function fastClone(obj) {
     if (typeof structuredClone === 'function') {
@@ -374,8 +383,9 @@ const QuantumToastAggregator = {
     }
 };
 
+const htmlRegex = /<[^>]+>/g;
 function escapeHtml(text) { return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
-function stripHtml(html) { return html ? html.replace(/<[^>]+>/g, '') : ''; }
+function stripHtml(html) { return html ? html.replace(htmlRegex, '') : ''; }
 function truncateLog(str, len = 50) {
     if (!str) return '∅';
     const s = String(str).replace(/\n/g, ' ↵ ');
@@ -805,7 +815,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const stream = data.chat;
         
         if (!isDryRun) {
-            state.lastRawStream = fastClone(stream);
+            state.lastRawStream = cloneStream(stream);
             safeSave();
             Logger.divider(`===== 🚀 启动绝对真理拦截: ${chatKeyInfo.label} =====`);
         }
@@ -818,7 +828,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const vectorRegex = /(retrieved context|search results|vector database|相关记忆|检索到的内容|记忆库片段|data bank|smart context|chromadb|past events|memory recall)/i;
 
         // 1. 拆解 ST 原始陣列
-        for (const msg of stream) {
+        for (let i = 0; i < stream.length; i++) {
+            const msg = stream[i];
             if (!msg.content) continue;
             if (Settings.warpDriveFilter && msg.content.replace(/[\s\*\.\-]/g, '').length === 0) {
                 if (!isDryRun) {
@@ -863,7 +874,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             currentTurn.prefills = cMsgs.slice(1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
 
             let curUser = null; let curAiContents = [];
-            for (const msg of hMsgs) {
+            for (let i = 0; i < hMsgs.length; i++) {
+                const msg = hMsgs[i];
                 if (msg.tag === 'USER') {
                     if (curUser) historyTurns.push({ user: curUser, assistant: curAiContents.length ? createMsg({role: 'assistant', content: curAiContents.join('\n')}, 'AI') : null });
                     curUser = msg; curAiContents = [];
@@ -874,7 +886,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 
         const incomingSysPool = [...topSysMsgs, ...bottomSysMsgs];
         const incomingHistoryPool = [];
-        for(let t of historyTurns) {
+        for(let i = 0; i < historyTurns.length; i++) {
+            const t = historyTurns[i];
             incomingHistoryPool.push(t.user);
             if(t.assistant) incomingHistoryPool.push(t.assistant);
         }
@@ -883,12 +896,16 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (Settings.multiverseProtocol && state.multiverse && state.multiverse.length > 0) {
             let bestUniverse = state.frozenSequence;
             let bestMatchCount = -1;
-            const currentStreamNorms = [...incomingSysPool, ...incomingHistoryPool].map(m => m.norm);
+            const currentStreamNorms = new Array(incomingSysPool.length + incomingHistoryPool.length);
+            let nIdx = 0;
+            for(let i=0; i<incomingSysPool.length; i++) currentStreamNorms[nIdx++] = incomingSysPool[i].norm;
+            for(let i=0; i<incomingHistoryPool.length; i++) currentStreamNorms[nIdx++] = incomingHistoryPool[i].norm;
             
             for (let i = 0; i < state.multiverse.length; i++) {
                 const universe = state.multiverse[i];
                 let matchCount = 0;
-                for (let j = 0; j < Math.min(universe.length, currentStreamNorms.length); j++) {
+                const minLen = Math.min(universe.length, currentStreamNorms.length);
+                for (let j = 0; j < minLen; j++) {
                     if (universe[j].norm === currentStreamNorms[j]) matchCount++;
                     else break;
                 }
@@ -1136,7 +1153,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         // 7. 絕對去重協議
         let dedupedSequence = [];
         const seenSysNorms = new Set();
-        for (const item of assembledSequence) {
+        for (let i = 0; i < assembledSequence.length; i++) {
+            const item = assembledSequence[i];
             if (item.tag === 'SYS' && Settings.absoluteDeduplication) {
                 if (item._omniCat === 'sys' || item._omniCat === 'lorebook' || item._omniCat === 'frozen') {
                     if (seenSysNorms.has(item.hash)) continue;
@@ -1149,7 +1167,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         // 8. 加上當前用戶輸入與預填充
         const proposedStream = [...dedupedSequence];
         if (currentTurn.user) proposedStream.push(currentTurn.user);
-        for (const p of currentTurn.prefills) proposedStream.push(p);
+        for (let i = 0; i < currentTurn.prefills.length; i++) proposedStream.push(currentTurn.prefills[i]);
 
         if (Settings.logLevel >= LogLevels.DEBUG && !isDryRun) {
             Logger.debug(`[最终追加发送阵列] 总节点数: ${proposedStream.length}`);
@@ -1171,11 +1189,12 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         if (state.lastSentSequence && state.lastSentSequence.length > 0) {
             const L = state.lastSentSequence;
             const P = proposedStream;
+            const minLen = Math.min(L.length, P.length);
 
-            for (let i = 0; i < Math.min(L.length, P.length); i++) {
+            for (let i = 0; i < minLen; i++) {
                 if (L[i].role !== P[i].role || L[i].hash !== P[i].hash) { breakIndex = i; break; }
             }
-            if (breakIndex === -1) breakIndex = Math.min(L.length, P.length);
+            if (breakIndex === -1) breakIndex = minLen;
 
             let preservedLen = 0;
             let recomputeLen = 0;
@@ -1275,9 +1294,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             
             const finalStream = [...state.frozenSequence];
             if (currentTurn.user) finalStream.push(currentTurn.user);
-            for (const p of currentTurn.prefills) finalStream.push(p);
+            for (let i = 0; i < currentTurn.prefills.length; i++) finalStream.push(currentTurn.prefills[i]);
 
-            state.lastSentSequence = fastClone(finalStream);
+            state.lastSentSequence = cloneStream(finalStream);
             safeSave();
 
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
@@ -1297,9 +1316,9 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 
             const finalStream = [...state.frozenSequence];
             if (currentTurn.user) finalStream.push(currentTurn.user);
-            for (const p of currentTurn.prefills) finalStream.push(p);
+            for (let i = 0; i < currentTurn.prefills.length; i++) finalStream.push(currentTurn.prefills[i]);
 
-            state.lastSentSequence = fastClone(finalStream);
+            state.lastSentSequence = cloneStream(finalStream);
             
             if (Settings.multiverseProtocol) {
                 if (!state.multiverse) state.multiverse = [];
@@ -1335,7 +1354,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 let omniRenderTimeout = null;
 let omniMappings = [];
 let isSyncLocked = true;
-let omniLeftArrayFrozen = [];
+let omniLeftArrayLastSent = [];
 let omniNeedsRedraw = false;
 let isOmniRendering = false;
 let resizeObserver = null;
@@ -1350,7 +1369,8 @@ async function showOmniVisionUI() {
         return;
     }
 
-    omniLeftArrayFrozen = fastClone(state.frozenSequence || []);
+    // Req 1: 左側視窗精準讀取「上次最終發送」的陣列，而非半成品的 frozenSequence
+    omniLeftArrayLastSent = cloneStream(state.lastSentSequence || state.frozenSequence || []);
 
     const html = `
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
@@ -1368,7 +1388,6 @@ async function showOmniVisionUI() {
                     <button class="ds-btn-reset" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
 
-                <!-- Req 1: 極簡工具列與懸浮面板，徹底釋放垂直空間 -->
                 <div class="ds-omni-toolbar">
                     <button id="omni-btn-settings" class="ds-omni-action-btn"><i class="fa-solid fa-gears"></i> 核心协议控制台</button>
                     <button id="omni-btn-input" class="ds-omni-action-btn"><i class="fa-solid fa-keyboard"></i> 模拟输入测试</button>
@@ -1387,7 +1406,6 @@ async function showOmniVisionUI() {
                         <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-red);"></div>已删除</div>
                     </div>
 
-                    <!-- 懸浮設定面板 -->
                     <div id="omni-panel-settings" class="ds-omni-floating-panel">
                         <div class="ds-omni-toggles-container ds-scroll">
                             <div class="ds-omni-toggle ${Settings.dynamicMode===1?'active':''}" data-setting="dynamicMode" data-val="1" title="写日记模式"><i class="fa-solid fa-book-journal-whills"></i> 日记模式</div>
@@ -1415,33 +1433,29 @@ async function showOmniVisionUI() {
                         </div>
                     </div>
 
-                    <!-- 懸浮輸入面板 -->
                     <div id="omni-panel-input" class="ds-omni-floating-panel">
                         <textarea id="omni-simulated-input" class="ds-input-styled ds-scroll" placeholder="✍️ 模拟用户即将发送的输入 (输入后会自动触发下方沙盒重算)..." style="height: 60px; resize: vertical;"></textarea>
                     </div>
                 </div>
 
                 <div class="ds-omni-workspace">
-                    <!-- 左視窗：歷史觀測 -->
                     <div class="ds-omni-pane">
                         <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 冻结缓存 (绝对真理)</span>
+                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-server"></i> 上次最终发送 (Last API Payload)</span>
                         </div>
                         <div id="omni-left-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
                     </div>
 
-                    <!-- 神經網路連線畫布 (Canvas) -->
                     <div class="ds-omni-canvas-container">
                         <canvas id="omni-canvas"></canvas>
                         <div id="omni-arrows-layer"></div>
                     </div>
 
-                    <!-- 右視窗：即時沙盒預覽 -->
                     <div class="ds-omni-pane">
                         <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 下次发送预览 (套用设定后)</span>
+                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 下次预计发送 (Next API Preview)</span>
                         </div>
                         <div id="omni-right-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
@@ -1453,9 +1467,8 @@ async function showOmniVisionUI() {
     `;
     $('body').append(html);
 
-    renderOmniLeftPane(omniLeftArrayFrozen);
+    renderOmniLeftPane(omniLeftArrayLastSent);
 
-    // 懸浮面板切換邏輯
     $('#omni-btn-settings').on('click', function(e) {
         e.stopPropagation();
         $('#omni-panel-input').removeClass('open');
@@ -1582,7 +1595,7 @@ window.closeOmniVision = function() {
     }
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
-    omniLeftArrayFrozen = [];
+    omniLeftArrayLastSent = [];
     nodePositionCache = { left: {}, right: {} };
 };
 
@@ -1625,8 +1638,8 @@ function renderOmniLeftPane(leftArray) {
         el.id = `omni-left-node-${idx}`;
         el.innerHTML = `
             <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx} <span class="ds-omni-left-status"></span></span>
-                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
+                <span><span class="ds-tag ds-tag-${node.tag || 'SYS'}">[${node.tag || 'SYS'}]</span> Index: ${idx} <span class="ds-omni-left-status"></span></span>
+                <span>Hash: ${(node.hash || 0).toString(16).substring(0,8)}</span>
             </div>
             <div class="ds-node-content-wrapper">
                 <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
@@ -1681,7 +1694,7 @@ async function renderOmniVision(state) {
     const rightContainer = document.getElementById('omni-right-pane');
     if (!rightContainer) return;
 
-    const leftArray = omniLeftArrayFrozen;
+    const leftArray = omniLeftArrayLastSent;
     
     let rightArray = [];
     let breakIndex = -1;
@@ -1689,16 +1702,24 @@ async function renderOmniVision(state) {
     let preservedTokens = 0;
     let recomputeTokens = 0;
 
-    // Req 2: 徹底修復幻影提示詞 Bug。嚴格基於 lastRawStream 進行 Dry Run
-    let currentContextChat = [];
+    // Req 1: 混合態模擬流 (Hybrid Simulated Stream) - 完美適配所有 ST 插件
+    let simulatedStream = [];
+    const contextChat = getContext().chat || [];
+    const formattedContextChat = contextChat.map(m => {
+        let role = m.is_user ? 'user' : (m.is_system ? 'system' : 'assistant');
+        return { role: role, content: m.mes || '' };
+    });
+
     if (state.lastRawStream && state.lastRawStream.length > 0) {
-        currentContextChat = fastClone(state.lastRawStream);
-    } else if (state.frozenSequence && state.frozenSequence.length > 0) {
-        currentContextChat = fastClone(state.frozenSequence).map(m => ({role: m.role, content: m.content}));
+        // 提取上一次 ST 真正生成的所有系統提示詞 (包含所有插件、世界書、作者備註)
+        const sysMsgs = state.lastRawStream.filter(m => m.role === 'system' || (m.role !== 'user' && m.role !== 'assistant'));
+        // 拼接最新的聊天記錄
+        simulatedStream = [...sysMsgs, ...formattedContextChat];
+    } else {
+        simulatedStream = [...formattedContextChat];
     }
 
-    if (currentContextChat.length > 0) {
-        let simulatedStream = currentContextChat;
+    if (simulatedStream.length > 0) {
         const simInput = $('#omni-simulated-input').val().trim();
         if (simInput) {
             simulatedStream.push({ role: 'user', content: simInput });
@@ -1727,30 +1748,36 @@ async function renderOmniVision(state) {
     const leftMatched = new Set();
     const rightMatched = new Set();
 
+    // 重新校準的映射演算法：精準對比 Last Sent vs Next Preview
     rightArray.forEach((rNode, rIdx) => {
         let bestMatchIdx = -1;
         let bestScore = 0;
         
-        if (rNode._omniCat && rNode._omniCat.startsWith('patch_')) {
-            if (rNode._sourceHash) {
-                bestMatchIdx = leftArray.findIndex(l => l.hash === rNode._sourceHash);
-                if (bestMatchIdx !== -1) {
-                    leftMatched.add(bestMatchIdx);
-                    rightMatched.add(rIdx);
-                    omniMappings.push({ left: bestMatchIdx, right: rIdx, type: 'patch_link' });
-                    return;
-                }
+        // 處理時空補丁的專屬連線
+        if (rNode._omniCat && rNode._omniCat.startsWith('patch_') && rNode._sourceHash) {
+            bestMatchIdx = leftArray.findIndex(l => l.hash === rNode._sourceHash);
+            if (bestMatchIdx !== -1) {
+                omniMappings.push({ left: bestMatchIdx, right: rIdx, type: 'patch_link' });
+                rightMatched.add(rIdx);
+                return; 
             }
         }
 
-        leftArray.forEach((lNode, lIdx) => {
-            if (rNode.hash === lNode.hash) { bestMatchIdx = lIdx; bestScore = 1; }
-            else if (rNode.fuzzyHash === lNode.fuzzyHash && bestScore < 0.99) { bestMatchIdx = lIdx; bestScore = 0.99; }
-            else {
-                let score = getSimilarity(rNode, lNode);
-                if (score > bestScore && score > 0.8) { bestScore = score; bestMatchIdx = lIdx; }
-            }
-        });
+        // 1. 絕對 Hash 匹配
+        bestMatchIdx = leftArray.findIndex(l => l.hash === rNode.hash);
+        if (bestMatchIdx !== -1) {
+            bestScore = 1;
+        } else {
+            // 2. 模糊匹配
+            leftArray.forEach((lNode, lIdx) => {
+                if (rNode.fuzzyHash === lNode.fuzzyHash && bestScore < 0.99) { 
+                    bestMatchIdx = lIdx; bestScore = 0.99; 
+                } else {
+                    let score = getSimilarity(rNode, lNode);
+                    if (score > bestScore && score > 0.8) { bestScore = score; bestMatchIdx = lIdx; }
+                }
+            });
+        }
 
         if (bestMatchIdx !== -1) {
             leftMatched.add(bestMatchIdx);
@@ -1759,10 +1786,8 @@ async function renderOmniVision(state) {
             omniMappings.push({ left: bestMatchIdx, right: rIdx, type: type });
         } else {
             let type = 'new_sys';
-            if (rNode._omniCat === 'lorebook') type = 'new_lorebook';
-            else if (rNode._omniCat === 'dynamic') type = 'new_dynamic';
-            else if (rNode._omniCat === 'history') type = 'new_history';
-            else if (rNode._omniCat && rNode._omniCat.startsWith('patch_')) type = 'new_patch';
+            if (rNode.tag === 'USER' || rNode.tag === 'AI') type = 'new_history';
+            if (rNode._omniCat && rNode._omniCat.startsWith('patch_')) type = 'new_patch';
             omniMappings.push({ left: -1, right: rIdx, type: type });
         }
     });
@@ -1816,8 +1841,8 @@ async function renderOmniVision(state) {
         el.id = `omni-right-node-${idx}`;
         el.innerHTML = `
             <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag}">[${node.tag}]</span> Index: ${idx} ${newLabel}</span>
-                <span>Hash: ${node.hash.toString(16).substring(0,8)}</span>
+                <span><span class="ds-tag ds-tag-${node.tag || 'SYS'}">[${node.tag || 'SYS'}]</span> Index: ${idx} ${newLabel}</span>
+                <span>Hash: ${(node.hash || 0).toString(16).substring(0,8)}</span>
             </div>
             <div class="ds-node-content-wrapper">
                 <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
@@ -1872,8 +1897,12 @@ function updateOmniCanvas() {
     ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
     let arrowsHtml = '';
+    
+    const halfWidth = width / 2;
+    const cpOffset = width * 0.45;
 
-    omniMappings.forEach(m => {
+    for (let i = 0; i < omniMappings.length; i++) {
+        const m = omniMappings[i];
         let startX = 0, startY = 0, endX = width, endY = 0;
         let isVisible = false;
 
@@ -1887,27 +1916,26 @@ function updateOmniCanvas() {
         }
 
         if (m.type === 'deleted') {
-            if (startY === undefined) return;
+            if (startY === undefined) continue;
             endY = startY;
-            endX = width / 2;
+            endX = halfWidth;
             if (startY > -50 && startY < height + 50) isVisible = true;
         } 
         else if (m.type.startsWith('new_')) {
-            if (endY === undefined) return;
+            if (endY === undefined) continue;
             startY = endY;
-            startX = width / 2;
+            startX = halfWidth;
             if (endY > -50 && endY < height + 50) isVisible = true;
         } 
         else {
-            if (startY === undefined || endY === undefined) return;
+            if (startY === undefined || endY === undefined) continue;
             if ((startY > -50 && startY < height + 50) || (endY > -50 && endY < height + 50)) isVisible = true;
         }
 
-        if (!isVisible) return;
+        if (!isVisible) continue;
 
         ctx.beginPath();
         ctx.moveTo(startX, startY);
-        const cpOffset = width * 0.45; 
         ctx.bezierCurveTo(startX + cpOffset, startY, endX - cpOffset, endY, endX, endY);
 
         ctx.lineWidth = 2.5;
@@ -1932,12 +1960,12 @@ function updateOmniCanvas() {
         }
 
         if (m.type === 'deleted') {
-            const grad = ctx.createLinearGradient(0, 0, width/2, 0);
+            const grad = ctx.createLinearGradient(0, 0, halfWidth, 0);
             grad.addColorStop(0, `rgba(${colorHex},0.85)`);
             grad.addColorStop(1, `rgba(${colorHex},0)`);
             ctx.strokeStyle = grad;
         } else if (m.type.startsWith('new_')) {
-            const grad = ctx.createLinearGradient(width/2, 0, width, 0);
+            const grad = ctx.createLinearGradient(halfWidth, 0, width, 0);
             grad.addColorStop(0, `rgba(${colorHex},0)`);
             grad.addColorStop(1, `rgba(${colorHex},0.85)`);
             ctx.strokeStyle = grad;
@@ -1956,7 +1984,7 @@ function updateOmniCanvas() {
         } else if (m.type.startsWith('new_')) {
             arrowsHtml += `<div class="ds-omni-arrow ds-omni-arrow-right" style="top:${endY}px; color:rgb(${colorHex}); cursor:default;" title="这是新插入的节点"><i class="fa-solid fa-plus"></i></div>`;
         }
-    });
+    }
     
     ctx.restore();
     arrowsLayer.innerHTML = arrowsHtml;
