@@ -82,7 +82,7 @@ const injectCSS = () => {
         .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; cursor: pointer; }
         .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-cyan); padding: 20px 25px; border-radius: 20px; max-width: 99vw; width: 1850px; height: 98vh; display: flex; flex-direction: column; color: #fff; font-family: sans-serif; box-shadow: 0 40px 80px rgba(0,0,0,0.9), 0 0 40px rgba(0,229,255,0.2); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
         
-        .ds-omni-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; gap: 20px; }
+        .ds-omni-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0; gap: 20px; }
         .ds-modal-title { color: var(--ds-cyan); margin: 0; display: flex; align-items: center; gap: 14px; font-size: 22px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.4); flex-shrink: 0; }
         
         .ds-omni-stats-bar { flex: 1; background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05); display: flex; flex-direction: column; justify-content: center; }
@@ -94,30 +94,26 @@ const injectCSS = () => {
         .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.2); box-shadow: 0 0 15px rgba(224,108,117,0.3); }
         .ds-btn-reset i { color: var(--ds-red); }
 
-        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 10px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; transition: 0.3s; }
-        .ds-omni-panel-header { padding: 8px 15px; background: rgba(255,255,255,0.05); font-size: 13px; font-weight: bold; color: var(--ds-cyan); display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
-        .ds-omni-panel-header:hover { background: rgba(255,255,255,0.08); }
-        .ds-omni-panel-header i.fa-chevron-down { transition: transform 0.3s; }
-        .ds-omni-panel-body { padding: 12px 15px; display: none; }
-        .ds-omni-panel.open .ds-omni-panel-body { display: block; animation: dsFadeIn 0.2s ease; }
-        .ds-omni-panel.open .ds-omni-panel-header i.fa-chevron-down { transform: rotate(180deg); }
-
-        .ds-omni-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; flex-shrink: 0; }
+        /* Req 1: 懸浮工具列與面板設計，極大化視窗高度 */
+        .ds-omni-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; flex-shrink: 0; background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); position: relative; }
         .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; font-weight: bold; }
         .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
         .ds-omni-action-btn.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
         
-        .ds-omni-legend { display: flex; gap: 12px; font-size: 11px; font-weight: bold; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
-        .ds-omni-legend-item { display: flex; align-items: center; gap: 4px; }
+        .ds-omni-floating-panel { position: absolute; top: calc(100% + 5px); left: 0; width: 100%; max-height: 400px; overflow-y: auto; background: rgba(15, 20, 25, 0.95); border: 1px solid var(--ds-cyan); border-radius: 8px; padding: 15px; z-index: 100; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.8); backdrop-filter: blur(10px); box-sizing: border-box; }
+        .ds-omni-floating-panel.open { display: block; animation: dsFadeIn 0.2s ease; }
+
+        .ds-omni-legend { display: flex; gap: 12px; font-size: 11px; font-weight: bold; background: transparent; padding: 0; border: none; flex-wrap: wrap; margin-left: auto; }
+        .ds-omni-legend-item { display: flex; align-items: center; gap: 4px; color: #abb2bf; }
         .ds-omni-legend-color { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 5px currentColor; }
         
-        .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; max-height: 150px; overflow-y: auto; padding-right: 5px; }
-        .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 5px 10px; border-radius: 5px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; }
+        .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; }
+        .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 6px 12px; border-radius: 5px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; }
         .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
         .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
 
         /* 雙視窗 + Canvas 佈局 (極大化工作區) */
-        .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; margin-top: 5px; }
+        .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; margin-top: 0; }
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
         .ds-omni-pane-header { padding: 10px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
@@ -880,7 +876,6 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const incomingHistoryPool = [];
         for(let t of historyTurns) {
             incomingHistoryPool.push(t.user);
-            // 終極修復：不再剝離預填充，保證 AI 歷史記憶的絕對完整性
             if(t.assistant) incomingHistoryPool.push(t.assistant);
         }
 
@@ -1373,12 +1368,27 @@ async function showOmniVisionUI() {
                     <button class="ds-btn-reset" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
 
-                <div class="ds-omni-panel">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { cacheNodePositions(); requestCanvasUpdate(); }, 300);">
-                        <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (点击展开并即时生效)</span>
-                        <i class="fa-solid fa-chevron-down"></i>
+                <!-- Req 1: 極簡工具列與懸浮面板，徹底釋放垂直空間 -->
+                <div class="ds-omni-toolbar">
+                    <button id="omni-btn-settings" class="ds-omni-action-btn"><i class="fa-solid fa-gears"></i> 核心协议控制台</button>
+                    <button id="omni-btn-input" class="ds-omni-action-btn"><i class="fa-solid fa-keyboard"></i> 模拟输入测试</button>
+                    <div style="width: 1px; height: 20px; background: rgba(255,255,255,0.2); margin: 0 5px;"></div>
+                    <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定同步</button>
+                    <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开</button>
+                    <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠</button>
+                    
+                    <div style="flex:1;"></div>
+                    
+                    <div class="ds-omni-legend">
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-green);"></div>完美冻结</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-yellow);"></div>模糊命中</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-purple);"></div>时空补丁</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-cyan);"></div>全新设定</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-red);"></div>已删除</div>
                     </div>
-                    <div class="ds-omni-panel-body">
+
+                    <!-- 懸浮設定面板 -->
+                    <div id="omni-panel-settings" class="ds-omni-floating-panel">
                         <div class="ds-omni-toggles-container ds-scroll">
                             <div class="ds-omni-toggle ${Settings.dynamicMode===1?'active':''}" data-setting="dynamicMode" data-val="1" title="写日记模式"><i class="fa-solid fa-book-journal-whills"></i> 日记模式</div>
                             <div class="ds-omni-toggle ${Settings.absoluteOrderMatrix?'active':''}" data-setting="absoluteOrderMatrix" title="绝对真理追加架构"><i class="fa-solid fa-sort"></i> 追加架构</div>
@@ -1404,29 +1414,10 @@ async function showOmniVisionUI() {
                             <div class="ds-omni-toggle ${Settings.overflowCompression?'active':''}" data-setting="overflowCompression" title="溢出记忆压缩"><i class="fa-solid fa-file-zipper"></i> 溢出压缩</div>
                         </div>
                     </div>
-                </div>
 
-                <div class="ds-omni-panel">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { cacheNodePositions(); requestCanvasUpdate(); }, 300);">
-                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试 (点击展开)</span>
-                        <i class="fa-solid fa-chevron-down"></i>
-                    </div>
-                    <div class="ds-omni-panel-body" style="padding-top: 5px;">
-                        <textarea id="omni-simulated-input" class="ds-input-styled ds-scroll" placeholder="✍️ 模拟用户即将发送的输入 (输入后会自动触发下方沙盒重算)..." style="height: 40px; resize: vertical;"></textarea>
-                    </div>
-                </div>
-
-                <div class="ds-omni-actions">
-                    <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
-                    <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
-                    <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
-                    
-                    <div class="ds-omni-legend">
-                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-green);"></div>完美冻结</div>
-                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-yellow);"></div>模糊命中</div>
-                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-purple);"></div>时空补丁</div>
-                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-cyan);"></div>全新设定</div>
-                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-red);"></div>已删除</div>
+                    <!-- 懸浮輸入面板 -->
+                    <div id="omni-panel-input" class="ds-omni-floating-panel">
+                        <textarea id="omni-simulated-input" class="ds-input-styled ds-scroll" placeholder="✍️ 模拟用户即将发送的输入 (输入后会自动触发下方沙盒重算)..." style="height: 60px; resize: vertical;"></textarea>
                     </div>
                 </div>
 
@@ -1464,6 +1455,24 @@ async function showOmniVisionUI() {
 
     renderOmniLeftPane(omniLeftArrayFrozen);
 
+    // 懸浮面板切換邏輯
+    $('#omni-btn-settings').on('click', function(e) {
+        e.stopPropagation();
+        $('#omni-panel-input').removeClass('open');
+        $('#omni-panel-settings').toggleClass('open');
+    });
+    $('#omni-btn-input').on('click', function(e) {
+        e.stopPropagation();
+        $('#omni-panel-settings').removeClass('open');
+        $('#omni-panel-input').toggleClass('open');
+    });
+    $('#ds-omni-modal-wrapper').on('click', function(e) {
+        if (!$(e.target).closest('.ds-omni-toolbar').length) {
+            $('.ds-omni-floating-panel').removeClass('open');
+        }
+        if(e.target === this) closeOmniVision();
+    });
+
     $('.ds-omni-toggle').on('click', function() {
         const setting = $(this).data('setting');
         if (setting === 'dynamicMode') {
@@ -1483,7 +1492,7 @@ async function showOmniVisionUI() {
         isSyncLocked = !isSyncLocked;
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
-            $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
+            $(this).html('<i class="fa-solid fa-link"></i> 锁定同步');
             const leftPane = document.getElementById('omni-left-pane');
             const rightPane = document.getElementById('omni-right-pane');
             if (leftPane && rightPane) {
@@ -1491,7 +1500,7 @@ async function showOmniVisionUI() {
                 rightPane.scrollTop = ratio * (rightPane.scrollHeight - rightPane.clientHeight || 1);
             }
         } else {
-            $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
+            $(this).html('<i class="fa-solid fa-link-slash"></i> 解除同步');
         }
     });
 
@@ -1524,8 +1533,6 @@ async function showOmniVisionUI() {
         }
         setTimeout(() => { cacheNodePositions(); requestCanvasUpdate(); }, 350);
     });
-
-    $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
     let isSyncingLeft = false;
     let isSyncingRight = false;
@@ -1682,16 +1689,12 @@ async function renderOmniVision(state) {
     let preservedTokens = 0;
     let recomputeTokens = 0;
 
+    // Req 2: 徹底修復幻影提示詞 Bug。嚴格基於 lastRawStream 進行 Dry Run
     let currentContextChat = [];
-    try {
-        const context = getContext();
-        if (context && context.chat) {
-            currentContextChat = fastClone(context.chat);
-        } else if (state.lastRawStream && state.lastRawStream.length > 0) {
-            currentContextChat = fastClone(state.lastRawStream);
-        }
-    } catch(e) {
-        if (state.lastRawStream) currentContextChat = fastClone(state.lastRawStream);
+    if (state.lastRawStream && state.lastRawStream.length > 0) {
+        currentContextChat = fastClone(state.lastRawStream);
+    } else if (state.frozenSequence && state.frozenSequence.length > 0) {
+        currentContextChat = fastClone(state.frozenSequence).map(m => ({role: m.role, content: m.content}));
     }
 
     if (currentContextChat.length > 0) {
@@ -2679,7 +2682,6 @@ async function setupUI() {
         $('#ds-cache-maxsize').on('change', function () { Settings.maxCacheSize = parseInt($(this).val()) || 30; safeSave(); performGarbageCollection(); });
         $('#ds-cache-autopin').on('change', function () { Settings.autoPinThreshold = parseInt($(this).val()) || 0; safeSave(); });
         
-        // 終極修復：UI 狀態完美同步
         $('#ds-cache-dynamic-mode').on('change', function () { 
             Settings.dynamicMode = parseInt($(this).val()); 
             $('.ds-omni-toggle[data-setting="dynamicMode"]').removeClass('active');
