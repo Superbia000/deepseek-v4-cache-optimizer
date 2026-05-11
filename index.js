@@ -2,17 +2,17 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Quantum Canvas UI 3.0 - Extreme Performance Edition)
+// 1. 樣式注入 (Quantum Canvas UI 3.0 - GPU Accelerated)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
     const style = document.createElement('style');
     style.id = 'ds-cache-styles';
     style.innerHTML = `
-        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-pink: #ff79c6; --ds-gray: #abb2bf; --ds-bg: rgba(15, 20, 25, 0.95); --ds-border: rgba(0, 229, 255, 0.2); }
+        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-pink: #ff79c6; --ds-gray: #abb2bf; --ds-bg: rgba(15, 20, 25, 0.7); --ds-border: rgba(0, 229, 255, 0.2); }
         
-        /* 極限 GPU 加速與虛擬渲染 - 移除耗能的 backdrop-filter */
-        .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
+        /* 極致 GPU 加速 */
+        .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; }
         .ds-strict-contain { contain: strict; }
         .ds-virtual-list { content-visibility: auto; contain-intrinsic-size: auto 80px; }
         
@@ -21,112 +21,105 @@ const injectCSS = () => {
         .ds-scroll::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.4); border-radius: 4px; }
         .ds-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.8); }
 
-        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.08) 0%, rgba(0,0,0,0) 100%); font-size: 14px; letter-spacing: 0.5px; }
+        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.3); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.4); box-shadow: 0 8px 30px rgba(0, 229, 255, 0.1); }
+        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.08) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 12px rgba(0,229,255,0.3); letter-spacing: 0.5px; }
         .ds-opt-header:hover { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); color: #fff; }
-        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.4); border-top: 1px solid rgba(255,255,255,0.03); }
-        .ds-opt-group.open .ds-opt-content { display: flex; }
+        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.25); border-top: 1px solid rgba(255,255,255,0.03); }
+        .ds-opt-group.open .ds-opt-content { display: flex; animation: dsFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
 
         .ds-sub-header { font-size: 12px; color: var(--ds-cyan); font-weight: bold; margin-top: 10px; margin-bottom: -5px; padding-bottom: 5px; border-bottom: 1px dashed rgba(0,229,255,0.2); display: flex; align-items: center; gap: 8px; }
 
         .ds-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; width: 100%; gap: 14px; }
-        .ds-row-left { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; color: #abb2bf; font-size: 13px; flex: 1; line-height: 1.6; }
+        .ds-row-left { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; color: #abb2bf; font-size: 13px; flex: 1; line-height: 1.6; transition: color 0.2s; }
         .ds-row-left:hover { color: #fff; }
         .ds-row-left input[type="checkbox"] { margin-top: 4px; flex-shrink: 0; transform: scale(1.2); cursor: pointer; accent-color: var(--ds-cyan); }
         .ds-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; word-wrap: break-word; white-space: normal; }
         .ds-row-text b { color: var(--ds-yellow); font-weight: 600; letter-spacing: 0.5px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
         .ds-row-text span { font-size: 11px; color: rgba(171, 178, 191, 0.8); font-weight: normal; margin-top: 4px; line-height: 1.5; }
         
-        .ds-tooltip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--ds-cyan); background: rgba(0,229,255,0.1); border-radius: 50%; width: 16px; height: 16px; font-size: 11px; font-weight: bold; cursor: help; border: 1px solid rgba(0,229,255,0.3); flex-shrink: 0; }
+        .ds-tooltip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--ds-cyan); background: rgba(0,229,255,0.1); border-radius: 50%; width: 16px; height: 16px; font-size: 11px; font-weight: bold; cursor: help; border: 1px solid rgba(0,229,255,0.3); flex-shrink: 0; transition: 0.2s; }
+        .ds-tooltip-icon:hover { background: var(--ds-cyan); color: #000; }
         .ds-perf-badge { font-size: 9px; padding: 2px 6px; border-radius: 4px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
         .ds-perf-low { background: rgba(152,195,121,0.15); color: var(--ds-green); border: 1px solid rgba(152,195,121,0.3); }
         .ds-perf-mid { background: rgba(229,192,123,0.15); color: var(--ds-yellow); border: 1px solid rgba(229,192,123,0.3); }
-        .ds-perf-high { background: rgba(224,108,117,0.15); color: var(--ds-red); border: 1px solid rgba(224,108,117,0.3); }
 
-        .ds-select-styled { background: rgba(0,0,0,0.5); color: var(--ds-cyan); border: 1px solid var(--ds-border); padding: 10px 14px; border-radius: 8px; font-weight: bold; cursor: pointer; outline: none; font-family: inherit; width: 100%; box-sizing: border-box; }
-        .ds-select-styled option { background: #1e1e24; color: #fff; }
-        .ds-input-styled { background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 8px; font-size: 12px; outline: none; width: 100%; box-sizing: border-box; }
+        .ds-select-styled { background: rgba(0,0,0,0.5); color: var(--ds-cyan); border: 1px solid var(--ds-border); padding: 10px 14px; border-radius: 8px; font-weight: bold; cursor: pointer; outline: none; transition: all 0.2s; font-family: inherit; width: 100%; box-sizing: border-box; }
+        .ds-input-styled { background: rgba(0,0,0,0.5); color: #fff; border: 1px solid rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 8px; font-size: 12px; outline: none; transition: all 0.2s; width: 100%; box-sizing: border-box; }
+        .ds-input-styled:focus { border-color: var(--ds-cyan); }
 
         .ds-log-toolbar { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; background: rgba(0,0,0,0.4); padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.08); flex-wrap: wrap; }
-        .ds-log-filter { cursor: pointer; padding: 6px 14px; border-radius: 14px; font-size: 11px; background: rgba(255,255,255,0.05); color: #abb2bf; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
-        .ds-log-filter.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); }
-        .ds-log-terminal { background: #0a0c10; color: #a9b7c6; font-family: 'Fira Code', Consolas, monospace; font-size: 12px; height: 350px; overflow-y: auto; border-radius: 10px; padding: 18px; border: 1px solid rgba(0,229,255,0.2); line-height: 1.7; position: relative; }
+        .ds-log-filter { cursor: pointer; padding: 6px 14px; border-radius: 14px; font-size: 11px; background: rgba(255,255,255,0.05); color: #abb2bf; transition: all 0.2s; font-weight: 600; white-space: nowrap; }
+        .ds-log-filter.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border: 1px solid rgba(0,229,255,0.4); }
+        .ds-log-terminal { background: #0a0c10; color: #a9b7c6; font-family: 'Fira Code', Consolas, monospace; font-size: 12px; height: 350px; overflow-y: auto; border-radius: 10px; padding: 18px; border: 1px solid rgba(0,229,255,0.2); box-shadow: inset 0 0 25px rgba(0,0,0,0.9); line-height: 1.7; position: relative; }
         .ds-log-line { margin-bottom: 8px; word-wrap: break-word; border-bottom: 1px dashed rgba(255,255,255,0.05); padding-bottom: 8px; display: flex; align-items: flex-start; }
         .ds-log-line.hide { display: none !important; }
-        .ds-log-time { color: #5c6370; margin-right: 12px; user-select: none; font-size: 10px; flex-shrink: 0; margin-top: 3px; }
+        .ds-log-time { color: #5c6370; margin-right: 12px; font-size: 10px; flex-shrink: 0; margin-top: 3px; }
         .ds-log-content { flex: 1; min-width: 0; }
         .ds-log-info { color: var(--ds-green); }
         .ds-log-warn { color: var(--ds-yellow); font-weight: bold; }
-        .ds-log-error { color: var(--ds-red); font-weight: bold; }
+        .ds-log-error { color: var(--ds-red); font-weight: bold; text-shadow: 0 0 8px rgba(224,108,117,0.5); }
         .ds-log-map { color: var(--ds-cyan); font-weight: bold; }
         .ds-log-debug { color: var(--ds-purple); }
         .ds-log-divider { color: #4b5263; font-weight: bold; display: block; text-align: center; margin: 18px 0; border-top: 1px solid #2c313a; padding-top: 10px; letter-spacing: 1.5px; width: 100%; }
         
-        .ds-tag { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: bold; background: rgba(255,255,255,0.05); margin-right: 8px; letter-spacing: 0.5px; }
-        .ds-tag-SYS { color: #61afef; border-left: 3px solid #61afef; background: rgba(97,175,239,0.1); }
-        .ds-tag-USER { color: var(--ds-green); border-left: 3px solid var(--ds-green); background: rgba(152,195,121,0.1); }
-        .ds-tag-AI { color: var(--ds-yellow); border-left: 3px solid var(--ds-yellow); background: rgba(229,192,123,0.1); }
-        .ds-tag-PREFILL { color: var(--ds-purple); border-left: 3px solid var(--ds-purple); background: rgba(198,120,221,0.1); }
-        .ds-badge { background: rgba(0,229,255,0.1); padding: 4px 10px; border-radius: 6px; font-size: 0.8em; font-family: monospace; color: var(--ds-cyan); border: 1px solid rgba(0,229,255,0.3); }
+        .ds-tag { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: bold; background: rgba(255,255,255,0.05); margin-right: 8px; letter-spacing: 0.5px; border-left: 3px solid transparent; }
+        .ds-tag-SYS { color: #61afef; border-left-color: #61afef; background: rgba(97,175,239,0.1); }
+        .ds-tag-USER { color: var(--ds-green); border-left-color: var(--ds-green); background: rgba(152,195,121,0.1); }
+        .ds-tag-AI { color: var(--ds-yellow); border-left-color: var(--ds-yellow); background: rgba(229,192,123,0.1); }
+        .ds-tag-PREFILL { color: var(--ds-purple); border-left-color: var(--ds-purple); background: rgba(198,120,221,0.1); }
 
         .ds-chat-container { max-height:300px; overflow-y:auto; border:1px solid rgba(255,255,255,0.08); padding:12px; border-radius:10px; background: rgba(0,0,0,0.4); }
-        .ds-chat-item { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:14px; margin-bottom:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05); }
-        .ds-chat-item.active-chat { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); border-left: 4px solid var(--ds-cyan); border-top: 1px solid var(--ds-border); border-bottom: 1px solid var(--ds-border); border-right: 1px solid var(--ds-border); }
+        .ds-chat-item { display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.03); padding:14px; margin-bottom:12px; border-radius:10px; border:1px solid rgba(255,255,255,0.05); transition: all 0.2s; }
+        .ds-chat-item:hover { background:rgba(255,255,255,0.08); transform: translateX(5px); border-color: rgba(255,255,255,0.15); }
+        .ds-chat-item.active-chat { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); border-left: 4px solid var(--ds-cyan); border-color: var(--ds-border); box-shadow: inset 0 0 20px rgba(0,229,255,0.1); }
         
-        /* Omni-Vision 極限效能版 UI */
-        .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(10, 12, 16, 0.98); z-index: 999999; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-        .ds-modal { background: #15151a; border: 1px solid var(--ds-cyan); padding: 20px 25px; border-radius: 12px; max-width: 99vw; width: 1850px; height: 98vh; display: flex; flex-direction: column; color: #fff; font-family: sans-serif; box-shadow: 0 20px 50px rgba(0,0,0,0.8); position: relative; cursor: default; }
+        .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; cursor: pointer; }
+        .ds-modal { background: #0f1115; border: 1px solid #2d3139; padding: 20px 25px; border-radius: 16px; max-width: 98vw; width: 1750px; height: 96vh; display: flex; flex-direction: column; color: #fff; font-family: sans-serif; box-shadow: 0 20px 60px rgba(0,0,0,0.8); position: relative; animation: dsSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.2); cursor: default; }
         
-        .ds-omni-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0; gap: 20px; }
-        .ds-modal-title { color: var(--ds-cyan); margin: 0; display: flex; align-items: center; gap: 14px; font-size: 22px; font-weight: 800; letter-spacing: 1px; flex-shrink: 0; }
+        .ds-omni-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; gap: 20px; background: #131519; padding: 15px 20px; border-radius: 12px; border: 1px solid #1e2128; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+        .ds-modal-title { color: var(--ds-cyan); margin: 0; display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: bold; letter-spacing: 1px; flex-shrink: 0; }
         
-        .ds-omni-stats-bar { flex: 1; background: rgba(0,0,0,0.5); padding: 10px 20px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); display: flex; flex-direction: column; justify-content: center; }
-        .ds-omni-stats-text { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 13px; font-weight: bold; }
-        .ds-health-bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; }
-        .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.2s; }
+        .ds-omni-stats-bar { flex: 1; background: #1a1c23; border: 1px solid #2d3139; border-radius: 30px; display: flex; flex-direction: row; align-items: center; padding: 8px 25px; font-size: 13px; }
+        .ds-health-bar { height: 6px; background: #222; border-radius: 3px; overflow: hidden; }
+        .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
 
-        .ds-btn-reset { border-color: rgba(224,108,117,0.3); background: rgba(224,108,117,0.08); padding: 8px 15px; font-size: 13px; border-radius: 8px; color: #fff; cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: bold; }
-        .ds-btn-reset:hover { background: rgba(224,108,117,0.2); }
-        .ds-btn-reset i { color: var(--ds-red); }
+        .ds-btn-reset { border: 1px solid #3b3f4a; background: #1a1d24; padding: 8px 20px; font-size: 13px; border-radius: 20px; color: #a0a6b1; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; font-weight: bold; }
+        .ds-btn-reset:hover { background: #e06c75; color: #fff; border-color: #e06c75; }
 
-        .ds-omni-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; flex-shrink: 0; background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); position: relative; }
-        .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 6px; font-weight: bold; }
-        .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
-        .ds-omni-action-btn.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); }
+        .ds-omni-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 15px; flex-wrap: wrap; flex-shrink: 0; background: transparent; position: relative; }
+        .ds-omni-action-btn { background: #1a1d24; border: 1px solid #2a2e37; color: #a0a6b1; padding: 8px 14px; border-radius: 8px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; }
+        .ds-omni-action-btn:hover { background: #22262f; color: #fff; }
+        .ds-omni-action-btn.active { background: rgba(0,229,255,0.1); color: var(--ds-cyan); border-color: rgba(0,229,255,0.3); }
         
-        .ds-omni-floating-panel { position: absolute; top: calc(100% + 5px); left: 0; width: 100%; max-height: 400px; overflow-y: auto; background: #15151a; border: 1px solid var(--ds-cyan); border-radius: 8px; padding: 15px; z-index: 100; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.9); box-sizing: border-box; }
-        .ds-omni-floating-panel.open { display: block; }
+        .ds-omni-floating-panel { position: absolute; top: calc(100% + 5px); left: 0; width: 100%; max-height: 400px; overflow-y: auto; background: #15171b; border: 1px solid #2d3139; border-radius: 8px; padding: 15px; z-index: 100; display: none; box-shadow: 0 10px 30px rgba(0,0,0,0.8); box-sizing: border-box; }
+        .ds-omni-floating-panel.open { display: block; animation: dsFadeIn 0.2s ease; }
 
-        .ds-omni-legend { display: flex; gap: 12px; font-size: 11px; font-weight: bold; background: transparent; padding: 0; border: none; flex-wrap: wrap; margin-left: auto; }
-        .ds-omni-legend-item { display: flex; align-items: center; gap: 4px; color: #abb2bf; }
+        .ds-omni-legend { display: flex; gap: 12px; font-size: 11px; font-weight: bold; flex-wrap: wrap; margin-left: auto; background: #1a1c23; padding: 6px 15px; border-radius: 20px; border: 1px solid #2a2e37; }
+        .ds-omni-legend-item { display: flex; align-items: center; gap: 6px; color: #a0a6b1; }
         .ds-omni-legend-color { width: 10px; height: 10px; border-radius: 50%; }
         
         .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; }
-        .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 6px 12px; border-radius: 5px; border: 1px solid transparent; user-select: none; font-weight: 600; }
-        .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); }
+        .ds-omni-toggle { border: 1px solid transparent; font-size: 11px; color: #a0a6b1; background: #1a1d24; padding: 6px 12px; border-radius: 6px; cursor: pointer; transition: 0.2s; font-weight: 600; }
+        .ds-omni-toggle:hover { background: #22262f; color: #fff; }
+        .ds-omni-toggle.active { background: rgba(0,229,255,0.1); color: var(--ds-cyan); border-color: rgba(0,229,255,0.3); }
 
-        .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; margin-top: 0; }
-        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; overflow: hidden; z-index: 2; }
-        .ds-omni-pane-header { padding: 10px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
-        .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
+        .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; }
+        .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: transparent; z-index: 2; }
+        .ds-omni-pane-header { padding: 10px 15px; background: #1e1b29; font-weight: bold; font-size: 16px; flex-shrink: 0; border-radius: 12px; margin-bottom: 10px; }
+        .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 0 10px; display: flex; flex-direction: column; gap: 12px; background: #0f1115; will-change: scroll-position; }
         
-        .ds-omni-canvas-container { width: 160px; position: relative; flex-shrink: 0; z-index: 1; }
-        #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
-        #omni-arrows-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+        .ds-omni-canvas-container { width: 140px; position: relative; flex-shrink: 0; z-index: 1; }
+        #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: auto; }
         
-        .ds-omni-arrow { position: absolute; top: 0; width: 22px; height: 22px; background: #15151a; border: 1px solid currentColor; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10; font-size: 11px; pointer-events: auto; opacity: 0.8; }
-        .ds-omni-arrow:hover { opacity: 1; background: currentColor; color: #000 !important; z-index: 20; }
-        .ds-omni-arrow-left { left: 10px; }
-        .ds-omni-arrow-right { right: 10px; }
-        
-        /* 移除卡片動畫，實現零延遲渲染 */
-        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; width: 100%; box-sizing: border-box; }
-        .ds-node-card:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); z-index: 10; }
-        .ds-node-card.highlight-pulse { border-color: var(--ds-cyan); background: rgba(0,229,255,0.1); }
+        .ds-node-card { background: #15171b; border: 1px solid #262933; border-radius: 10px; font-family: 'Fira Code', monospace; font-size: 12px; color: #a0a6b1; word-wrap: break-word; transition: transform 0.2s, border-color 0.2s; width: 100%; box-sizing: border-box; overflow: hidden; }
+        .ds-node-card:hover { border-color: #3b404d; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); z-index: 10; relative; }
+        .ds-node-card.highlight-pulse { animation: dsPulse 1.5s ease-out; }
+        .ds-node-card-inner { padding: 15px; }
         
         .ds-node-hit { border-left: 4px solid var(--ds-green); }
-        .ds-node-miss { border-left: 4px solid var(--ds-red); opacity: 0.6; }
+        .ds-node-miss { border-left: 4px solid var(--ds-red); opacity: 0.5; }
         .ds-node-warn { border-left: 4px solid var(--ds-yellow); }
         .ds-node-new-sys { border-left: 4px solid var(--ds-cyan); }
         .ds-node-new-lore { border-left: 4px solid #56b6c2; }
@@ -137,18 +130,20 @@ const injectCSS = () => {
         .ds-node-retcon { border-left: 4px solid var(--ds-gray); }
         .ds-node-time { border-left: 4px solid var(--ds-orange); }
         
-        .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; color: #7f848e; border-bottom: 1px dashed rgba(255,255,255,0.15); padding-bottom: 6px; }
+        .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 11px; font-weight: bold; color: #7f848e; }
+        .ds-node-content { line-height: 1.6; color: #8f95a3; font-size: 13px; }
+        .ds-node-content.collapsed { max-height: 80px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
         
-        .ds-node-content-wrapper { position: relative; }
-        /* 瞬間折疊，不使用 transition */
-        .ds-node-content { line-height: 1.6; }
-        .ds-node-content.collapsed { max-height: 60px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
-        .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 4px; background: rgba(0,229,255,0.08); border-radius: 6px; border: 1px solid rgba(0,229,255,0.2); font-weight: bold; }
-        .ds-node-expand-btn:hover { background: rgba(0,229,255,0.2); }
+        .ds-node-expand-btn { background: #1a1d24; text-align: center; padding: 8px; cursor: pointer; color: var(--ds-cyan); font-size: 12px; font-weight: bold; border-top: 1px solid #262933; transition: background 0.15s; }
+        .ds-node-expand-btn:hover { background: #22262f; }
 
         .ds-toast-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-top: 10px; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
-        .ds-toast-grid label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; }
-        .ds-toast-grid input[type="checkbox"] { transform: scale(1.1); accent-color: var(--ds-cyan); margin: 0; }
+        .ds-toast-grid label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; transition: 0.2s; }
+        .ds-toast-grid label:hover { color: #fff; }
+
+        @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes dsPulse { 0% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.4); border-color: var(--ds-cyan); } 70% { box-shadow: 0 0 0 15px rgba(0, 229, 255, 0); border-color: #3b404d; } 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0); border-color: #262933; } }
     `;
     document.head.appendChild(style);
 };
@@ -1385,16 +1380,17 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas 3.0 - Extreme Performance)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas 3.0)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = [];
+let currentVisibleMappings = [];
 let isSyncLocked = true;
 let omniLeftArrayLastSent = [];
 let omniNeedsRedraw = false;
 let isOmniRendering = false;
 let resizeObserver = null;
-let nodePositionCache = { left: {}, right: {}, leftArr: [], rightArr: [] };
+let nodePositionCache = { left: {}, right: {} };
 let currentOmniRenderId = 0; 
 
 const omniResizeHandler = () => {
@@ -1420,15 +1416,15 @@ async function showOmniVisionUI() {
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 
                 <div class="ds-omni-header-row">
-                    <h2 class="ds-modal-title ds-blue"><i class="fa-solid fa-eye"></i> Omni-Vision 量子画布沙盒</h2>
+                    <h2 class="ds-modal-title ds-cyan"><i class="fa-solid fa-eye"></i> Omni-Vision 量子画布沙盒</h2>
                     <div class="ds-omni-stats-bar">
-                        <div class="ds-omni-stats-text">
-                            <span style="color:var(--ds-green);"><i class="fa-solid fa-shield-halved"></i> 预计缓存命中率: <span id="omni-hit-rate">计算中...</span></span>
-                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-coins"></i> 预计保留 Tokens: <span id="omni-tokens-saved">...</span> / 需重算: <span id="omni-tokens-lost" style="color:var(--ds-red);">...</span></span>
+                        <div style="color:var(--ds-green); font-weight:bold; display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-shield-halved"></i> 预计缓存命中率: <span id="omni-hit-rate">计算中...</span></div>
+                        <div style="flex:1; margin:0 20px;">
+                            <div class="ds-health-bar"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%;"></div></div>
                         </div>
-                        <div class="ds-health-bar"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%;"></div></div>
+                        <div style="color:var(--ds-cyan); font-weight:bold;"><i class="fa-solid fa-coins"></i> 分离保留 Tokens: <span id="omni-tokens-saved">...</span> / 需重算: <span id="omni-tokens-lost" style="color:var(--ds-red);">...</span></div>
                     </div>
-                    <button class="ds-btn-reset" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
+                    <button class="ds-btn-reset" onclick="closeOmniVision();" style="border-radius:20px; padding:8px 20px;"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
 
                 <div class="ds-omni-toolbar">
@@ -1484,9 +1480,7 @@ async function showOmniVisionUI() {
 
                 <div class="ds-omni-workspace">
                     <div class="ds-omni-pane">
-                        <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-server"></i> 上次最终发送 (Last API Payload)</span>
-                        </div>
+                        <div class="ds-omni-pane-header" style="color:var(--ds-purple);"><i class="fa-solid fa-server"></i> 上次最终发送 (Last API Payload)</div>
                         <div id="omni-left-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
@@ -1494,13 +1488,10 @@ async function showOmniVisionUI() {
 
                     <div class="ds-omni-canvas-container">
                         <canvas id="omni-canvas"></canvas>
-                        <div id="omni-arrows-layer"></div>
                     </div>
 
                     <div class="ds-omni-pane">
-                        <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 下次预计发送 (Next API Preview)</span>
-                        </div>
+                        <div class="ds-omni-pane-header" style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 下次预计发送 (Next API Preview)</div>
                         <div id="omni-right-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
                         </div>
@@ -1556,19 +1547,27 @@ async function showOmniVisionUI() {
         }
     });
 
-    // 極限優化：移除動畫迴圈，改為瞬間重繪
+    function animateCanvasDuringTransition() {
+        let start = performance.now();
+        function step(time) {
+            if (!isOmniRendering) return;
+            cacheNodePositions();
+            requestCanvasUpdate();
+            if (time - start < 350) requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+    }
+
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        cacheNodePositions();
-        requestCanvasUpdate();
+        animateCanvasDuringTransition();
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        cacheNodePositions();
-        requestCanvasUpdate();
+        animateCanvasDuringTransition();
     });
 
     let inputTimeout;
@@ -1578,7 +1577,7 @@ async function showOmniVisionUI() {
     });
 
     $('#ds-omni-modal-wrapper').on('click', '.ds-node-expand-btn', function() {
-        const contentDiv = $(this).siblings('.ds-node-content');
+        const contentDiv = $(this).siblings('.ds-node-card-inner').find('.ds-node-content');
         if (contentDiv.hasClass('collapsed')) {
             contentDiv.removeClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-up"></i> 收起');
@@ -1586,8 +1585,38 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        cacheNodePositions();
-        requestCanvasUpdate();
+        animateCanvasDuringTransition();
+    });
+
+    // 畫布虛擬點擊跳轉事件
+    $('#ds-omni-modal-wrapper').on('click', '#omni-canvas', function(e) {
+        const rect = this.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+        for (let i = 0; i < currentVisibleMappings.length; i++) {
+            const item = currentVisibleMappings[i];
+            if (item.leftX !== undefined && Math.abs(clickX - item.leftX) < 15 && Math.abs(clickY - item.leftY) < 15) {
+                jumpToOmniNode('right', item.rightId); return;
+            }
+            if (item.rightX !== undefined && Math.abs(clickX - item.rightX) < 15 && Math.abs(clickY - item.rightY) < 15) {
+                jumpToOmniNode('left', item.leftId); return;
+            }
+        }
+    });
+
+    $('#ds-omni-modal-wrapper').on('mousemove', '#omni-canvas', function(e) {
+        const rect = this.getBoundingClientRect();
+        const hoverX = e.clientX - rect.left;
+        const hoverY = e.clientY - rect.top;
+        let isPointer = false;
+        for (let i = 0; i < currentVisibleMappings.length; i++) {
+            const item = currentVisibleMappings[i];
+            if ((item.leftX !== undefined && Math.abs(hoverX - item.leftX) < 15 && Math.abs(hoverY - item.leftY) < 15) ||
+                (item.rightX !== undefined && Math.abs(hoverX - item.rightX) < 15 && Math.abs(hoverY - item.rightY) < 15)) {
+                isPointer = true; break;
+            }
+        }
+        this.style.cursor = isPointer ? 'pointer' : 'default';
     });
 
     let isSyncingLeft = false;
@@ -1595,32 +1624,6 @@ async function showOmniVisionUI() {
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
-    // 極限優化：二分搜尋法尋找最近節點
-    function findClosestNode(arr, targetY) {
-        if (arr.length === 0) return -1;
-        let left = 0;
-        let right = arr.length - 1;
-        let closest = arr[0];
-        
-        while (left <= right) {
-            let mid = Math.floor((left + right) / 2);
-            let node = arr[mid];
-            
-            if (Math.abs(node.baseY - targetY) < Math.abs(closest.baseY - targetY)) {
-                closest = node;
-            }
-            
-            if (node.baseY < targetY) {
-                left = mid + 1;
-            } else if (node.baseY > targetY) {
-                right = mid - 1;
-            } else {
-                return node.id;
-            }
-        }
-        return closest.id;
-    }
-
     function syncScroll(sourceSide) {
         if (!isSyncLocked) return;
         const sourcePane = document.getElementById(`omni-${sourceSide}-pane`);
@@ -1639,9 +1642,15 @@ async function showOmniVisionUI() {
         }
 
         const sourceCenterY = sourceScrollTop + (sourcePane.clientHeight / 2);
-        const sourceArr = sourceSide === 'left' ? nodePositionCache.leftArr : nodePositionCache.rightArr;
-        
-        const closestId = findClosestNode(sourceArr, sourceCenterY);
+        let closestId = -1;
+        let minDiff = Infinity;
+        const sourceCache = nodePositionCache[sourceSide];
+
+        for (const id in sourceCache) {
+            const nodeCenterY = sourceCache[id].baseY;
+            const diff = Math.abs(nodeCenterY - sourceCenterY);
+            if (diff < minDiff) { minDiff = diff; closestId = parseInt(id); }
+        }
 
         if (closestId !== -1) {
             const mapping = omniMappings.find(m => sourceSide === 'left' ? m.left === closestId : m.right === closestId);
@@ -1683,7 +1692,7 @@ async function showOmniVisionUI() {
 
     resizeObserver = new ResizeObserver(() => {
         if (!isOmniRendering) return;
-        resizeCanvas(); 
+        resizeCanvas();
         cacheNodePositions();
         requestCanvasUpdate();
     });
@@ -1702,8 +1711,9 @@ window.closeOmniVision = function() {
     window.removeEventListener('resize', omniResizeHandler);
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
+    currentVisibleMappings = [];
     omniLeftArrayLastSent = [];
-    nodePositionCache = { left: {}, right: {}, leftArr: [], rightArr: [] };
+    nodePositionCache = { left: {}, right: {} };
 };
 
 function cacheNodePositions() {
@@ -1717,28 +1727,26 @@ function cacheNodePositions() {
 
     nodePositionCache.left = {};
     nodePositionCache.right = {};
-    nodePositionCache.leftArr = [];
-    nodePositionCache.rightArr = [];
 
     const leftPaneRect = leftPane.getBoundingClientRect();
     const leftOffset = leftPaneRect.top - canvasRect.top;
-    const leftNodes = leftPane.querySelectorAll('.ds-node-card');
-    leftNodes.forEach(node => {
+    const leftNodes = leftPane.children;
+    for (let i = 0; i < leftNodes.length; i++) {
+        const node = leftNodes[i];
+        if (!node.id) continue;
         const id = parseInt(node.id.replace('omni-left-node-', ''));
-        const baseY = node.offsetTop + (node.offsetHeight / 2);
-        nodePositionCache.left[id] = { baseY: baseY, offset: leftOffset };
-        nodePositionCache.leftArr.push({ id: id, baseY: baseY });
-    });
+        nodePositionCache.left[id] = { baseY: node.offsetTop + (node.offsetHeight / 2), offset: leftOffset };
+    }
 
     const rightPaneRect = rightPane.getBoundingClientRect();
     const rightOffset = rightPaneRect.top - canvasRect.top;
-    const rightNodes = rightPane.querySelectorAll('.ds-node-card');
-    rightNodes.forEach(node => {
+    const rightNodes = rightPane.children;
+    for (let i = 0; i < rightNodes.length; i++) {
+        const node = rightNodes[i];
+        if (!node.id) continue;
         const id = parseInt(node.id.replace('omni-right-node-', ''));
-        const baseY = node.offsetTop + (node.offsetHeight / 2);
-        nodePositionCache.right[id] = { baseY: baseY, offset: rightOffset };
-        nodePositionCache.rightArr.push({ id: id, baseY: baseY });
-    });
+        nodePositionCache.right[id] = { baseY: node.offsetTop + (node.offsetHeight / 2), offset: rightOffset };
+    }
 }
 
 function renderOmniLeftPane(leftArray) {
@@ -1750,14 +1758,14 @@ function renderOmniLeftPane(leftArray) {
         el.className = `ds-node-card ds-virtual-list ds-node-hit`; 
         el.id = `omni-left-node-${idx}`;
         el.innerHTML = `
-            <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag || 'SYS'}">[${node.tag || 'SYS'}]</span> Index: ${idx} <span class="ds-omni-left-status"></span></span>
-                <span>Hash: ${(node.hash || 0).toString(16).substring(0,8)}</span>
-            </div>
-            <div class="ds-node-content-wrapper">
+            <div class="ds-node-card-inner">
+                <div class="ds-node-header">
+                    <span><span class="ds-tag ds-tag-${node.tag || 'SYS'}">[${node.tag || 'SYS'}]</span> Index: ${idx} <span class="ds-omni-left-status"></span></span>
+                    <span style="font-weight:normal;">Hash: ${(node.hash || 0).toString(16).substring(0,8)}</span>
+                </div>
                 <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
-                <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
             </div>
+            <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
         `;
         leftFrag.appendChild(el);
     });
@@ -1801,7 +1809,7 @@ window.jumpToOmniNode = function(side, id) {
         
         if (syncLockTimeout) clearTimeout(syncLockTimeout);
         syncLockTimeout = setTimeout(() => {
-            isSyncLocked = $('#omni-btn-sync').hasClass('active');
+            if ($('#omni-btn-sync').hasClass('active')) isSyncLocked = true;
         }, 800);
     }
 };
@@ -1835,12 +1843,10 @@ async function renderOmniVision(state) {
 
     if (simulatedStream.length > 0) {
         const simInput = $('#omni-simulated-input').val().trim();
-        if (simInput) {
-            simulatedStream.push({ role: 'user', content: simInput });
-        }
+        if (simInput) simulatedStream.push({ role: 'user', content: simInput });
 
         const dryRunResult = await interceptAndRestructurePrompt({ chat: simulatedStream }, true);
-        if (renderId !== currentOmniRenderId) return; 
+        if (renderId !== currentOmniRenderId) return; // 依賴世代鎖，防止非同步覆寫
         
         if (dryRunResult) {
             rightArray = dryRunResult.proposedStream;
@@ -1906,9 +1912,7 @@ async function renderOmniVision(state) {
     });
 
     leftArray.forEach((lNode, lIdx) => {
-        if (!leftMatched.has(lIdx)) {
-            omniMappings.push({ left: lIdx, right: -1, type: 'deleted' });
-        }
+        if (!leftMatched.has(lIdx)) omniMappings.push({ left: lIdx, right: -1, type: 'deleted' });
     });
 
     leftArray.forEach((node, idx) => {
@@ -1932,20 +1936,20 @@ async function renderOmniVision(state) {
         let newLabel = '';
         
         if (isNew) {
-            if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; font-weight:bold; margin-left:6px;">(NEW LORE)</span>'; }
-            else if (node._omniCat === 'dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold; margin-left:6px;">(NEW DYN)</span>'; }
-            else if (node._omniCat === 'history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); font-weight:bold; margin-left:6px;">(NEW HIS)</span>'; }
-            else if (node._omniCat === 'patch_flashback') { cardClass = 'ds-node-flashback'; newLabel = '<span style="color:var(--ds-pink); font-weight:bold; margin-left:6px;">(FLASHBACK)</span>'; }
-            else if (node._omniCat === 'patch_retcon') { cardClass = 'ds-node-retcon'; newLabel = '<span style="color:var(--ds-gray); font-weight:bold; margin-left:6px;">(RETCON)</span>'; }
-            else if (node._omniCat === 'patch_void') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(VOID PATCH)</span>'; }
-            else if (node._omniCat === 'patch_nano') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(NANO PATCH)</span>'; }
-            else if (node._omniCat === 'patch_hotreload') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(HOT RELOAD)</span>'; }
-            else if (node._omniCat === 'patch_entropy') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TYPO PATCH)</span>'; }
-            else if (node._omniCat === 'patch_history') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TIME PATCH)</span>'; }
-            else if (node._omniCat === 'patch_chronos') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TIME SKIP)</span>'; }
-            else if (node._omniCat === 'patch_amnesia') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(AMNESIA)</span>'; }
-            else if (node._omniCat === 'patch_time') { cardClass = 'ds-node-time'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold; margin-left:6px;">(TIME SYNC)</span>'; }
-            else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold; margin-left:6px;">(NEW SYS)</span>'; }
+            if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; margin-left:6px;">(NEW LORE)</span>'; }
+            else if (node._omniCat === 'dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); margin-left:6px;">(NEW DYN)</span>'; }
+            else if (node._omniCat === 'history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); margin-left:6px;">(NEW HIS)</span>'; }
+            else if (node._omniCat === 'patch_flashback') { cardClass = 'ds-node-flashback'; newLabel = '<span style="color:var(--ds-pink); margin-left:6px;">(FLASHBACK)</span>'; }
+            else if (node._omniCat === 'patch_retcon') { cardClass = 'ds-node-retcon'; newLabel = '<span style="color:var(--ds-gray); margin-left:6px;">(RETCON)</span>'; }
+            else if (node._omniCat === 'patch_void') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); margin-left:6px;">(VOID PATCH)</span>'; }
+            else if (node._omniCat === 'patch_nano') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); margin-left:6px;">(NANO PATCH)</span>'; }
+            else if (node._omniCat === 'patch_hotreload') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); margin-left:6px;">(HOT RELOAD)</span>'; }
+            else if (node._omniCat === 'patch_entropy') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); margin-left:6px;">(TYPO PATCH)</span>'; }
+            else if (node._omniCat === 'patch_history') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); margin-left:6px;">(TIME PATCH)</span>'; }
+            else if (node._omniCat === 'patch_chronos') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); margin-left:6px;">(TIME SKIP)</span>'; }
+            else if (node._omniCat === 'patch_amnesia') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); margin-left:6px;">(AMNESIA)</span>'; }
+            else if (node._omniCat === 'patch_time') { cardClass = 'ds-node-time'; newLabel = '<span style="color:var(--ds-orange); margin-left:6px;">(TIME SYNC)</span>'; }
+            else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); margin-left:6px;">(NEW SYS)</span>'; }
         } else if (node._omniCat && node._omniCat.startsWith('patch_')) {
             cardClass = 'ds-node-patch';
         }
@@ -1954,45 +1958,19 @@ async function renderOmniVision(state) {
         el.className = `ds-node-card ds-virtual-list ${cardClass}`;
         el.id = `omni-right-node-${idx}`;
         el.innerHTML = `
-            <div class="ds-node-header">
-                <span><span class="ds-tag ds-tag-${node.tag || 'SYS'}">[${node.tag || 'SYS'}]</span> Index: ${idx} ${newLabel}</span>
-                <span>Hash: ${(node.hash || 0).toString(16).substring(0,8)}</span>
-            </div>
-            <div class="ds-node-content-wrapper">
+            <div class="ds-node-card-inner">
+                <div class="ds-node-header">
+                    <span><span class="ds-tag ds-tag-${node.tag || 'SYS'}">[${node.tag || 'SYS'}]</span> Index: ${idx} ${newLabel}</span>
+                    <span style="font-weight:normal;">Hash: ${(node.hash || 0).toString(16).substring(0,8)}</span>
+                </div>
                 <div class="ds-node-content collapsed">${escapeHtml(node.content).replace(/\n/g, '<br>')}</div>
-                <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
             </div>
+            <div class="ds-node-expand-btn"><i class="fa-solid fa-chevron-down"></i> 展开</div>
         `;
         rightFrag.appendChild(el);
     });
     rightContainer.innerHTML = '';
     rightContainer.appendChild(rightFrag);
-
-    let arrowsHtml = '';
-    omniMappings.forEach((m, i) => {
-        let colorHex = '0,229,255';
-        if (m.type === 'perfect') colorHex = '152,195,121';
-        else if (m.type === 'fuzzy') colorHex = '229,192,123';
-        else if (m.type === 'patch_link') colorHex = '198,120,221';
-        else if (m.type === 'deleted') colorHex = '224,108,117';
-        else if (m.type === 'new_lorebook') colorHex = '86,182,194';
-        else if (m.type === 'new_dynamic') colorHex = '209,154,102';
-        else if (m.type === 'new_history') colorHex = '152,195,121';
-        else if (m.type === 'new_patch') colorHex = '198,120,221';
-        else if (m.type === 'new_flashback') colorHex = '255,121,198';
-        else if (m.type === 'new_retcon') colorHex = '171,178,191';
-        else if (m.type === 'new_time') colorHex = '209,154,102';
-
-        if (m.left !== -1 && m.right !== -1) {
-            arrowsHtml += `<div id="omni-arrow-l-${i}" class="ds-omni-arrow ds-omni-arrow-left" style="display:none; color:rgb(${colorHex});" onclick="jumpToOmniNode('right', ${m.right})" title="跳转到右侧对应节点"><i class="fa-solid fa-chevron-right"></i></div>`;
-            arrowsHtml += `<div id="omni-arrow-r-${i}" class="ds-omni-arrow ds-omni-arrow-right" style="display:none; color:rgb(${colorHex});" onclick="jumpToOmniNode('left', ${m.left})" title="跳转到左侧对应节点"><i class="fa-solid fa-chevron-left"></i></div>`;
-        } else if (m.type === 'deleted') {
-            arrowsHtml += `<div id="omni-arrow-l-${i}" class="ds-omni-arrow ds-omni-arrow-left" style="display:none; color:rgb(${colorHex}); cursor:default;" title="此节点已被删除"><i class="fa-solid fa-xmark"></i></div>`;
-        } else if (m.type.startsWith('new_')) {
-            arrowsHtml += `<div id="omni-arrow-r-${i}" class="ds-omni-arrow ds-omni-arrow-right" style="display:none; color:rgb(${colorHex}); cursor:default;" title="这是新插入的节点"><i class="fa-solid fa-plus"></i></div>`;
-        }
-    });
-    document.getElementById('omni-arrows-layer').innerHTML = arrowsHtml;
 
     requestAnimationFrame(() => {
         if (renderId !== currentOmniRenderId) return;
@@ -2016,6 +1994,28 @@ function resizeCanvas() {
     canvas.style.height = `${rect.height}px`;
 }
 
+function drawCanvasArrow(ctx, x, y, direction, colorHex) {
+    ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2);
+    ctx.fillStyle = '#101216'; ctx.fill();
+    ctx.strokeStyle = `rgb(${colorHex})`; ctx.stroke();
+    
+    ctx.beginPath();
+    if (direction === 'right') { ctx.moveTo(x - 2, y - 4); ctx.lineTo(x + 3, y); ctx.lineTo(x - 2, y + 4); } 
+    else { ctx.moveTo(x + 2, y - 4); ctx.lineTo(x - 3, y); ctx.lineTo(x + 2, y + 4); }
+    ctx.stroke();
+}
+
+function drawCanvasIcon(ctx, x, y, type, colorHex) {
+    ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2);
+    ctx.fillStyle = '#101216'; ctx.fill();
+    ctx.strokeStyle = `rgb(${colorHex})`; ctx.stroke();
+    
+    ctx.beginPath();
+    if (type === 'x') { ctx.moveTo(x-3, y-3); ctx.lineTo(x+3, y+3); ctx.moveTo(x+3, y-3); ctx.lineTo(x-3, y+3); } 
+    else { ctx.moveTo(x, y-4); ctx.lineTo(x, y+4); ctx.moveTo(x-4, y); ctx.lineTo(x+4, y); }
+    ctx.stroke();
+}
+
 function updateOmniCanvas() {
     const canvas = document.getElementById('omni-canvas');
     const leftPane = document.getElementById('omni-left-pane');
@@ -2023,7 +2023,8 @@ function updateOmniCanvas() {
     
     if (!canvas || !leftPane || !rightPane) return;
 
-    const ctx = canvas.getContext('2d');
+    // 開啟 desynchronized 提升 GPU 低延遲
+    const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
     const width = canvas.width / (window.devicePixelRatio || 1);
     const height = canvas.height / (window.devicePixelRatio || 1);
     
@@ -2034,101 +2035,76 @@ function updateOmniCanvas() {
     ctx.lineJoin = 'round';
     
     const halfWidth = width / 2;
+    // 嚴格 Viewport Culling：剔除上下邊界外的多餘運算
+    const boundsTop = -100;
+    const boundsBottom = height + 100;
+    
+    currentVisibleMappings = [];
+    ctx.lineWidth = 1.8;
 
     for (let i = 0; i < omniMappings.length; i++) {
         const m = omniMappings[i];
-        let startX = 0, startY = 0, endX = width, endY = 0;
-        let isVisible = false;
+        let startX = 20, startY = -9999, endX = width - 20, endY = -9999;
 
         if (m.left !== -1 && nodePositionCache.left[m.left] !== undefined) {
-            const leftData = nodePositionCache.left[m.left];
-            startY = leftData.baseY - leftPane.scrollTop + leftData.offset;
+            const lData = nodePositionCache.left[m.left];
+            startY = lData.baseY - leftPane.scrollTop + lData.offset;
         }
         if (m.right !== -1 && nodePositionCache.right[m.right] !== undefined) {
-            const rightData = nodePositionCache.right[m.right];
-            endY = rightData.baseY - rightPane.scrollTop + rightData.offset;
+            const rData = nodePositionCache.right[m.right];
+            endY = rData.baseY - rightPane.scrollTop + rData.offset;
         }
 
-        // 極限優化：視錐剔除 (Frustum Culling)
-        if (m.type === 'deleted') {
-            if (startY === undefined) continue;
-            endY = startY;
-            endX = halfWidth;
-            if (startY > -100 && startY < height + 100) isVisible = true;
-        } 
-        else if (m.type.startsWith('new_')) {
-            if (endY === undefined) continue;
-            startY = endY;
-            startX = halfWidth;
-            if (endY > -100 && endY < height + 100) isVisible = true;
-        } 
-        else {
-            if (startY === undefined || endY === undefined) continue;
-            if ((startY > -100 && startY < height + 100) || (endY > -100 && endY < height + 100)) isVisible = true;
+        if (m.type === 'deleted') { endY = startY; endX = halfWidth; } 
+        else if (m.type.startsWith('new_')) { startY = endY; startX = halfWidth; }
+
+        // Core Culling Check
+        if ((startY < boundsTop && endY < boundsTop) || (startY > boundsBottom && endY > boundsBottom)) {
+            continue; 
         }
-
-        const arrowL = document.getElementById(`omni-arrow-l-${i}`);
-        const arrowR = document.getElementById(`omni-arrow-r-${i}`);
-
-        if (!isVisible) {
-            if (arrowL) arrowL.style.display = 'none';
-            if (arrowR) arrowR.style.display = 'none';
-            continue;
-        }
-
-        const distY = Math.abs(endY - startY);
-        const cpOffset = width * Math.min(0.45, 0.1 + (distY / height) * 0.4);
-
-        ctx.beginPath();
-        ctx.moveTo(startX, startY);
-        ctx.bezierCurveTo(startX + cpOffset, startY, endX - cpOffset, endY, endX, endY);
-
-        ctx.lineWidth = 1.8; 
 
         let colorHex = '0,229,255';
         if (m.type === 'perfect') colorHex = '152,195,121';
         else if (m.type === 'fuzzy') colorHex = '229,192,123';
         else if (m.type === 'patch_link') colorHex = '198,120,221';
         else if (m.type === 'deleted') colorHex = '224,108,117';
-        else if (m.type === 'new_lorebook') colorHex = '86,182,194';
-        else if (m.type === 'new_dynamic') colorHex = '209,154,102';
-        else if (m.type === 'new_history') colorHex = '152,195,121';
-        else if (m.type === 'new_patch') colorHex = '198,120,221';
-        else if (m.type === 'new_flashback') colorHex = '255,121,198';
-        else if (m.type === 'new_retcon') colorHex = '171,178,191';
-        else if (m.type === 'new_time') colorHex = '209,154,102';
+        else if (m.type.startsWith('new_')) {
+             if (m.type === 'new_lorebook') colorHex = '86,182,194';
+             else if (m.type === 'new_dynamic' || m.type === 'new_time') colorHex = '209,154,102';
+             else if (m.type === 'new_history') colorHex = '152,195,121';
+             else if (m.type === 'new_patch') colorHex = '198,120,221';
+             else if (m.type === 'new_flashback') colorHex = '255,121,198';
+             else if (m.type === 'new_retcon') colorHex = '171,178,191';
+        }
 
-        if (m.type === 'fuzzy' || m.type === 'deleted' || m.type.startsWith('new_')) {
+        ctx.beginPath();
+        const cpOffset = width * 0.45;
+        
+        if (m.type === 'deleted' || m.type.startsWith('new_')) {
             ctx.setLineDash([6, 6]);
+            ctx.strokeStyle = `rgba(${colorHex}, 0.5)`;
         } else {
             ctx.setLineDash([]);
+            ctx.strokeStyle = `rgba(${colorHex}, ${m.type === 'perfect' ? 0.3 : 0.8})`;
         }
 
-        const alpha = Math.max(0.4, 0.85 - (distY / height) * 0.3);
-
-        if (m.type === 'deleted') {
-            const grad = ctx.createLinearGradient(0, 0, halfWidth, 0);
-            grad.addColorStop(0, `rgba(${colorHex},${alpha})`);
-            grad.addColorStop(1, `rgba(${colorHex},0)`);
-            ctx.strokeStyle = grad;
-        } else if (m.type.startsWith('new_')) {
-            const grad = ctx.createLinearGradient(halfWidth, 0, width, 0);
-            grad.addColorStop(0, `rgba(${colorHex},0)`);
-            grad.addColorStop(1, `rgba(${colorHex},${alpha})`);
-            ctx.strokeStyle = grad;
-        } else {
-            ctx.strokeStyle = `rgba(${colorHex},${alpha})`;
-        }
-        
+        ctx.moveTo(startX, startY);
+        ctx.bezierCurveTo(startX + cpOffset, startY, endX - cpOffset, endY, endX, endY);
         ctx.stroke();
+        
+        ctx.setLineDash([]);
 
-        if (arrowL) {
-            arrowL.style.display = 'flex';
-            arrowL.style.transform = `translate3d(0, calc(${startY}px - 50%), 0)`;
-        }
-        if (arrowR) {
-            arrowR.style.display = 'flex';
-            arrowR.style.transform = `translate3d(0, calc(${endY}px - 50%), 0)`;
+        if (m.left !== -1 && m.right !== -1) {
+            drawCanvasArrow(ctx, startX, startY, 'right', colorHex);
+            drawCanvasArrow(ctx, endX, endY, 'left', colorHex);
+            currentVisibleMappings.push({
+                leftX: startX, leftY: startY, rightId: m.right,
+                rightX: endX, rightY: endY, leftId: m.left
+            });
+        } else if (m.type === 'deleted') {
+            drawCanvasIcon(ctx, startX, startY, 'x', colorHex);
+        } else if (m.type.startsWith('new_')) {
+            drawCanvasIcon(ctx, endX, endY, 'plus', colorHex);
         }
     }
     
@@ -2388,7 +2364,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-enable" ${Settings.enabled ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动绝对真理引擎 <span class="ds-perf-badge ds-perf-low">GPU 极限加速中</span></b>
+                                    <b style="color:var(--ds-cyan); text-shadow:0 0 5px rgba(0,229,255,0.4);">启动绝对真理引擎 <span class="ds-perf-badge ds-perf-low">GPU 行云流水</span></b>
                                     <span>(核心功能！让回复变秒回，大幅节省 Token 和 API 费用)</span>
                                 </div>
                             </label>
@@ -2603,7 +2579,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-imprint" ${Settings.permanentMemoryImprint ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-yellow);">🖨️ 永久记忆烙印 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当世界书触发后，将其永久冻结在缓存中。即使 ST 移除了它，缓存也不会断裂。(会稍微增加 Token)">?</span></b>
+                                    <b style="color:var(--ds-yellow);">🖨️ 永久记忆烙印 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当世界书触发后，将其永久冻结在缓存中。即使 ST 移现代除了它，缓存也不会断裂。(会稍微增加 Token)">?</span></b>
                                     <span>(世界书忽隐忽现不破缓存)</span>
                                 </div>
                             </label>
