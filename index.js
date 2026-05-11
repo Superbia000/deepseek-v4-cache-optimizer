@@ -2,14 +2,14 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Ultimate Truth UI - v54 Flow)
+// 1. 樣式注入 (Theory of Everything UI)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
     const style = document.createElement('style');
     style.id = 'ds-cache-styles';
     style.innerHTML = `
-        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-blue: #61afef; --ds-bg: rgba(15, 20, 25, 0.75); --ds-border: rgba(0, 229, 255, 0.25); }
+        :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-blue: #61afef; --ds-bg: rgba(15, 20, 25, 0.8); --ds-border: rgba(0, 229, 255, 0.3); }
         
         .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
         .ds-strict-contain { contain: strict; }
@@ -19,11 +19,11 @@ const injectCSS = () => {
         .ds-scroll::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.5); border-radius: 4px; }
         .ds-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.9); box-shadow: 0 0 12px var(--ds-cyan); }
 
-        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.4); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-        .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.5); box-shadow: 0 8px 30px rgba(0, 229, 255, 0.15); }
-        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 12px rgba(0,229,255,0.4); letter-spacing: 0.5px; }
-        .ds-opt-header:hover { background: linear-gradient(90deg, rgba(0,229,255,0.2) 0%, rgba(0,0,0,0) 100%); color: #fff; }
-        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.3); border-top: 1px solid rgba(255,255,255,0.05); }
+        .ds-opt-group { margin-bottom: 16px; border: 1px solid var(--ds-border); border-radius: 12px; background: var(--ds-bg); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.5); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .ds-opt-group:hover { border-color: rgba(0, 229, 255, 0.6); box-shadow: 0 8px 30px rgba(0, 229, 255, 0.2); }
+        .ds-opt-header { padding: 16px 20px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-weight: bold; color: var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); transition: 0.2s; font-size: 14px; text-shadow: 0 0 12px rgba(0,229,255,0.5); letter-spacing: 0.5px; }
+        .ds-opt-header:hover { background: linear-gradient(90deg, rgba(0,229,255,0.25) 0%, rgba(0,0,0,0) 100%); color: #fff; }
+        .ds-opt-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; display: none; background: rgba(0,0,0,0.4); border-top: 1px solid rgba(255,255,255,0.08); }
         .ds-opt-group.open .ds-opt-content { display: flex; animation: dsFadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .ds-opt-group.open .ds-opt-header i.fa-chevron-down { transform: rotate(180deg); }
 
@@ -35,7 +35,7 @@ const injectCSS = () => {
         .ds-row-text b { color: var(--ds-yellow); font-weight: 600; letter-spacing: 0.5px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
         .ds-row-text span { font-size: 11px; color: rgba(171, 178, 191, 0.8); font-weight: normal; margin-top: 4px; line-height: 1.5; }
         
-        .ds-tooltip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--ds-cyan); background: rgba(0,229,255,0.1); border-radius: 50%; width: 16px; height: 16px; font-size: 11px; font-weight: bold; cursor: help; border: 1px solid rgba(0,229,255,0.3); flex-shrink: 0; transition: 0.2s; }
+        .ds-tooltip-icon { display: inline-flex; align-items: center; justify-content: center; color: var(--ds-cyan); background: rgba(0,229,255,0.1); border-radius: 50%; width: 16px; height: 16px; font-size: 11px; font-weight: bold; cursor: help; border: 1px solid rgba(0,229,255,0.4); flex-shrink: 0; transition: 0.2s; }
         .ds-tooltip-icon:hover { background: var(--ds-cyan); color: #000; box-shadow: 0 0 10px var(--ds-cyan); transform: scale(1.1); }
         .ds-perf-badge { font-size: 9px; padding: 2px 6px; border-radius: 4px; font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; }
         .ds-perf-low { background: rgba(152,195,121,0.15); color: var(--ds-green); border: 1px solid rgba(152,195,121,0.3); }
@@ -117,7 +117,7 @@ const injectCSS = () => {
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s; }
 
         /* ==========================================
-           Omni-Vision v54 Quantum Flow Styles
+           Omni-Vision v55 Quantum Flow Styles
            ========================================== */
         .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 25px !important; overflow: hidden; }
         
@@ -178,6 +178,11 @@ const injectCSS = () => {
         .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 6px; background: rgba(0,229,255,0.1); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.25); font-weight: bold; }
         .ds-node-expand-btn:hover { background: rgba(0,229,255,0.25); border-color: rgba(0,229,255,0.5); box-shadow: 0 0 12px rgba(0,229,255,0.3); }
 
+        /* Toast 聚合樣式 */
+        .ds-toast-summary { font-family: 'Fira Code', monospace; font-size: 11px; margin-top: 6px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; line-height: 1.5; }
+        .ds-toast-summary div { display: flex; justify-content: space-between; gap: 10px; }
+        .ds-toast-summary span { color: var(--ds-cyan); font-weight: bold; }
+
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes dsShimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
@@ -201,9 +206,9 @@ function fastClone(obj) {
 }
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v53 || extension_settings.ds_cache_v52 || {};
-    if (!extension_settings.ds_cache_v54) {
-        extension_settings.ds_cache_v54 = {
+    const oldSettings = extension_settings.ds_cache_v54 || extension_settings.ds_cache_v53 || {};
+    if (!extension_settings.ds_cache_v55) {
+        extension_settings.ds_cache_v55 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -243,13 +248,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v54;
+    Settings = extension_settings.ds_cache_v55;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v54_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v55_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -265,7 +270,7 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v54_snapshot', dataStr);
+            localStorage.setItem('ds_cache_v55_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -290,7 +295,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v54_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v55_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -345,12 +350,13 @@ const ToastManager = {
             else if (item.type === 'warning') toastr.warning(text, '终极真理协议');
             else toastr.info(text, '终极真理协议');
         } else {
-            let summary = [];
+            let summaryHtml = `<div class="ds-toast-summary">`;
             for (let k of keys) {
                 const item = this.queue[k];
-                summary.push(`${item.icon} ${item.msg.split('：')[0]} (x${item.count})`);
+                summaryHtml += `<div>${item.icon} ${item.msg.split('：')[0]} <span>x${item.count}</span></div>`;
             }
-            toastr.success(`⚡ 矩阵协议批量触发:<br>${summary.join('<br>')}`, '终极真理协议');
+            summaryHtml += `</div>`;
+            toastr.success(`<b>⚡ 矩阵协议批量触发</b>${summaryHtml}`, '终极真理协议');
         }
 
         this.queue = {};
@@ -946,10 +952,18 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         }
                     }
                 } else {
-                    if (Settings.permanentMemoryImprint) {
+                    // 系統提示詞被刪除 (ST 截斷或用戶手動刪除)
+                    if (Settings.permanentMemoryImprint && frozenItem._omniCat === 'lorebook') {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
-                        if (!isDryRun) Logger.debug(`[🖨️ 永久记忆] 强制保留被删除的设定: ${truncateLog(frozenItem.content)}`);
+                        if (!isDryRun) Logger.debug(`[🖨️ 永久记忆] 强制保留被删除的世界书: ${truncateLog(frozenItem.content)}`);
+                    } else if (Settings.voidBridging && frozenItem._omniCat !== 'dynamic') {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        if (!isDryRun) {
+                            Logger.debug(`[🌉 虚空架桥] 强制保留被删除的系统提示词: ${truncateLog(frozenItem.content)}`);
+                            triggerToast('void', '虚空架桥：已修复上下文断层', 'info', '🌉');
+                        }
                     }
                 }
             } 
@@ -1003,13 +1017,23 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newFrozenSequence.push(incomingItem); 
                     }
                 } else {
+                    // 歷史對話被刪除 (ST 截斷或用戶手動刪除)
                     const isPrefix = (i === 0);
+                    const isEarly = (i < state.frozenSequence.length * 0.3); // 前 30% 視為早期記憶
+                    
                     if (isPrefix && Settings.prefixAnchor) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
                         if (!isDryRun) {
                             Logger.warn(`[⚓ 绝对前缀锚点] 强制保留被截断的头部。`);
                             triggerToast('prefix', '前缀锚点：已强制保留被截断的头部', 'warning', '⚓');
+                        }
+                    } else if (isEarly && Settings.amnesiaProtocol) {
+                        frozenItem._omniCat = 'frozen';
+                        newFrozenSequence.push(frozenItem); 
+                        if (!isDryRun) {
+                            Logger.debug(`[🧠 失忆症协议] 归档早期记忆。`);
+                            triggerToast('amnesia', '失忆症协议：已归档早期记忆', 'info', '🧠');
                         }
                     } else if (Settings.retconProtocol) {
                         frozenItem._omniCat = 'frozen';
@@ -1091,7 +1115,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         for (const item of newFrozenSequence) {
             if (item.tag === 'SYS' && Settings.absoluteDeduplication) {
                 if (item._omniCat === 'sys_default' || item._omniCat === 'sys_lore' || item._omniCat === 'sys_other' || item._omniCat === 'frozen') {
-                    if (seenSysNorms.has(item.hash)) continue;
+                    if (seenSysNorms.has(item.hash)) {
+                        if (!isDryRun) Logger.trace(`[🗜️ 绝对去重] 折叠了重复的系统提示词。`);
+                        continue;
+                    }
                     seenSysNorms.add(item.hash);
                 }
             }
@@ -1309,7 +1336,7 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 量子流体沙盒</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 终极真理沙盒</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
@@ -1329,7 +1356,7 @@ async function showOmniVisionUI() {
                     </div>
                     <div class="ds-omni-control-body">
                         <div class="ds-omni-actions-row">
-                            <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
+                            <button id="omni-btn-sync" class="ds-omni-action-btn active" title="影同步协议 2.0：硬件级锁定双向滚动"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
                             <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
                             <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
                             <button id="omni-btn-export-matrix" class="ds-omni-action-btn" title="导出当前矩阵状态以供排错"><i class="fa-solid fa-bug"></i> 导出矩阵状态</button>
@@ -2051,14 +2078,14 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v54-opt-drawer">
+        <div class="inline-drawer" id="ds-v55-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 量子流体优化器 (v54)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 终极真理优化器 (v55)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
                 
-                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 量子流体沙盒 (即时预览)</button>
+                <button id="ds-btn-omni-vision" class="ds-btn ds-btn-omni"><i class="fa-solid fa-eye"></i> 👁️ 打开 Omni-Vision 终极真理沙盒 (即时预览)</button>
                 <button id="ds-btn-one-click" class="ds-btn ds-btn-magic"><i class="fa-solid fa-wand-magic-sparkles"></i> 🌟 一键套用 DeepSeek 100% 缓存最佳设定</button>
 
                 <!-- 1. 核心开关 -->
@@ -2098,19 +2125,19 @@ async function setupUI() {
                     </div>
                 </div>
 
-                <!-- 2. 100% 缓存防御盾 -->
+                <!-- 2. 绝对领域防御盾 (排序与防断层) -->
                 <div class="ds-opt-group open">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-shield-halved"></i> 2. 绝对领域防御盾 (100% Cache)</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-shield-halved"></i> 2. 绝对领域防御盾 (排序与防断层)</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
-                        <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.6; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; border-left:3px solid var(--ds-cyan);">开启以下功能，即使你在聊天中途触发了世界书，或者往回修改、删除了旧对话，系统也能帮你<b style="color:var(--ds-cyan);">保住 100% 的缓存</b>！</p>
+                        <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.6; background:rgba(0,0,0,0.3); padding:10px; border-radius:6px; border-left:3px solid var(--ds-cyan);">开启以下功能，系统将强制接管 ST 的提示词排序，并防御各种意外截斷，保住<b style="color:var(--ds-cyan);"> 100% 的缓存</b>！</p>
                         
                         <div class="ds-row" style="margin-top:5px;">
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-matrix" ${Settings.absoluteOrderMatrix ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan);">🧊 绝对真理追加架构 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的系统提示词排序。过去不可变，所有新增加的世界书、动态变量都会被强制追加到最底部。这是 100% 缓存的终极奥义！">?</span></b>
+                                    <b style="color:var(--ds-cyan);">🧊 绝对真理追加架构 (Append-Only) <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的系统提示词排序。过去不可变，所有新增加的世界书、动态变量都会被强制追加到最底部。这是 100% 缓存的终极奥义！">?</span></b>
                                     <span>(ST 乱序不破缓存)</span>
                                 </div>
                             </label>
@@ -2131,17 +2158,17 @@ async function setupUI() {
                                 <input type="checkbox" id="ds-cache-prefix" ${Settings.prefixAnchor ? 'checked' : ''}> 
                                 <div class="ds-row-text">
                                     <b style="color:var(--ds-cyan);">⚓ 绝对前缀锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致 ST 删除了最旧的第一句话时，系统会强制将其保留，并改为删除中间的对话。这能防止前缀改变导致 100% 缓存断裂！">?</span></b>
-                                    <span>(爆 Token 截断不破缓存)</span>
+                                    <span>(爆 Token 截断头部不破缓存)</span>
                                 </div>
                             </label>
                         </div>
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-semantic" ${Settings.semanticNormalize ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-amnesia" ${Settings.amnesiaProtocol ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🧹 模糊语义引擎 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="自动压缩并忽略 ST 偷偷加入的空白符、换行符、甚至全半角标点差异。只要核心文字没变，缓存就绝对不断。">?</span></b>
-                                    <span>(隐形排版与标点差异不破缓存)</span>
+                                    <b style="color:var(--ds-green);">🧠 失忆症协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致前 30% 的早期记忆大面积丢失时，自动归档早期记忆，完美保护后续缓存。">?</span></b>
+                                    <span>(早期记忆截断不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2150,18 +2177,76 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-void" ${Settings.voidBridging ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某句话，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
-                                    <span>(中间删除不破缓存)</span>
+                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当 ST 意外移除了中间的某个系统提示词，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
+                                    <span>(系统提示词中途消失不破缓存)</span>
                                 </div>
                             </label>
                         </div>
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-warp" ${Settings.warpDriveFilter ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-imprint" ${Settings.permanentMemoryImprint ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan);">🌌 曲率引擎过滤 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动过滤 ST 发送的纯空白或无意义符号消息，防止它们污染并切断缓存。">?</span></b>
-                                    <span>(空白消息不破缓存)</span>
+                                    <b style="color:var(--ds-yellow);">🖨️ 永久记忆烙印 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当世界书触发后，将其永久冻结在缓存中。即使 ST 移除了它，缓存也不会断裂。(会稍微增加 Token)">?</span></b>
+                                    <span>(世界书忽隐忽现不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-anchor" ${Settings.anchorStabilization ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-cyan);">⚓ 浮动锚点稳定协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的 Author's Note 深度设定。无论它怎么浮动，系统都会将其绝对锁死在底部，防止破坏缓存。">?</span></b>
+                                    <span>(作者备注浮动不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-summary" ${Settings.summaryAnchor ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-yellow);">📜 摘要沉底锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别包含「总结、前情提要」的提示词，并强制将其沉底，防止动态总结破坏上方缓存。">?</span></b>
+                                    <span>(动态总结不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. 时空与记忆操纵 (修改历史) -->
+                <div class="ds-opt-group">
+                    <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
+                        <span><i class="fa-solid fa-clock-rotate-left"></i> 3. 时空与记忆操纵 (修改历史)</span> <i class="fa-solid fa-chevron-down"></i>
+                    </div>
+                    <div class="ds-opt-content">
+                        <div class="ds-row" style="flex-direction:column; align-items:flex-start; gap:8px; background:rgba(0,0,0,0.3); padding:12px; border-radius:8px; border: 1px solid rgba(255,255,255,0.05);">
+                            <span style="font-size:13px; color:var(--ds-yellow); font-weight:bold;">当我修改了以前的旧对话时，系统该怎么做？</span>
+                            <select id="ds-cache-history-mode" class="ds-select-styled">
+                                <option value="1" ${Settings.historyEditMode===1?'selected':''}>🛡️ 方案 A：时空补丁 (强烈推荐！保住100%缓存，且AI知道你改了)</option>
+                                <option value="2" ${Settings.historyEditMode===2?'selected':''}>🙈 方案 B：幻象隐藏 (保住100%缓存，但AI不知道你改了)</option>
+                                <option value="0" ${Settings.historyEditMode===0?'selected':''}>💥 方案 C：真实修改 (极度不推荐！会破坏大量缓存，烧钱重算)</option>
+                            </select>
+                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*选择「时空补丁」时，系统会保留旧对话，并在最底部偷偷塞一张纸条告诉AI你修改了什么。</span>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-retcon" ${Settings.retconProtocol ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#ff8c94;">🗑️ 吃书协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你删除了旧对话，系统会保留它，并在底部告诉AI「刚才那件事被抹除了」。">?</span></b>
+                                    <span>(删除对话不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-flashback" ${Settings.flashbackInsertion ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#8be9fd;">⏪ 闪回插入协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在历史中间插入新对话，系统会把它抽到底部，告诉AI「这是闪回补充」。">?</span></b>
+                                    <span>(中间插话不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2172,6 +2257,44 @@ async function setupUI() {
                                 <div class="ds-row-text">
                                     <b style="color:var(--ds-purple);">🌌 平行宇宙协议 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你切换分支或疯狂撤销时，系统会自动跳跃到最匹配的平行宇宙，保住最大缓存。">?</span></b>
                                     <span>(分支/撤销不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-hotreload" ${Settings.hotReloadPersona ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改了角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
+                                    <span>(修改设定不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-nanopatch" ${Settings.nanoPatching ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-green);">🔬 量子微创手术 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你只修改了超大角色卡里的几个字，系统会提取差异做成纳米补丁，不重算整个卡。">?</span></b>
+                                    <span>(微小修改不破缓存)</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. 语义与排版优化 -->
+                <div class="ds-opt-group">
+                    <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
+                        <span><i class="fa-solid fa-broom"></i> 4. 语义与排版优化</span> <i class="fa-solid fa-chevron-down"></i>
+                    </div>
+                    <div class="ds-opt-content">
+                        <div class="ds-row">
+                            <label class="ds-row-left">
+                                <input type="checkbox" id="ds-cache-semantic" ${Settings.semanticNormalize ? 'checked' : ''}> 
+                                <div class="ds-row-text">
+                                    <b style="color:var(--ds-green);">🧹 模糊语义引擎 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="自动压缩并忽略 ST 偷偷加入的空白符、换行符、甚至全半角标点差异。只要核心文字没变，缓存就绝对不断。">?</span></b>
+                                    <span>(隐形排版与标点差异不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2198,20 +2321,10 @@ async function setupUI() {
 
                         <div class="ds-row">
                             <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-anchor" ${Settings.anchorStabilization ? 'checked' : ''}> 
+                                <input type="checkbox" id="ds-cache-warp" ${Settings.warpDriveFilter ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-cyan);">⚓ 浮动锚点稳定协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="强制接管 ST 的 Author's Note 深度设定。无论它怎么浮动，系统都会将其绝对锁死在底部，防止破坏缓存。">?</span></b>
-                                    <span>(作者备注浮动不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-imprint" ${Settings.permanentMemoryImprint ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-yellow);">🖨️ 永久记忆烙印 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当世界书触发后，将其永久冻结在缓存中。即使 ST 移除了它，缓存也不会断裂。(会稍微增加 Token)">?</span></b>
-                                    <span>(世界书忽隐忽现不破缓存)</span>
+                                    <b style="color:var(--ds-cyan);">🌌 曲率引擎过滤 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动过滤 ST 发送的纯空白或无意义符号消息，防止它们污染并切断缓存。">?</span></b>
+                                    <span>(空白消息不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2225,83 +2338,13 @@ async function setupUI() {
                                 </div>
                             </label>
                         </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-amnesia" ${Settings.amnesiaProtocol ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🧠 失忆症协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当对话太长导致头部记忆大面积丢失时，自动归档早期记忆，完美保护后续缓存。">?</span></b>
-                                    <span>(头部记忆截断不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-nanopatch" ${Settings.nanoPatching ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-green);">🔬 量子微创手术 <span class="ds-perf-badge ds-perf-mid">中消耗</span> <span class="ds-tooltip-icon" title="当你只修改了超大角色卡里的几个字，系统会提取差异做成纳米补丁，不重算整个卡。">?</span></b>
-                                    <span>(微小修改不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-summary" ${Settings.summaryAnchor ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:var(--ds-yellow);">📜 摘要沉底锚点 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="自动识别包含「总结、前情提要」的提示词，并强制将其沉底，防止动态总结破坏上方缓存。">?</span></b>
-                                    <span>(动态总结不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-retcon" ${Settings.retconProtocol ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#ff8c94;">🗑️ 吃书协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你删除了旧对话，系统会保留它，并在底部告诉AI「刚才那件事被抹除了」。">?</span></b>
-                                    <span>(删除对话不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-hotreload" ${Settings.hotReloadPersona ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改了角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
-                                    <span>(修改设定不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div class="ds-row">
-                            <label class="ds-row-left">
-                                <input type="checkbox" id="ds-cache-flashback" ${Settings.flashbackInsertion ? 'checked' : ''}> 
-                                <div class="ds-row-text">
-                                    <b style="color:#8be9fd;">⏪ 闪回插入协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在历史中间插入新对话，系统会把它抽到底部，告诉AI「这是闪回补充」。">?</span></b>
-                                    <span>(中间插话不破缓存)</span>
-                                </div>
-                            </label>
-                        </div>
-                        
-                        <div class="ds-row" style="flex-direction:column; align-items:flex-start; gap:8px; background:rgba(0,0,0,0.3); padding:12px; border-radius:8px; border: 1px solid rgba(255,255,255,0.05);">
-                            <span style="font-size:13px; color:var(--ds-yellow); font-weight:bold;">当我修改了以前的旧对话时，系统该怎么做？</span>
-                            <select id="ds-cache-history-mode" class="ds-select-styled">
-                                <option value="1" ${Settings.historyEditMode===1?'selected':''}>🛡️ 方案 A：时空补丁 (强烈推荐！保住100%缓存，且AI知道你改了)</option>
-                                <option value="2" ${Settings.historyEditMode===2?'selected':''}>🙈 方案 B：幻象隐藏 (保住100%缓存，但AI不知道你改了)</option>
-                                <option value="0" ${Settings.historyEditMode===0?'selected':''}>💥 方案 C：真实修改 (极度不推荐！会破坏大量缓存，烧钱重算)</option>
-                            </select>
-                            <span style="font-size:11px; color:#abb2bf; margin-top:2px;">*选择「时空补丁」时，系统会保留旧对话，并在最底部偷偷塞一张纸条告诉AI你修改了什么。</span>
-                        </div>
                     </div>
                 </div>
 
-                <!-- 3. 动态提示词诊断中心 -->
+                <!-- 5. 动态提示词诊断中心 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-stethoscope"></i> 3. 缓存杀手体检中心</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-stethoscope"></i> 5. 缓存杀手体检中心</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <p style="font-size:12px; color:#abb2bf; margin:0; line-height:1.5;">如果你的缓存命中率一直很低，可能是因为预设中包含了每次都会改变的变量（如时间、天气）。点击下方按钮进行体检。</p>
@@ -2321,10 +2364,10 @@ async function setupUI() {
                     </div>
                 </div>
 
-                <!-- 4. 弹窗与提醒 -->
+                <!-- 6. 弹窗与提醒 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-bell"></i> 4. 弹窗与提醒设置</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-bell"></i> 6. 弹窗与提醒设置</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <div class="ds-row">
@@ -2365,10 +2408,10 @@ async function setupUI() {
                     </div>
                 </div>
                 
-                <!-- 5. 极客高级设置 -->
+                <!-- 7. 极客高级设置 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-gears"></i> 5. 极客高级设置 (小白勿动)</span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-gears"></i> 7. 极客高级设置 (小白勿动)</span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <div class="ds-row">
@@ -2414,10 +2457,10 @@ async function setupUI() {
                     </div>
                 </div>
 
-                <!-- 6. 存档管理与日志 -->
+                <!-- 8. 存档管理与日志 -->
                 <div class="ds-opt-group">
                     <div class="ds-opt-header" onclick="this.parentElement.classList.toggle('open')">
-                        <span><i class="fa-solid fa-database"></i> 6. 记忆矩阵与 Omni-Log <span id="ds-storage-badge" class="ds-badge">...</span></span> <i class="fa-solid fa-chevron-down"></i>
+                        <span><i class="fa-solid fa-database"></i> 8. 记忆矩阵与 Omni-Log <span id="ds-storage-badge" class="ds-badge">...</span></span> <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-opt-content">
                         <div style="font-size:11px; color:#abb2bf; margin-bottom:-5px; display:flex; justify-content:space-between;">
@@ -2518,7 +2561,7 @@ async function setupUI() {
 
         $('#ds-btn-reset-settings').on('click', () => {
             if(confirm("⚠️ 确定要恢复所有设置为默认值吗？")) {
-                delete extension_settings.ds_cache_v54;
+                delete extension_settings.ds_cache_v55;
                 initSettings();
                 safeSave();
                 location.reload();
@@ -2589,7 +2632,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v54_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v55_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2657,7 +2700,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 量子流体优化器 v54 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 终极真理优化器 v55 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
