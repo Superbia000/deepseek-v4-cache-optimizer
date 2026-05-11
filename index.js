@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Quantum Canvas UI)
+// 1. 樣式注入 (Quantum Canvas UI 3.0)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -78,8 +78,8 @@ const injectCSS = () => {
         .ds-chat-item.active-chat { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); border-left: 4px solid var(--ds-cyan); border-top: 1px solid var(--ds-border); border-bottom: 1px solid var(--ds-border); border-right: 1px solid var(--ds-border); box-shadow: inset 0 0 20px rgba(0,229,255,0.1); }
         
         .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; cursor: pointer; }
-        .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-cyan); padding: 30px; border-radius: 20px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; color: #fff; font-family: sans-serif; box-shadow: 0 40px 80px rgba(0,0,0,0.9), 0 0 40px rgba(0,229,255,0.2); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
-        .ds-modal-title { color: var(--ds-cyan); margin: 0 0 20px 0; display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.4); flex-wrap: wrap; }
+        .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-cyan); padding: 25px; border-radius: 20px; max-width: 98vw; width: 1800px; height: 96vh; display: flex; flex-direction: column; color: #fff; font-family: sans-serif; box-shadow: 0 40px 80px rgba(0,0,0,0.9), 0 0 40px rgba(0,229,255,0.2); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
+        .ds-modal-title { color: var(--ds-cyan); margin: 0 0 15px 0; display: flex; align-items: center; gap: 14px; font-size: 22px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.4); flex-wrap: wrap; flex-shrink: 0; }
         
         .ds-btn-col { display: flex; flex-direction: column; gap: 16px; margin-top: 35px; }
         .ds-btn { padding: 14px 20px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 14px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:12px; text-align:left; line-height: 1.5; background: rgba(255,255,255,0.05); color: #fff; }
@@ -117,37 +117,40 @@ const injectCSS = () => {
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s; }
 
         /* Omni-Vision UI Styles (Quantum Canvas) */
-        .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
-        .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
+        .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0; }
         
-        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; transition: 0.3s; }
-        .ds-omni-panel-header { padding: 10px 15px; background: rgba(255,255,255,0.05); font-size: 13px; font-weight: bold; color: var(--ds-cyan); display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 10px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; transition: 0.3s; }
+        .ds-omni-panel-header { padding: 8px 15px; background: rgba(255,255,255,0.05); font-size: 13px; font-weight: bold; color: var(--ds-cyan); display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
         .ds-omni-panel-header:hover { background: rgba(255,255,255,0.08); }
         .ds-omni-panel-header i.fa-chevron-down { transition: transform 0.3s; }
-        .ds-omni-panel-body { padding: 15px; display: none; }
+        .ds-omni-panel-body { padding: 12px 15px; display: none; }
         .ds-omni-panel.open .ds-omni-panel-body { display: block; animation: dsFadeIn 0.2s ease; }
         .ds-omni-panel.open .ds-omni-panel-header i.fa-chevron-down { transform: rotate(180deg); }
 
-        .ds-omni-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .ds-omni-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; flex-shrink: 0; }
         .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; font-weight: bold; }
         .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
         .ds-omni-action-btn.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+        
+        .ds-omni-legend { display: flex; gap: 12px; font-size: 11px; font-weight: bold; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); }
+        .ds-omni-legend-item { display: flex; align-items: center; gap: 4px; }
+        .ds-omni-legend-color { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 5px currentColor; }
         
         .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; max-height: 150px; overflow-y: auto; padding-right: 5px; }
         .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 5px 10px; border-radius: 5px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; }
         .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
         .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
 
-        /* 雙視窗 + Canvas 佈局 */
-        .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; }
+        /* 雙視窗 + Canvas 佈局 (極大化工作區) */
+        .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; margin-top: 5px; }
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
-        .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
+        .ds-omni-pane-header { padding: 10px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
         
-        .ds-omni-canvas-container { width: 120px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
-        #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        .ds-omni-canvas-container { width: 140px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
+        #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; will-change: transform; }
         
-        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
+        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s; width: 100%; box-sizing: border-box; }
         .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
         
         .ds-node-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
@@ -164,7 +167,7 @@ const injectCSS = () => {
         .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; color: #7f848e; border-bottom: 1px dashed rgba(255,255,255,0.15); padding-bottom: 6px; }
         
         .ds-node-content-wrapper { position: relative; }
-        .ds-node-content { line-height: 1.6; }
+        .ds-node-content { line-height: 1.6; transition: max-height 0.3s ease-in-out; }
         .ds-node-content.collapsed { max-height: 60px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
         .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 4px; background: rgba(0,229,255,0.08); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.2); font-weight: bold; }
         .ds-node-expand-btn:hover { background: rgba(0,229,255,0.2); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
@@ -177,7 +180,7 @@ const injectCSS = () => {
 };
 
 // ==========================================
-// 2. 狀態設定與磁碟 I/O 降載 (Quantum Storage)
+// 2. 狀態設定與磁碟 I/O 降載 (Storage Guardian)
 // ==========================================
 let Settings = {};
 let sessionSnoozeReset = false; 
@@ -256,14 +259,22 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            try {
+            
+            // Storage Guardian: 預防性清理
+            if (cachedStorageBytes > 4.5 * 1024 * 1024) {
+                Logger.warn("⚠️ 存储空间接近极限 (4.5MB)，触发紧急深度休眠压缩！");
+                performGarbageCollection(true); // 強制深度清理
+                const newDataStr = JSON.stringify(Settings);
+                cachedStorageBytes = newDataStr.length * 2;
+                localStorage.setItem('ds_cache_v52_snapshot', newDataStr);
+            } else {
                 localStorage.setItem('ds_cache_v52_snapshot', dataStr);
-            } catch(e) {
-                if (e.name === 'QuotaExceededError') {
-                    Logger.warn("Local storage full, skipping snapshot.");
-                }
             }
-        } catch (e) {}
+        } catch (e) {
+            if (e.name === 'QuotaExceededError') {
+                Logger.error("🚨 致命错误：LocalStorage 已满！已放弃本次快照保存。请手动清理垃圾。");
+            }
+        }
         pendingSave = false;
         saveTimeout = null;
     }
@@ -329,14 +340,22 @@ function getTolerance() {
 }
 
 // ==========================================
-// 2.5 量子彈窗聚合器 (Quantum Toast Aggregator)
+// 2.5 量子彈窗聚合器 (Quantum Toast Aggregator 2.0)
 // ==========================================
 const QuantumToastAggregator = {
     queue: new Map(),
     timeout: null,
     add: function(key, msg, type = 'info', icon = '💡') {
         if (!Settings.enabled || !Settings.toastHistory || Settings.zenMode) return;
-        this.queue.set(key, { msg, type, icon });
+        
+        // 累加相同 key 的次數
+        if (this.queue.has(key)) {
+            const existing = this.queue.get(key);
+            existing.count = (existing.count || 1) + 1;
+        } else {
+            this.queue.set(key, { msg, type, icon, count: 1 });
+        }
+
         if (this.timeout) clearTimeout(this.timeout);
         this.timeout = setTimeout(() => this.flush(), 500); // 500ms 內收集所有觸發的協議
     },
@@ -345,14 +364,16 @@ const QuantumToastAggregator = {
         
         if (this.queue.size === 1) {
             const item = Array.from(this.queue.values())[0];
-            if (item.type === 'success') toastr.success(`${item.icon} ${item.msg}`, '绝对真理协议');
-            else if (item.type === 'warning') toastr.warning(`${item.icon} ${item.msg}`, '绝对真理协议');
-            else toastr.info(`${item.icon} ${item.msg}`, '绝对真理协议');
+            const countStr = item.count > 1 ? ` (x${item.count})` : '';
+            if (item.type === 'success') toastr.success(`${item.icon} ${item.msg}${countStr}`, '绝对真理协议');
+            else if (item.type === 'warning') toastr.warning(`${item.icon} ${item.msg}${countStr}`, '绝对真理协议');
+            else toastr.info(`${item.icon} ${item.msg}${countStr}`, '绝对真理协议');
         } else {
             // 合併多個提示
             let combinedMsg = `<div style="font-size:12px; margin-bottom:4px;">本次拦截触发了多项协议：</div><ul style="margin:0; padding-left:20px; font-size:11px;">`;
             this.queue.forEach(item => {
-                combinedMsg += `<li>${item.icon} ${item.msg}</li>`;
+                const countStr = item.count > 1 ? ` <b style="color:var(--ds-yellow);">(x${item.count})</b>` : '';
+                combinedMsg += `<li>${item.icon} ${item.msg}${countStr}</li>`;
             });
             combinedMsg += `</ul>`;
             toastr.success(combinedMsg, '🛡️ 绝对真理多重防御');
@@ -383,14 +404,14 @@ function formatBytes(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-function performGarbageCollection() {
+function performGarbageCollection(forceDeepClean = false) {
     const now = Date.now();
     const keys = Object.keys(Settings.chats);
     
-    // 1. 深度休眠壓縮：超過 24 小時未訪問的存檔，清空 multiverse 和 lastRawStream 釋放大量空間
+    // 1. 深度休眠壓縮：超過 24 小時未訪問的存檔 (或強制清理時)，清空 multiverse 和 lastRawStream 釋放大量空間
     keys.forEach(k => {
         const chat = Settings.chats[k];
-        if (chat.lastAccessed && (now - chat.lastAccessed > 24 * 60 * 60 * 1000)) {
+        if (forceDeepClean || (chat.lastAccessed && (now - chat.lastAccessed > 24 * 60 * 60 * 1000))) {
             if (chat.multiverse && chat.multiverse.length > 0) chat.multiverse = [];
             if (chat.lastRawStream && chat.lastRawStream.length > 0) chat.lastRawStream = [];
         }
@@ -782,7 +803,7 @@ function stripPrefillFromAssistant(assistantObj, prefills) {
 }
 
 // ==========================================
-// 7. 🧊 絕對真理追加架構 (Append-Only Interceptor)
+// 7. 🧊 絕對真理追加架構 (The Holy Grail Order)
 // ==========================================
 async function interceptAndRestructurePrompt(data, isDryRun = false) {
     if (!Settings.enabled && !isDryRun) return;
@@ -922,7 +943,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     newFrozenSequence.push(frozenItem);
                     handledIncomingSys.add(bestIdx);
                     if (bestScore < 1 && !isDryRun) {
-                        Logger.debug(`[🧹 模糊语义] 无视排版差异，保持冻结: ${truncateLog(frozenItem.content)}`);
+                        Logger.trace(`[🧹 模糊语义] 无视排版差异，保持冻结: ${truncateLog(frozenItem.content)}`);
                         QuantumToastAggregator.add('fuzzy', '模糊语义：已无视排版差异', 'success', '🧹');
                     }
                 } else if (bestScore > thresholds.sys) {
@@ -956,7 +977,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         if (Settings.dynamicMode === 1) {
                             incomingItem._omniCat = 'dynamic';
                             newAdditions.dynamic.push(incomingItem); 
-                            if (!isDryRun) Logger.debug(`[📖 日记模式] 旧时间冻结，新时间追加至尾部。`);
+                            if (!isDryRun) Logger.trace(`[📖 日记模式] 旧时间冻结，新时间追加至尾部。`);
                         } else if (Settings.dynamicMode === 4) {
                             newFrozenSequence.pop(); 
                             incomingItem._omniCat = 'frozen';
@@ -969,7 +990,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     if (Settings.permanentMemoryImprint || Settings.amnesiaProtocol) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
-                        if (!isDryRun) Logger.debug(`[🖨️ 永久记忆] 强制保留被删除的设定/记忆: ${truncateLog(frozenItem.content)}`);
+                        if (!isDryRun) Logger.trace(`[🖨️ 永久记忆] 强制保留被删除的设定/记忆: ${truncateLog(frozenItem.content)}`);
                     }
                 }
             } 
@@ -1317,13 +1338,15 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas 3.0)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = [];
 let isSyncLocked = true;
-let isDrawingCanvas = false;
 let omniLeftArrayFrozen = [];
+let omniNeedsRedraw = false;
+let isOmniRendering = false;
+let resizeObserver = null;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1334,7 +1357,6 @@ async function showOmniVisionUI() {
         return;
     }
 
-    // 徹底凍結左側陣列
     omniLeftArrayFrozen = fastClone(state.lastSentSequence || []);
 
     const html = `
@@ -1345,7 +1367,7 @@ async function showOmniVisionUI() {
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
-                <div style="background:rgba(0,0,0,0.5); padding:15px; border-radius:10px; margin-bottom:15px; border:1px solid rgba(255,255,255,0.05); flex-shrink:0;">
+                <div style="background:rgba(0,0,0,0.5); padding:15px; border-radius:10px; margin-bottom:10px; border:1px solid rgba(255,255,255,0.05); flex-shrink:0;">
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; font-weight:bold;">
                         <span style="color:var(--ds-green);"><i class="fa-solid fa-shield-halved"></i> 预计缓存命中率: <span id="omni-hit-rate">计算中...</span></span>
                         <span style="color:var(--ds-cyan);"><i class="fa-solid fa-coins"></i> 预计保留 Tokens: <span id="omni-tokens-saved">...</span> / 需重算: <span id="omni-tokens-lost" style="color:var(--ds-red);">...</span></span>
@@ -1354,8 +1376,8 @@ async function showOmniVisionUI() {
                 </div>
 
                 <div class="ds-omni-panel">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 300);">
-                        <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (预置折叠，点击展开并即时生效)</span>
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { requestCanvasUpdate(); }, 300);">
+                        <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (点击展开并即时生效)</span>
                         <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-omni-panel-body">
@@ -1384,8 +1406,8 @@ async function showOmniVisionUI() {
                 </div>
 
                 <div class="ds-omni-panel">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 300);">
-                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试 (预置折叠，点击展开)</span>
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { requestCanvasUpdate(); }, 300);">
+                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试 (点击展开)</span>
                         <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-omni-panel-body" style="padding-top: 5px;">
@@ -1397,6 +1419,14 @@ async function showOmniVisionUI() {
                     <button id="omni-btn-sync" class="ds-omni-action-btn active" title="同步左右两侧的滚动条"><i class="fa-solid fa-link"></i> 锁定滚动同步</button>
                     <button id="omni-btn-expand" class="ds-omni-action-btn" title="展开所有提示词卡片"><i class="fa-solid fa-expand"></i> 展开全部</button>
                     <button id="omni-btn-collapse" class="ds-omni-action-btn" title="折叠所有提示词卡片"><i class="fa-solid fa-compress"></i> 折叠全部</button>
+                    
+                    <div class="ds-omni-legend">
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-green);"></div>完美冻结</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-yellow);"></div>模糊命中</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-purple);"></div>时空补丁</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-cyan);"></div>全新设定</div>
+                        <div class="ds-omni-legend-item"><div class="ds-omni-legend-color" style="background:var(--ds-red);"></div>已删除</div>
+                    </div>
                 </div>
 
                 <div class="ds-omni-workspace">
@@ -1466,13 +1496,13 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 150);
+        requestCanvasUpdate();
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 150);
+        requestCanvasUpdate();
     });
 
     let inputTimeout;
@@ -1490,7 +1520,6 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 150);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
@@ -1501,32 +1530,46 @@ async function showOmniVisionUI() {
     const rightPane = document.getElementById('omni-right-pane');
     
     leftPane.addEventListener('scroll', function() {
-        if (!isSyncLocked) { requestCanvasUpdate(); return; }
-        if (isSyncingLeft) { isSyncingLeft = false; requestCanvasUpdate(); return; }
+        requestCanvasUpdate();
+        if (!isSyncLocked) return;
+        if (isSyncingLeft) { isSyncingLeft = false; return; }
         isSyncingRight = true;
         const ratio = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
         rightPane.scrollTop = ratio * (rightPane.scrollHeight - rightPane.clientHeight || 1);
-        requestCanvasUpdate();
     }, {passive: true});
 
     rightPane.addEventListener('scroll', function() {
-        if (!isSyncLocked) { requestCanvasUpdate(); return; }
-        if (isSyncingRight) { isSyncingRight = false; requestCanvasUpdate(); return; }
+        requestCanvasUpdate();
+        if (!isSyncLocked) return;
+        if (isSyncingRight) { isSyncingRight = false; return; }
         isSyncingLeft = true;
         const ratio = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
         leftPane.scrollTop = ratio * (leftPane.scrollHeight - leftPane.clientHeight || 1);
-        requestCanvasUpdate();
     }, {passive: true});
 
     window.addEventListener('resize', () => {
         resizeCanvas();
-        updateOmniCanvas();
+        requestCanvasUpdate();
+    });
+
+    // 啟動 GPU 渲染迴圈
+    isOmniRendering = true;
+    omniRenderLoop();
+
+    // 啟動 ResizeObserver 監聽卡片高度變化 (動畫過渡時自動重繪)
+    resizeObserver = new ResizeObserver(() => {
+        requestCanvasUpdate();
     });
 
     triggerOmniRender(state);
 }
 
 window.closeOmniVision = function() {
+    isOmniRendering = false;
+    if (resizeObserver) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+    }
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
     omniLeftArrayFrozen = [];
@@ -1557,13 +1600,16 @@ function renderOmniLeftPane(leftArray) {
 }
 
 function requestCanvasUpdate() {
-    if (!isDrawingCanvas) {
-        requestAnimationFrame(() => {
-            updateOmniCanvas();
-            isDrawingCanvas = false;
-        });
-        isDrawingCanvas = true;
+    omniNeedsRedraw = true;
+}
+
+function omniRenderLoop() {
+    if (!isOmniRendering) return;
+    if (omniNeedsRedraw) {
+        updateOmniCanvas();
+        omniNeedsRedraw = false;
     }
+    requestAnimationFrame(omniRenderLoop);
 }
 
 function triggerOmniRender(state) {
@@ -1711,10 +1757,15 @@ async function renderOmniVision(state) {
     rightContainer.innerHTML = '';
     rightContainer.appendChild(rightFrag);
 
+    // 重新綁定 ResizeObserver
+    if (resizeObserver) {
+        resizeObserver.disconnect();
+        document.querySelectorAll('.ds-node-content').forEach(el => resizeObserver.observe(el));
+    }
+
     requestAnimationFrame(() => {
         resizeCanvas();
-        cacheOmniPositions();
-        updateOmniCanvas();
+        requestCanvasUpdate();
     });
 }
 
@@ -1732,59 +1783,55 @@ function resizeCanvas() {
     canvas.style.height = `${rect.height}px`;
 }
 
-function cacheOmniPositions() {
-    omniMappings.forEach(m => {
-        if (m.left !== -1) {
-            const el = document.getElementById(`omni-left-node-${m.left}`);
-            if (el) { m.lTop = el.offsetTop; m.lHeight = el.offsetHeight; }
-        }
-        if (m.right !== -1) {
-            const el = document.getElementById(`omni-right-node-${m.right}`);
-            if (el) { m.rTop = el.offsetTop; m.rHeight = el.offsetHeight; }
-        }
-    });
-}
-
 function updateOmniCanvas() {
     const canvas = document.getElementById('omni-canvas');
-    const leftPane = document.getElementById('omni-left-pane');
-    const rightPane = document.getElementById('omni-right-pane');
-    if (!canvas || !leftPane || !rightPane) return;
+    const container = canvas?.parentElement;
+    if (!canvas || !container) return;
 
     const ctx = canvas.getContext('2d');
     const width = canvas.width / (window.devicePixelRatio || 1);
     const height = canvas.height / (window.devicePixelRatio || 1);
+    const canvasRect = container.getBoundingClientRect();
     
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     ctx.save();
     ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
-    const lScroll = leftPane.scrollTop;
-    const rScroll = rightPane.scrollTop;
-
     omniMappings.forEach(m => {
         let startX = 0, startY = 0, endX = width, endY = 0;
         let isVisible = false;
 
+        // 使用 getBoundingClientRect 獲取絕對精準的 Y 軸中心點
+        if (m.left !== -1) {
+            const el = document.getElementById(`omni-left-node-${m.left}`);
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                startY = rect.top - canvasRect.top + (rect.height / 2);
+            }
+        }
+        if (m.right !== -1) {
+            const el = document.getElementById(`omni-right-node-${m.right}`);
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                endY = rect.top - canvasRect.top + (rect.height / 2);
+            }
+        }
+
         if (m.type === 'deleted') {
-            if (m.lTop === undefined) return;
-            startY = m.lTop - lScroll + (m.lHeight / 2);
+            if (startY === undefined) return;
             endY = startY;
             endX = width / 2;
             if (startY > -50 && startY < height + 50) isVisible = true;
         } 
         else if (m.type.startsWith('new_')) {
-            if (m.rTop === undefined) return;
-            endY = m.rTop - rScroll + (m.rHeight / 2);
+            if (endY === undefined) return;
             startY = endY;
             startX = width / 2;
             if (endY > -50 && endY < height + 50) isVisible = true;
         } 
         else {
-            if (m.lTop === undefined || m.rTop === undefined) return;
-            startY = m.lTop - lScroll + (m.lHeight / 2);
-            endY = m.rTop - rScroll + (m.rHeight / 2);
+            if (startY === undefined || endY === undefined) return;
             if ((startY > -50 && startY < height + 50) || (endY > -50 && endY < height + 50)) isVisible = true;
         }
 
@@ -1792,23 +1839,37 @@ function updateOmniCanvas() {
 
         ctx.beginPath();
         ctx.moveTo(startX, startY);
-        ctx.bezierCurveTo(startX + 40, startY, endX - 40, endY, endX, endY);
+        // 優化貝茲曲線控制點，讓線條更平滑、不生硬交叉
+        const cpOffset = width * 0.6; 
+        ctx.bezierCurveTo(startX + cpOffset, startY, endX - cpOffset, endY, endX, endY);
 
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 2.5;
+        ctx.shadowBlur = 8; // 加入發光特效
+
         if (m.type === 'fuzzy' || m.type === 'deleted' || m.type.startsWith('new_')) {
-            ctx.setLineDash([5, 5]);
+            ctx.setLineDash([6, 6]);
         } else {
             ctx.setLineDash([]);
         }
 
-        if (m.type === 'perfect') { ctx.strokeStyle = 'rgba(152,195,121,0.8)'; }
-        else if (m.type === 'fuzzy') { ctx.strokeStyle = 'rgba(229,192,123,0.8)'; }
-        else if (m.type === 'patch_link') { ctx.strokeStyle = 'rgba(198,120,221,0.8)'; }
+        if (m.type === 'perfect') { 
+            ctx.strokeStyle = 'rgba(152,195,121,0.85)'; 
+            ctx.shadowColor = 'rgba(152,195,121,0.5)';
+        }
+        else if (m.type === 'fuzzy') { 
+            ctx.strokeStyle = 'rgba(229,192,123,0.85)'; 
+            ctx.shadowColor = 'rgba(229,192,123,0.5)';
+        }
+        else if (m.type === 'patch_link') { 
+            ctx.strokeStyle = 'rgba(198,120,221,0.85)'; 
+            ctx.shadowColor = 'rgba(198,120,221,0.5)';
+        }
         else if (m.type === 'deleted') {
             const grad = ctx.createLinearGradient(0, 0, width/2, 0);
-            grad.addColorStop(0, 'rgba(224,108,117,0.8)');
+            grad.addColorStop(0, 'rgba(224,108,117,0.85)');
             grad.addColorStop(1, 'rgba(224,108,117,0)');
             ctx.strokeStyle = grad;
+            ctx.shadowColor = 'rgba(224,108,117,0.5)';
         }
         else if (m.type.startsWith('new_')) {
             const grad = ctx.createLinearGradient(width/2, 0, width, 0);
@@ -1821,8 +1882,9 @@ function updateOmniCanvas() {
             else if (m.type === 'new_retcon') color = '171,178,191';
             
             grad.addColorStop(0, `rgba(${color},0)`);
-            grad.addColorStop(1, `rgba(${color},0.8)`);
+            grad.addColorStop(1, `rgba(${color},0.85)`);
             ctx.strokeStyle = grad;
+            ctx.shadowColor = `rgba(${color},0.5)`;
         }
         ctx.stroke();
     });
@@ -1975,6 +2037,19 @@ function exportLogsAsJSON() {
     document.body.removeChild(a); 
     URL.revokeObjectURL(url);
     if (typeof toastr !== 'undefined') toastr.success("📄 JSON 日志已导出！");
+}
+
+function copyApiPayload() {
+    const chatKeyInfo = getChatKey();
+    const state = Settings.chats[chatKeyInfo.key];
+    if (!state || !state.lastSentSequence) {
+        if (typeof toastr !== 'undefined') toastr.warning("当前没有可复制的发送阵列。");
+        return;
+    }
+    const payload = state.lastSentSequence.map(m => ({ role: m.role, content: m.content }));
+    navigator.clipboard.writeText(JSON.stringify(payload, null, 2)).then(() => {
+        if (typeof toastr !== 'undefined') toastr.success("📋 最终 API 发送阵列已复制到剪贴板！");
+    });
 }
 
 function applyOneClickOptimize() {
@@ -2441,6 +2516,7 @@ async function setupUI() {
                             <label style="color:#abb2bf; font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer; margin-right:10px;">
                                 <input type="checkbox" id="ds-log-autoscroll" ${Settings.autoScrollLog ? 'checked' : ''} style="margin:0;"> 自动滚动
                             </label>
+                            <span id="ds-btn-copy-payload" class="ds-mini-btn" title="复制最终发送给大模型的 API 阵列" style="color:var(--ds-green); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-clipboard-list"></i></span>
                             <span id="ds-btn-export-json" class="ds-mini-btn" title="导出 JSON 结构化日志" style="color:var(--ds-yellow); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-file-code"></i></span>
                             <span id="ds-btn-diagnostic-report" class="ds-mini-btn" title="生成诊断报告" style="color:var(--ds-purple); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-file-medical"></i></span>
                             <span id="ds-btn-copylog" class="ds-mini-btn" title="复制所有日志" style="color:var(--ds-cyan); margin-right:12px; cursor:pointer; font-size:15px; transition:0.2s;"><i class="fa-solid fa-copy"></i></span>
@@ -2498,6 +2574,7 @@ async function setupUI() {
         $('#ds-btn-diagnostic').on('click', () => { if(typeof toastr !== 'undefined') toastr.info("此功能已集成于后台运算", "系统提示"); });
         $('#ds-btn-diagnostic-report').on('click', generateDiagnosticReport);
         $('#ds-btn-export-json').on('click', exportLogsAsJSON);
+        $('#ds-btn-copy-payload').on('click', copyApiPayload);
         $('#ds-btn-undo-action').on('click', () => restoreVaultBackup(0));
 
         $('#ds-btn-pause-log').on('click', function() {
@@ -2522,16 +2599,8 @@ async function setupUI() {
         $('#ds-btn-deep-clean').on('click', () => {
             if(!confirm("🧹 这会删掉所有未被锁定，且【没有节点内容】或【超过30天没聊过】的旧缓存。确定执行吗？")) return;
             createVaultBackup("深度清理前备份");
-            let count = 0; const now = Date.now();
-            for (let k in Settings.chats) {
-                if (Settings.pinnedChats[k]) continue;
-                const chat = Settings.chats[k];
-                const isEmpty = !chat.frozenSequence || chat.frozenSequence.length === 0;
-                const isOld = chat.lastAccessed && (now - chat.lastAccessed > 30 * 24 * 60 * 60 * 1000);
-                if (isEmpty || isOld) { delete Settings.chats[k]; count++; }
-            }
-            safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success(`🧹 垃圾清理完毕！共移除了 ${count} 个无用的旧存档。`);
+            performGarbageCollection(true);
+            if (typeof toastr !== 'undefined') toastr.success(`🧹 深度清理完毕！`);
         });
 
         $('#ds-btn-purge-orphans').on('click', () => {
