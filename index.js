@@ -2,7 +2,7 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 1. 樣式注入 (Quantum Canvas UI)
+// 1. 樣式注入 (Quantum Canvas UI - v54)
 // ==========================================
 const injectCSS = () => {
     if (document.getElementById('ds-cache-styles')) return;
@@ -12,7 +12,6 @@ const injectCSS = () => {
         :root { --ds-cyan: #00e5ff; --ds-purple: #c678dd; --ds-green: #98c379; --ds-red: #e06c75; --ds-yellow: #e5c07b; --ds-orange: #d19a66; --ds-pink: #ff79c6; --ds-gray: #abb2bf; --ds-bg: rgba(15, 20, 25, 0.7); --ds-border: rgba(0, 229, 255, 0.2); }
         
         .ds-gpu-accel { transform: translateZ(0); will-change: transform; backface-visibility: hidden; perspective: 1000px; }
-        .ds-strict-contain { contain: strict; }
         
         .ds-scroll::-webkit-scrollbar { width: 6px; }
         .ds-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); border-radius: 4px; }
@@ -78,79 +77,59 @@ const injectCSS = () => {
         .ds-chat-item.active-chat { background: linear-gradient(90deg, rgba(0,229,255,0.15) 0%, rgba(0,0,0,0) 100%); border-left: 4px solid var(--ds-cyan); border-top: 1px solid var(--ds-border); border-bottom: 1px solid var(--ds-border); border-right: 1px solid var(--ds-border); box-shadow: inset 0 0 20px rgba(0,229,255,0.1); }
         
         .ds-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); z-index: 999999; display: flex; align-items: center; justify-content: center; animation: dsFadeIn 0.2s ease-out; cursor: pointer; }
-        .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-cyan); padding: 30px; border-radius: 20px; max-width: 800px; width: 90%; max-height: 90vh; overflow-y: auto; color: #fff; font-family: sans-serif; box-shadow: 0 40px 80px rgba(0,0,0,0.9), 0 0 40px rgba(0,229,255,0.2); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
-        .ds-modal-title { color: var(--ds-cyan); margin: 0 0 20px 0; display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.4); flex-wrap: wrap; }
+        .ds-modal { background: linear-gradient(180deg, #1e1e24 0%, #15151a 100%); border: 1px solid var(--ds-cyan); padding: 30px; border-radius: 20px; max-width: 85vw; width: 1600px; height: 90vh; display: flex; flex-direction: column; overflow: hidden; color: #fff; font-family: sans-serif; box-shadow: 0 40px 80px rgba(0,0,0,0.9), 0 0 40px rgba(0,229,255,0.2); position: relative; animation: dsSlideUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); cursor: default; }
+        .ds-modal-title { color: var(--ds-cyan); margin: 0 0 20px 0; display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(0,229,255,0.4); flex-wrap: wrap; flex-shrink: 0; }
         
-        .ds-btn-col { display: flex; flex-direction: column; gap: 16px; margin-top: 35px; }
-        .ds-btn { padding: 14px 20px; border: 1px solid transparent; border-radius: 10px; cursor: pointer; font-weight: bold; font-size: 14px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); position: relative; overflow: hidden; display:flex; align-items:center; justify-content:flex-start; gap:12px; text-align:left; line-height: 1.5; background: rgba(255,255,255,0.05); color: #fff; }
-        .ds-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.1); }
-        .ds-btn:active { transform: translateY(0); }
-        .ds-btn i { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
-        
-        .ds-btn-accept { border-color: rgba(152,195,121,0.5); background: linear-gradient(90deg, rgba(152,195,121,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-accept:hover { border-color: var(--ds-green); box-shadow: 0 0 20px rgba(152,195,121,0.4); }
-        .ds-btn-accept i { color: var(--ds-green); }
-        
-        .ds-btn-revert { border-color: rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-revert:hover { border-color: var(--ds-purple); box-shadow: 0 0 20px rgba(198,120,221,0.4); }
-        .ds-btn-revert i { color: var(--ds-purple); }
-        
-        .ds-btn-abort { border-color: rgba(224,108,117,0.5); background: linear-gradient(90deg, rgba(224,108,117,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-abort:hover { border-color: var(--ds-red); box-shadow: 0 0 20px rgba(224,108,117,0.4); }
-        .ds-btn-abort i { color: var(--ds-red); }
-        
-        .ds-btn-blue { border-color: rgba(0,229,255,0.5); background: linear-gradient(90deg, rgba(0,229,255,0.2) 0%, rgba(0,0,0,0) 100%); }
-        .ds-btn-blue:hover { border-color: var(--ds-cyan); box-shadow: 0 0 20px rgba(0,229,255,0.4); }
-        .ds-btn-blue i { color: var(--ds-cyan); }
+        .ds-btn-reset { border-color: rgba(224,108,117,0.3); background: rgba(224,108,117,0.08); color: #fff; padding: 8px 15px; border-radius: 8px; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
+        .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.2); box-shadow: 0 0 10px rgba(224,108,117,0.3); }
 
-        .ds-btn-reset { border-color: rgba(224,108,117,0.3); background: rgba(224,108,117,0.08); }
-        .ds-btn-reset:hover { border-color: var(--ds-red); background: rgba(224,108,117,0.2); }
-        .ds-btn-reset i { color: var(--ds-red); }
-
-        .ds-btn-magic { border-color: rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-yellow); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 15px; letter-spacing: 1px; }
+        .ds-btn-magic { border-color: rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-yellow); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 15px; letter-spacing: 1px; padding: 14px 20px; border-radius: 10px; cursor: pointer; font-weight: bold; transition: all 0.2s; border: 1px solid; display:flex; align-items:center; gap:10px; }
         .ds-btn-magic:hover { border-color: var(--ds-yellow); box-shadow: 0 0 25px rgba(229,192,123,0.5); background: linear-gradient(90deg, rgba(229,192,123,0.3) 0%, rgba(0,0,0,0) 100%); color: #fff; }
 
-        .ds-btn-omni { border-color: rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-purple); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 15px; letter-spacing: 1px; }
+        .ds-btn-omni { border-color: rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.2) 0%, rgba(0,0,0,0) 100%); color: var(--ds-purple); margin-bottom: 16px; width: 100%; justify-content: center; font-size: 15px; letter-spacing: 1px; padding: 14px 20px; border-radius: 10px; cursor: pointer; font-weight: bold; transition: all 0.2s; border: 1px solid; display:flex; align-items:center; gap:10px; }
         .ds-btn-omni:hover { border-color: var(--ds-purple); box-shadow: 0 0 25px rgba(198,120,221,0.5); background: linear-gradient(90deg, rgba(198,120,221,0.3) 0%, rgba(0,0,0,0) 100%); color: #fff; }
 
         .ds-health-bar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; margin-top: 6px; overflow: hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); }
         .ds-health-fill { height: 100%; background: var(--ds-green); transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1), background 0.4s; }
 
-        /* Omni-Vision UI Styles (Quantum Canvas) */
-        .ds-omni-modal { max-width: 98vw !important; width: 1800px !important; height: 95vh !important; display: flex; flex-direction: column; padding: 20px !important; }
+        /* Omni-Vision V54 UI Styles */
         .ds-omni-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0; }
         
-        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 15px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; }
+        .ds-omni-panel { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; margin-bottom: 10px; flex-shrink: 0; box-shadow: inset 0 0 20px rgba(0,0,0,0.5); overflow: hidden; transition: 0.3s; }
         .ds-omni-panel-header { padding: 10px 15px; background: rgba(255,255,255,0.05); font-size: 13px; font-weight: bold; color: var(--ds-cyan); display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
         .ds-omni-panel-header:hover { background: rgba(255,255,255,0.08); }
         .ds-omni-panel-body { padding: 15px; display: none; }
         .ds-omni-panel.open .ds-omni-panel-body { display: block; animation: dsFadeIn 0.2s ease; }
         .ds-omni-panel.open .ds-omni-panel-header i.fa-chevron-down { transform: rotate(180deg); }
 
-        .ds-omni-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .ds-omni-legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 12px; background: rgba(0,0,0,0.4); border-radius: 8px; margin-bottom: 10px; font-size: 11px; border: 1px solid rgba(255,255,255,0.05); flex-shrink: 0; }
+        .ds-legend-item { display: flex; align-items: center; gap: 6px; color: #abb2bf; font-weight: 600; }
+        .ds-legend-line { width: 24px; height: 3px; border-radius: 2px; }
+
+        .ds-omni-actions { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-shrink: 0; }
         .ds-omni-action-btn { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); color: #abb2bf; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 6px; font-weight: bold; }
         .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
         .ds-omni-action-btn.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
         
-        .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; max-height: 150px; overflow-y: auto; padding-right: 5px; }
+        .ds-omni-toggles-container { display: flex; flex-wrap: wrap; gap: 8px; max-height: 120px; overflow-y: auto; padding-right: 5px; }
         .ds-omni-toggle { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; background: rgba(255,255,255,0.05); padding: 5px 10px; border-radius: 5px; transition: 0.2s; border: 1px solid transparent; user-select: none; font-weight: 600; }
         .ds-omni-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
         .ds-omni-toggle.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 8px rgba(0,229,255,0.2); }
 
-        /* 雙視窗 + Canvas 佈局 */
+        /* 雙視窗 + Canvas 佈局 (極致對齊) */
         .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; }
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
-        .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
+        .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; font-size: 14px; letter-spacing: 1px; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
         
-        .ds-omni-canvas-container { width: 140px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
+        .ds-omni-canvas-container { width: 160px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
         #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
-        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
-        .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
+        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: border-color 0.2s, box-shadow 0.2s; width: 100%; box-sizing: border-box; will-change: transform; }
+        .ds-node-card:hover { border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); }
         
         .ds-node-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
-        .ds-node-miss { border-left: 4px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.08) 0%, rgba(0,0,0,0) 100%); opacity: 0.6; }
+        .ds-node-miss { border-left: 4px solid var(--ds-red); background: linear-gradient(90deg, rgba(224,108,117,0.08) 0%, rgba(0,0,0,0) 100%); opacity: 0.7; }
         .ds-node-warn { border-left: 4px solid var(--ds-yellow); background: linear-gradient(90deg, rgba(229,192,123,0.08) 0%, rgba(0,0,0,0) 100%); }
         .ds-node-new-sys { border-left: 4px solid var(--ds-cyan); background: linear-gradient(90deg, rgba(0,229,255,0.08) 0%, rgba(0,0,0,0) 100%); }
         .ds-node-new-lore { border-left: 4px solid #56b6c2; background: linear-gradient(90deg, rgba(86,182,194,0.08) 0%, rgba(0,0,0,0) 100%); }
@@ -163,14 +142,15 @@ const injectCSS = () => {
         .ds-node-header { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 11px; color: #7f848e; border-bottom: 1px dashed rgba(255,255,255,0.15); padding-bottom: 6px; }
         
         .ds-node-content-wrapper { position: relative; }
-        .ds-node-content { line-height: 1.6; }
-        .ds-node-content.collapsed { max-height: 60px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
+        .ds-node-content { line-height: 1.6; transition: max-height 0.3s ease; }
+        /* 預設折疊狀態 (Req 11) */
+        .ds-node-content.collapsed { max-height: 40px; overflow: hidden; mask-image: linear-gradient(to bottom, black 20%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 20%, transparent 100%); }
+        
         .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 4px; background: rgba(0,229,255,0.08); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.2); font-weight: bold; }
         .ds-node-expand-btn:hover { background: rgba(0,229,255,0.2); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
 
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes dsShimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
     `;
     document.head.appendChild(style);
 };
@@ -1229,14 +1209,15 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas V54)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = [];
 let isSyncLocked = true;
-let isSyncingLeft = false;
-let isSyncingRight = false;
+let isSyncing = false;
 let isDrawingCanvas = false;
+let leftOffsetY = 0;
+let rightOffsetY = 0;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1247,7 +1228,6 @@ async function showOmniVisionUI() {
         return;
     }
 
-    // 注意：移除了 panel 的 open class，使其預設折疊
     const html = `
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
@@ -1256,7 +1236,7 @@ async function showOmniVisionUI() {
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
-                <div style="background:rgba(0,0,0,0.5); padding:15px; border-radius:10px; margin-bottom:15px; border:1px solid rgba(255,255,255,0.05); flex-shrink:0;">
+                <div style="background:rgba(0,0,0,0.5); padding:15px; border-radius:10px; margin-bottom:10px; border:1px solid rgba(255,255,255,0.05); flex-shrink:0;">
                     <div style="display:flex; justify-content:space-between; margin-bottom:8px; font-size:13px; font-weight:bold;">
                         <span style="color:var(--ds-green);"><i class="fa-solid fa-shield-halved"></i> 预计缓存命中率: <span id="omni-hit-rate">计算中...</span></span>
                         <span style="color:var(--ds-cyan);"><i class="fa-solid fa-coins"></i> 预计保留 Tokens: <span id="omni-tokens-saved">...</span> / 需重算: <span id="omni-tokens-lost" style="color:var(--ds-red);">...</span></span>
@@ -1264,7 +1244,7 @@ async function showOmniVisionUI() {
                     <div class="ds-health-bar" style="height:8px; border-radius:4px; background:rgba(224,108,117,0.3);"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);"></div></div>
                 </div>
 
-                <div class="ds-omni-panel">
+                <div class="ds-omni-panel open">
                     <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
                         <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (即时生效)</span>
                         <i class="fa-solid fa-chevron-down"></i>
@@ -1294,14 +1274,27 @@ async function showOmniVisionUI() {
                     </div>
                 </div>
 
-                <div class="ds-omni-panel">
+                <div class="ds-omni-panel open">
                     <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
-                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试</span>
+                        <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试 (即时预览)</span>
                         <i class="fa-solid fa-chevron-down"></i>
                     </div>
                     <div class="ds-omni-panel-body" style="padding-top: 5px;">
                         <textarea id="omni-simulated-input" class="ds-input-styled ds-scroll" placeholder="✍️ 模拟用户即将发送的输入 (输入后会自动触发下方沙盒重算)..." style="height: 40px; resize: vertical;"></textarea>
                     </div>
+                </div>
+
+                <div class="ds-omni-legend">
+                    <div class="ds-legend-item" title="完美冻结，左右 Hash 100% 一致"><div class="ds-legend-line" style="background:var(--ds-green);"></div> 🟢 完美冻结 (Perfect)</div>
+                    <div class="ds-legend-item" title="模糊命中，排版或标点被修改，但被系统强行拉回"><div class="ds-legend-line" style="background:var(--ds-yellow); border-top:2px dashed #000; height:1px;"></div> 🟡 模糊命中 (Fuzzy)</div>
+                    <div class="ds-legend-item" title="旧节点被修改，系统将其连结到右侧新生成的补丁"><div class="ds-legend-line" style="background:var(--ds-purple);"></div> 🟣 时空补丁 (Patch Link)</div>
+                    <div class="ds-legend-item" title="节点在未来被删除"><div class="ds-legend-line" style="background:linear-gradient(90deg, var(--ds-red), transparent);"></div> 🔴 历史删除 (Deleted)</div>
+                    <div class="ds-legend-item" title="全新追加的预设提示词"><div class="ds-legend-line" style="background:linear-gradient(90deg, transparent, var(--ds-cyan));"></div> 🔵 全新预设 (New Sys)</div>
+                    <div class="ds-legend-item" title="全新追加的世界书"><div class="ds-legend-line" style="background:linear-gradient(90deg, transparent, #56b6c2);"></div> 🩵 全新世界书 (New Lore)</div>
+                    <div class="ds-legend-item" title="全新追加的动态提示词"><div class="ds-legend-line" style="background:linear-gradient(90deg, transparent, var(--ds-orange));"></div> 🟠 全新动态 (New Dyn)</div>
+                    <div class="ds-legend-item" title="全新追加的历史对话"><div class="ds-legend-line" style="background:linear-gradient(90deg, transparent, var(--ds-green));"></div> 🟩 全新历史 (New His)</div>
+                    <div class="ds-legend-item" title="中间插入的新对话被抽到底部"><div class="ds-legend-line" style="background:linear-gradient(90deg, transparent, var(--ds-pink));"></div> 🩷 闪回插入 (Flashback)</div>
+                    <div class="ds-legend-item" title="被删除的对话转化为抹除声明"><div class="ds-legend-line" style="background:linear-gradient(90deg, transparent, var(--ds-gray));"></div> 🤍 吃书协议 (Retcon)</div>
                 </div>
 
                 <div class="ds-omni-actions">
@@ -1314,7 +1307,7 @@ async function showOmniVisionUI() {
                     <!-- 左視窗：歷史觀測 -->
                     <div class="ds-omni-pane">
                         <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 历史观测 (绝对锁定)</span>
+                            <span style="color:var(--ds-purple);"><i class="fa-solid fa-clock-rotate-left"></i> 左侧：上次已发送给 AI 的提示词 (绝对冻结)</span>
                         </div>
                         <div id="omni-left-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
@@ -1329,7 +1322,7 @@ async function showOmniVisionUI() {
                     <!-- 右視窗：即時沙盒預覽 -->
                     <div class="ds-omni-pane">
                         <div class="ds-omni-pane-header">
-                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 即时沙盒预览 (套用设定后)</span>
+                            <span style="color:var(--ds-cyan);"><i class="fa-solid fa-flask"></i> 右侧：即将发送给 AI 的提示词 (即时预览)</span>
                         </div>
                         <div id="omni-right-pane" class="ds-omni-pane-content ds-scroll">
                             <div style="text-align:center; padding:20px; color:#abb2bf;">加载中...</div>
@@ -1361,13 +1354,7 @@ async function showOmniVisionUI() {
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-            // 觸發一次同步
-            const leftPane = document.getElementById('omni-left-pane');
-            const rightPane = document.getElementById('omni-right-pane');
-            if (leftPane && rightPane) {
-                const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
-                rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
-            }
+            syncScroll('left'); 
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
         }
@@ -1376,13 +1363,13 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(() => { updateOmniCanvas(); }, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 350); // 等待過渡動畫
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(() => { updateOmniCanvas(); }, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 350);
     });
 
     let inputTimeout;
@@ -1400,37 +1387,28 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(() => { updateOmniCanvas(); }, 250);
+        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 350);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 綁定滾動事件 (使用 passive 提升流暢度，並加入雙向互鎖機制)
+    // 綁定滾動事件 (使用 passive 提升流暢度)
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
     leftPane.addEventListener('scroll', () => {
-        if (!isSyncLocked) { requestCanvasUpdate(); return; }
-        if (isSyncingLeft) { isSyncingLeft = false; requestCanvasUpdate(); return; }
-        
-        isSyncingRight = true;
-        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
-        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
+        if (isSyncLocked && !isSyncing) syncScroll('left');
         requestCanvasUpdate();
     }, { passive: true });
     
     rightPane.addEventListener('scroll', () => {
-        if (!isSyncLocked) { requestCanvasUpdate(); return; }
-        if (isSyncingRight) { isSyncingRight = false; requestCanvasUpdate(); return; }
-        
-        isSyncingLeft = true;
-        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
-        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
+        if (isSyncLocked && !isSyncing) syncScroll('right');
         requestCanvasUpdate();
     }, { passive: true });
 
     window.addEventListener('resize', () => {
         resizeCanvas();
+        cacheOmniPositions();
         updateOmniCanvas();
     });
 
@@ -1441,6 +1419,22 @@ window.closeOmniVision = function() {
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
 };
+
+function syncScroll(source) {
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
+    if (!leftPane || !rightPane) return;
+
+    isSyncing = true;
+    if (source === 'left') {
+        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
+    } else {
+        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
+        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
+    }
+    setTimeout(() => { isSyncing = false; }, 50);
+}
 
 function requestCanvasUpdate() {
     if (!isDrawingCanvas) {
@@ -1549,7 +1543,7 @@ async function renderOmniVision(state) {
         }
     });
 
-    // 2. 渲染左側 DOM
+    // 2. 渲染左側 DOM (預設折疊)
     const leftFrag = document.createDocumentFragment();
     leftArray.forEach((node, idx) => {
         const isDeleted = !leftMatched.has(idx);
@@ -1571,7 +1565,7 @@ async function renderOmniVision(state) {
     leftContainer.innerHTML = '';
     leftContainer.appendChild(leftFrag);
 
-    // 3. 渲染右側 DOM
+    // 3. 渲染右側 DOM (預設折疊)
     const rightFrag = document.createDocumentFragment();
     rightArray.forEach((node, idx) => {
         const isMiss = breakIndex !== -1 && idx >= breakIndex;
@@ -1610,14 +1604,10 @@ async function renderOmniVision(state) {
     rightContainer.innerHTML = '';
     rightContainer.appendChild(rightFrag);
 
-    // 4. 快取 DOM 元素並初始化 Canvas
-    omniMappings.forEach(m => {
-        if (m.left !== -1) m.lEl = document.getElementById(`omni-left-node-${m.left}`);
-        if (m.right !== -1) m.rEl = document.getElementById(`omni-right-node-${m.right}`);
-    });
-
+    // 4. 初始化 Canvas 並快取座標
     requestAnimationFrame(() => {
         resizeCanvas();
+        cacheOmniPositions();
         updateOmniCanvas();
     });
 }
@@ -1630,51 +1620,63 @@ function resizeCanvas() {
     const rect = container.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     
-    canvas.width = Math.floor(rect.width * dpr);
-    canvas.height = Math.floor(rect.height * dpr);
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
     
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 }
 
+function cacheOmniPositions() {
+    const canvas = document.getElementById('omni-canvas');
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
+    if (!canvas || !leftPane || !rightPane) return;
+
+    // 獲取絕對邊界，計算出滾動視窗相對於 Canvas 的 Y 軸偏移量
+    const cRect = canvas.getBoundingClientRect();
+    const lRect = leftPane.getBoundingClientRect();
+    const rRect = rightPane.getBoundingClientRect();
+
+    leftOffsetY = lRect.top - cRect.top;
+    rightOffsetY = rRect.top - cRect.top;
+
+    omniMappings.forEach(m => {
+        if (m.left !== -1) {
+            const el = document.getElementById(`omni-left-node-${m.left}`);
+            if (el) { m.lTop = el.offsetTop; m.lHeight = el.offsetHeight; }
+        }
+        if (m.right !== -1) {
+            const el = document.getElementById(`omni-right-node-${m.right}`);
+            if (el) { m.rTop = el.offsetTop; m.rHeight = el.offsetHeight; }
+        }
+    });
+}
+
 function updateOmniCanvas() {
     const canvas = document.getElementById('omni-canvas');
-    if (!canvas) return;
+    const leftPane = document.getElementById('omni-left-pane');
+    const rightPane = document.getElementById('omni-right-pane');
+    if (!canvas || !leftPane || !rightPane) return;
 
     const ctx = canvas.getContext('2d');
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     
-    // 處理 DPI 縮放，確保畫布清晰
-    const dpr = window.devicePixelRatio || 1;
-    if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-        canvas.width = Math.floor(width * dpr);
-        canvas.height = Math.floor(height * dpr);
-        ctx.scale(dpr, dpr);
-    }
-
     ctx.clearRect(0, 0, width, height);
 
-    // 獲取 Canvas 的絕對邊界，作為所有計算的基準點
-    const cRect = canvas.getBoundingClientRect();
+    const lScroll = leftPane.scrollTop;
+    const rScroll = rightPane.scrollTop;
     const cpOffset = width / 2.5; // 動態控制點，讓 S 曲線更平滑
 
     omniMappings.forEach(m => {
         let startY = 0, endY = 0;
         let isVisible = false;
 
-        // 絕對視口映射：直接讀取卡片的絕對位置，減去 Canvas 的絕對位置
-        // 這樣無論 Padding、Header 還是滾動條在哪裡，座標都 100% 精準
-        if (m.lEl) {
-            const lRect = m.lEl.getBoundingClientRect();
-            startY = lRect.top - cRect.top + (lRect.height / 2);
-        }
-        if (m.rEl) {
-            const rRect = m.rEl.getBoundingClientRect();
-            endY = rRect.top - cRect.top + (rRect.height / 2);
-        }
+        // 根據快取的 offsetTop、當前 scrollTop 以及絕對偏移量，計算出精準的 Y 座標 (零 DOM 讀取)
+        if (m.left !== -1) startY = m.lTop - lScroll + (m.lHeight / 2) + leftOffsetY;
+        if (m.right !== -1) endY = m.rTop - rScroll + (m.rHeight / 2) + rightOffsetY;
 
-        // 視野剔除優化 (Frustum Culling)
         if (m.type === 'deleted') {
             if (startY > -50 && startY < height + 50) isVisible = true;
         } else if (m.type.startsWith('new_')) {
@@ -2447,7 +2449,7 @@ async function setupUI() {
                 if (isEmpty || isOld) { delete Settings.chats[k]; count++; }
             }
             safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success(`🧹 垃圾清理完毕！共移除了 ${count} 个无用的旧存档。`);
+            if (typeof toastr !== 'undefined') toastr.success(`🧹 垃圾清理完毕！共移最大的 ${count} 个无用的旧存档。`);
         });
 
         $('#ds-btn-purge-orphans').on('click', () => {
