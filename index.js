@@ -122,10 +122,11 @@ const injectCSS = () => {
         #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
         #omni-arrows-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
         
-        .ds-omni-arrow { position: absolute; width: 22px; height: 22px; background: rgba(15, 20, 25, 0.9); border: 1px solid currentColor; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10; font-size: 11px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 0 10px currentColor; pointer-events: auto; opacity: 0.7; }
-        .ds-omni-arrow:hover { opacity: 1; transform: scale(1.3); background: currentColor; color: #000 !important; z-index: 20; }
-        .ds-omni-arrow-left { left: 10px; transform: translateY(-50%); }
-        .ds-omni-arrow-right { right: 10px; transform: translateY(-50%); }
+        /* Req 2: 箭頭改為絕對定位且只透過 translate3d 移動，徹底消除 DOM 顛簸 */
+        .ds-omni-arrow { position: absolute; top: 0; width: 22px; height: 22px; background: rgba(15, 20, 25, 0.9); border: 1px solid currentColor; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10; font-size: 11px; transition: opacity 0.2s, transform 0.1s ease-out; box-shadow: 0 0 10px currentColor; pointer-events: auto; opacity: 0.7; will-change: transform; }
+        .ds-omni-arrow:hover { opacity: 1; background: currentColor; color: #000 !important; z-index: 20; box-shadow: 0 0 15px currentColor; }
+        .ds-omni-arrow-left { left: 10px; }
+        .ds-omni-arrow-right { right: 10px; }
         
         .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s; width: 100%; box-sizing: border-box; }
         .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
@@ -1369,7 +1370,6 @@ async function showOmniVisionUI() {
         return;
     }
 
-    // Req 1: 左側視窗精準讀取「上次最終發送」的陣列，而非半成品的 frozenSequence
     omniLeftArrayLastSent = cloneStream(state.lastSentSequence || state.frozenSequence || []);
 
     const html = `
@@ -1506,12 +1506,7 @@ async function showOmniVisionUI() {
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定同步');
-            const leftPane = document.getElementById('omni-left-pane');
-            const rightPane = document.getElementById('omni-right-pane');
-            if (leftPane && rightPane) {
-                const ratio = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
-                rightPane.scrollTop = ratio * (rightPane.scrollHeight - rightPane.clientHeight || 1);
-            }
+            syncScroll('left'); 
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除同步');
         }
@@ -1547,18 +1542,69 @@ async function showOmniVisionUI() {
         setTimeout(() => { cacheNodePositions(); requestCanvasUpdate(); }, 350);
     });
 
+    // Req 3: 完美節點錨定同步演算法
     let isSyncingLeft = false;
     let isSyncingRight = false;
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
+    function syncScroll(sourceSide) {
+        if (!isSyncLocked) return;
+        const sourcePane = document.getElementById(`omni-${sourceSide}-pane`);
+        const targetSide = sourceSide === 'left' ? 'right' : 'left';
+        const targetPane = document.getElementById(`omni-${targetSide}-pane`);
+
+        const sourceScrollTop = sourcePane.scrollTop;
+        
+        // 邊界處理：如果滾到最頂或最底，強制對齊邊界
+        if (sourceScrollTop <= 5) {
+            targetPane.scrollTop = 0;
+            return;
+        }
+        if (sourceScrollTop + sourcePane.clientHeight >= sourcePane.scrollHeight - 5) {
+            targetPane.scrollTop = targetPane.scrollHeight;
+            return;
+        }
+
+        const sourceCenterY = sourceScrollTop + (sourcePane.clientHeight / 2);
+        let closestId = -1;
+        let minDiff = Infinity;
+        const sourceCache = nodePositionCache[sourceSide];
+
+        // 找出當前畫面正中央的節點
+        for (const id in sourceCache) {
+            const nodeCenterY = sourceCache[id].baseY;
+            const diff = Math.abs(nodeCenterY - sourceCenterY);
+            if (diff < minDiff) {
+                minDiff = diff;
+                closestId = parseInt(id);
+            }
+        }
+
+        if (closestId !== -1) {
+            // 找出它在另一邊的對應節點
+            const mapping = omniMappings.find(m => sourceSide === 'left' ? m.left === closestId : m.right === closestId);
+            if (mapping) {
+                const targetId = sourceSide === 'left' ? mapping.right : mapping.left;
+                if (targetId !== -1 && nodePositionCache[targetSide][targetId]) {
+                    const targetNodeCenterY = nodePositionCache[targetSide][targetId].baseY;
+                    const targetScrollTop = targetNodeCenterY - (targetPane.clientHeight / 2);
+                    targetPane.scrollTop = targetScrollTop;
+                } else {
+                    // 如果對應節點被刪除或不存在，降級使用百分比同步
+                    const ratio = sourceScrollTop / (sourcePane.scrollHeight - sourcePane.clientHeight || 1);
+                    targetPane.scrollTop = ratio * (targetPane.scrollHeight - targetPane.clientHeight || 1);
+                }
+            }
+        }
+    }
+
     leftPane.addEventListener('scroll', function() {
         requestCanvasUpdate();
         if (!isSyncLocked) return;
         if (isSyncingLeft) { isSyncingLeft = false; return; }
         isSyncingRight = true;
-        const ratio = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
-        rightPane.scrollTop = ratio * (rightPane.scrollHeight - rightPane.clientHeight || 1);
+        syncScroll('left');
     }, {passive: true});
 
     rightPane.addEventListener('scroll', function() {
@@ -1566,8 +1612,7 @@ async function showOmniVisionUI() {
         if (!isSyncLocked) return;
         if (isSyncingRight) { isSyncingRight = false; return; }
         isSyncingLeft = true;
-        const ratio = this.scrollTop / (this.scrollHeight - this.clientHeight || 1);
-        leftPane.scrollTop = ratio * (leftPane.scrollHeight - leftPane.clientHeight || 1);
+        syncScroll('right');
     }, {passive: true});
 
     window.addEventListener('resize', () => {
@@ -1702,7 +1747,6 @@ async function renderOmniVision(state) {
     let preservedTokens = 0;
     let recomputeTokens = 0;
 
-    // Req 1: 混合態模擬流 (Hybrid Simulated Stream) - 完美適配所有 ST 插件
     let simulatedStream = [];
     const contextChat = getContext().chat || [];
     const formattedContextChat = contextChat.map(m => {
@@ -1711,9 +1755,7 @@ async function renderOmniVision(state) {
     });
 
     if (state.lastRawStream && state.lastRawStream.length > 0) {
-        // 提取上一次 ST 真正生成的所有系統提示詞 (包含所有插件、世界書、作者備註)
         const sysMsgs = state.lastRawStream.filter(m => m.role === 'system' || (m.role !== 'user' && m.role !== 'assistant'));
-        // 拼接最新的聊天記錄
         simulatedStream = [...sysMsgs, ...formattedContextChat];
     } else {
         simulatedStream = [...formattedContextChat];
@@ -1748,12 +1790,10 @@ async function renderOmniVision(state) {
     const leftMatched = new Set();
     const rightMatched = new Set();
 
-    // 重新校準的映射演算法：精準對比 Last Sent vs Next Preview
     rightArray.forEach((rNode, rIdx) => {
         let bestMatchIdx = -1;
         let bestScore = 0;
         
-        // 處理時空補丁的專屬連線
         if (rNode._omniCat && rNode._omniCat.startsWith('patch_') && rNode._sourceHash) {
             bestMatchIdx = leftArray.findIndex(l => l.hash === rNode._sourceHash);
             if (bestMatchIdx !== -1) {
@@ -1763,12 +1803,10 @@ async function renderOmniVision(state) {
             }
         }
 
-        // 1. 絕對 Hash 匹配
         bestMatchIdx = leftArray.findIndex(l => l.hash === rNode.hash);
         if (bestMatchIdx !== -1) {
             bestScore = 1;
         } else {
-            // 2. 模糊匹配
             leftArray.forEach((lNode, lIdx) => {
                 if (rNode.fuzzyHash === lNode.fuzzyHash && bestScore < 0.99) { 
                     bestMatchIdx = lIdx; bestScore = 0.99; 
@@ -1859,6 +1897,32 @@ async function renderOmniVision(state) {
         document.querySelectorAll('.ds-node-content').forEach(el => resizeObserver.observe(el));
     }
 
+    // Req 2: 預先生成所有箭頭 DOM，避免滾動時的 DOM 顛簸
+    let arrowsHtml = '';
+    omniMappings.forEach((m, i) => {
+        let colorHex = '0,229,255';
+        if (m.type === 'perfect') colorHex = '152,195,121';
+        else if (m.type === 'fuzzy') colorHex = '229,192,123';
+        else if (m.type === 'patch_link') colorHex = '198,120,221';
+        else if (m.type === 'deleted') colorHex = '224,108,117';
+        else if (m.type === 'new_lorebook') colorHex = '86,182,194';
+        else if (m.type === 'new_dynamic') colorHex = '209,154,102';
+        else if (m.type === 'new_history') colorHex = '152,195,121';
+        else if (m.type === 'new_patch') colorHex = '198,120,221';
+        else if (m.type === 'new_flashback') colorHex = '255,121,198';
+        else if (m.type === 'new_retcon') colorHex = '171,178,191';
+
+        if (m.left !== -1 && m.right !== -1) {
+            arrowsHtml += `<div id="omni-arrow-l-${i}" class="ds-omni-arrow ds-omni-arrow-left" style="display:none; color:rgb(${colorHex});" onclick="jumpToOmniNode('right', ${m.right})" title="跳转到右侧对应节点"><i class="fa-solid fa-chevron-right"></i></div>`;
+            arrowsHtml += `<div id="omni-arrow-r-${i}" class="ds-omni-arrow ds-omni-arrow-right" style="display:none; color:rgb(${colorHex});" onclick="jumpToOmniNode('left', ${m.left})" title="跳转到左侧对应节点"><i class="fa-solid fa-chevron-left"></i></div>`;
+        } else if (m.type === 'deleted') {
+            arrowsHtml += `<div id="omni-arrow-l-${i}" class="ds-omni-arrow ds-omni-arrow-left" style="display:none; color:rgb(${colorHex}); cursor:default;" title="此节点已被删除"><i class="fa-solid fa-xmark"></i></div>`;
+        } else if (m.type.startsWith('new_')) {
+            arrowsHtml += `<div id="omni-arrow-r-${i}" class="ds-omni-arrow ds-omni-arrow-right" style="display:none; color:rgb(${colorHex}); cursor:default;" title="这是新插入的节点"><i class="fa-solid fa-plus"></i></div>`;
+        }
+    });
+    document.getElementById('omni-arrows-layer').innerHTML = arrowsHtml;
+
     requestAnimationFrame(() => {
         resizeCanvas();
         cacheNodePositions();
@@ -1882,11 +1946,10 @@ function resizeCanvas() {
 
 function updateOmniCanvas() {
     const canvas = document.getElementById('omni-canvas');
-    const arrowsLayer = document.getElementById('omni-arrows-layer');
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
-    if (!canvas || !arrowsLayer || !leftPane || !rightPane) return;
+    if (!canvas || !leftPane || !rightPane) return;
 
     const ctx = canvas.getContext('2d');
     const width = canvas.width / (window.devicePixelRatio || 1);
@@ -1895,11 +1958,10 @@ function updateOmniCanvas() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.save();
     ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
-
-    let arrowsHtml = '';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     
     const halfWidth = width / 2;
-    const cpOffset = width * 0.45;
 
     for (let i = 0; i < omniMappings.length; i++) {
         const m = omniMappings[i];
@@ -1932,14 +1994,26 @@ function updateOmniCanvas() {
             if ((startY > -50 && startY < height + 50) || (endY > -50 && endY < height + 50)) isVisible = true;
         }
 
-        if (!isVisible) continue;
+        const arrowL = document.getElementById(`omni-arrow-l-${i}`);
+        const arrowR = document.getElementById(`omni-arrow-r-${i}`);
+
+        if (!isVisible) {
+            if (arrowL) arrowL.style.display = 'none';
+            if (arrowR) arrowR.style.display = 'none';
+            continue;
+        }
+
+        // Req 1: 動態張力貝茲曲線演算法 (Dynamic Tension)
+        const distY = Math.abs(endY - startY);
+        // 距離越近，控制點越小，線條越直；距離越遠，控制點越大，形成優雅的 S 型
+        const cpOffset = width * Math.min(0.45, 0.1 + (distY / height) * 0.4);
 
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.bezierCurveTo(startX + cpOffset, startY, endX - cpOffset, endY, endX, endY);
 
-        ctx.lineWidth = 2.5;
-        ctx.shadowBlur = 10; 
+        ctx.lineWidth = 1.8; // 稍微調細，減少重疊時的臃腫感
+        ctx.shadowBlur = 5;  // 降低光暈，提升銳利度
 
         let colorHex = '0,229,255';
         if (m.type === 'perfect') colorHex = '152,195,121';
@@ -1959,35 +2033,38 @@ function updateOmniCanvas() {
             ctx.setLineDash([]);
         }
 
+        // 根據距離動態調整透明度，避免重疊時變成死白
+        const alpha = Math.max(0.4, 0.85 - (distY / height) * 0.3);
+
         if (m.type === 'deleted') {
             const grad = ctx.createLinearGradient(0, 0, halfWidth, 0);
-            grad.addColorStop(0, `rgba(${colorHex},0.85)`);
+            grad.addColorStop(0, `rgba(${colorHex},${alpha})`);
             grad.addColorStop(1, `rgba(${colorHex},0)`);
             ctx.strokeStyle = grad;
         } else if (m.type.startsWith('new_')) {
             const grad = ctx.createLinearGradient(halfWidth, 0, width, 0);
             grad.addColorStop(0, `rgba(${colorHex},0)`);
-            grad.addColorStop(1, `rgba(${colorHex},0.85)`);
+            grad.addColorStop(1, `rgba(${colorHex},${alpha})`);
             ctx.strokeStyle = grad;
         } else {
-            ctx.strokeStyle = `rgba(${colorHex},0.85)`;
+            ctx.strokeStyle = `rgba(${colorHex},${alpha})`;
         }
         
-        ctx.shadowColor = `rgba(${colorHex},0.5)`;
+        ctx.shadowColor = `rgba(${colorHex},0.4)`;
         ctx.stroke();
 
-        if (m.left !== -1 && m.right !== -1) {
-            arrowsHtml += `<div class="ds-omni-arrow ds-omni-arrow-left" style="top:${startY}px; color:rgb(${colorHex});" onclick="jumpToOmniNode('right', ${m.right})" title="跳转到右侧对应节点"><i class="fa-solid fa-chevron-right"></i></div>`;
-            arrowsHtml += `<div class="ds-omni-arrow ds-omni-arrow-right" style="top:${endY}px; color:rgb(${colorHex});" onclick="jumpToOmniNode('left', ${m.left})" title="跳转到左侧对应节点"><i class="fa-solid fa-chevron-left"></i></div>`;
-        } else if (m.type === 'deleted') {
-            arrowsHtml += `<div class="ds-omni-arrow ds-omni-arrow-left" style="top:${startY}px; color:rgb(${colorHex}); cursor:default;" title="此节点已被删除"><i class="fa-solid fa-xmark"></i></div>`;
-        } else if (m.type.startsWith('new_')) {
-            arrowsHtml += `<div class="ds-omni-arrow ds-omni-arrow-right" style="top:${endY}px; color:rgb(${colorHex}); cursor:default;" title="这是新插入的节点"><i class="fa-solid fa-plus"></i></div>`;
+        // Req 2: 透過 GPU 加速的 translate3d 移動箭頭，徹底消除 DOM 顛簸
+        if (arrowL) {
+            arrowL.style.display = 'flex';
+            arrowL.style.transform = `translate3d(0, calc(${startY}px - 50%), 0)`;
+        }
+        if (arrowR) {
+            arrowR.style.display = 'flex';
+            arrowR.style.transform = `translate3d(0, calc(${endY}px - 50%), 0)`;
         }
     }
     
     ctx.restore();
-    arrowsLayer.innerHTML = arrowsHtml;
 }
 
 // ==========================================
