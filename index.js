@@ -132,7 +132,7 @@ const injectCSS = () => {
         .ds-omni-action-btn:hover { background: rgba(255,255,255,0.15); color: #fff; border-color: rgba(255,255,255,0.3); }
         .ds-omni-action-btn.active { background: rgba(0,229,255,0.15); color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
         
-        .ds-omni-legend { display: flex; gap: 12px; font-size: 11px; font-weight: bold; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); }
+        .ds-omni-legend { display: flex; gap: 12px; font-size: 11px; font-weight: bold; background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); flex-wrap: wrap; }
         .ds-omni-legend-item { display: flex; align-items: center; gap: 4px; }
         .ds-omni-legend-color { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 5px currentColor; }
         
@@ -171,6 +171,11 @@ const injectCSS = () => {
         .ds-node-content.collapsed { max-height: 60px; overflow: hidden; mask-image: linear-gradient(to bottom, black 40%, transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%); }
         .ds-node-expand-btn { text-align: center; font-size: 11px; color: var(--ds-cyan); cursor: pointer; margin-top: 6px; padding: 4px; background: rgba(0,229,255,0.08); border-radius: 6px; transition: 0.2s; border: 1px solid rgba(0,229,255,0.2); font-weight: bold; }
         .ds-node-expand-btn:hover { background: rgba(0,229,255,0.2); border-color: rgba(0,229,255,0.4); box-shadow: 0 0 10px rgba(0,229,255,0.2); }
+
+        .ds-toast-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-top: 10px; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
+        .ds-toast-grid label { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #abb2bf; cursor: pointer; transition: 0.2s; }
+        .ds-toast-grid label:hover { color: #fff; }
+        .ds-toast-grid input[type="checkbox"] { transform: scale(1.1); accent-color: var(--ds-cyan); margin: 0; }
 
         @keyframes dsFadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes dsSlideUp { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
@@ -233,6 +238,11 @@ function initSettings() {
             autoBackup: oldSettings.autoBackup ?? true, 
             absoluteOrderMatrix: oldSettings.absoluteOrderMatrix ?? true, 
             vectorQuarantine: oldSettings.vectorQuarantine ?? true, 
+            toastToggles: oldSettings.toastToggles || {
+                warp: true, multiverse: true, fuzzy: true, nano: true, hotreload: true, 
+                entropy: true, patch: true, prefix: true, retcon: true, flashback: true, 
+                chronos: true, vector: true, void: true
+            },
             chats: oldSettings.chats || {},
             pinnedChats: oldSettings.pinnedChats || {} 
         };
@@ -240,6 +250,7 @@ function initSettings() {
     Settings = extension_settings.ds_cache_v52;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
+    if (!Settings.toastToggles) Settings.toastToggles = { warp: true, multiverse: true, fuzzy: true, nano: true, hotreload: true, entropy: true, patch: true, prefix: true, retcon: true, flashback: true, chronos: true, vector: true, void: true };
     
     if (Settings.autoBackup) {
         try {
@@ -263,7 +274,7 @@ function flushSaveSync() {
             // Storage Guardian: 預防性清理
             if (cachedStorageBytes > 4.5 * 1024 * 1024) {
                 Logger.warn("⚠️ 存储空间接近极限 (4.5MB)，触发紧急深度休眠压缩！");
-                performGarbageCollection(true); // 強制深度清理
+                performGarbageCollection(true); 
                 const newDataStr = JSON.stringify(Settings);
                 cachedStorageBytes = newDataStr.length * 2;
                 localStorage.setItem('ds_cache_v52_snapshot', newDataStr);
@@ -298,16 +309,15 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     
-    // 優雅降級：如果超過 Quota，自動減少備份數量直到存入成功
     let saved = false;
     while (backupVault.length > 0 && !saved) {
         try {
-            if (backupVault.length > 3) backupVault.length = 3; // 限制最多 3 個備份
+            if (backupVault.length > 3) backupVault.length = 3; 
             localStorage.setItem('ds_cache_v52_vault', JSON.stringify(backupVault));
             saved = true;
         } catch (e) {
             if (e.name === 'QuotaExceededError' || e.message.includes('quota')) {
-                backupVault.pop(); // 彈出最舊的備份，重試
+                backupVault.pop(); 
             } else {
                 Logger.error("Vault backup failed", e);
                 break;
@@ -340,7 +350,7 @@ function getTolerance() {
 }
 
 // ==========================================
-// 2.5 量子彈窗聚合器 (Quantum Toast Aggregator 2.0)
+// 2.5 量子彈窗聚合器 (Quantum Toast Aggregator 3.0)
 // ==========================================
 const QuantumToastAggregator = {
     queue: new Map(),
@@ -348,7 +358,9 @@ const QuantumToastAggregator = {
     add: function(key, msg, type = 'info', icon = '💡') {
         if (!Settings.enabled || !Settings.toastHistory || Settings.zenMode) return;
         
-        // 累加相同 key 的次數
+        // 檢查獨立開關
+        if (Settings.toastToggles && Settings.toastToggles[key] === false) return;
+        
         if (this.queue.has(key)) {
             const existing = this.queue.get(key);
             existing.count = (existing.count || 1) + 1;
@@ -357,7 +369,7 @@ const QuantumToastAggregator = {
         }
 
         if (this.timeout) clearTimeout(this.timeout);
-        this.timeout = setTimeout(() => this.flush(), 500); // 500ms 內收集所有觸發的協議
+        this.timeout = setTimeout(() => this.flush(), 500); 
     },
     flush: function() {
         if (this.queue.size === 0 || typeof toastr === 'undefined') return;
@@ -369,7 +381,6 @@ const QuantumToastAggregator = {
             else if (item.type === 'warning') toastr.warning(`${item.icon} ${item.msg}${countStr}`, '绝对真理协议');
             else toastr.info(`${item.icon} ${item.msg}${countStr}`, '绝对真理协议');
         } else {
-            // 合併多個提示
             let combinedMsg = `<div style="font-size:12px; margin-bottom:4px;">本次拦截触发了多项协议：</div><ul style="margin:0; padding-left:20px; font-size:11px;">`;
             this.queue.forEach(item => {
                 const countStr = item.count > 1 ? ` <b style="color:var(--ds-yellow);">(x${item.count})</b>` : '';
@@ -408,7 +419,6 @@ function performGarbageCollection(forceDeepClean = false) {
     const now = Date.now();
     const keys = Object.keys(Settings.chats);
     
-    // 1. 深度休眠壓縮：超過 24 小時未訪問的存檔 (或強制清理時)，清空 multiverse 和 lastRawStream 釋放大量空間
     keys.forEach(k => {
         const chat = Settings.chats[k];
         if (forceDeepClean || (chat.lastAccessed && (now - chat.lastAccessed > 24 * 60 * 60 * 1000))) {
@@ -417,7 +427,6 @@ function performGarbageCollection(forceDeepClean = false) {
         }
     });
 
-    // 2. 刪除超量的未鎖定存檔
     const unpinnedKeys = keys.filter(k => !Settings.pinnedChats[k]);
     if (unpinnedKeys.length > Settings.maxCacheSize) {
         const sortedKeys = unpinnedKeys.sort((a, b) => (Settings.chats[a].lastAccessed || 0) - (Settings.chats[b].lastAccessed || 0));
@@ -852,8 +861,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 
                 if (isSummary || isTimeSkip || isVector || (Settings.anchorStabilization && hasSeenUserOrAi) || (Settings.gravityProtocol && hasSeenUserOrAi)) {
                     if (isTimeSkip) sysNode.isTimeSkip = true; 
-                    if (isVector) sysNode.isVector = true;
-                    if (isSummary) sysNode.isSummary = true;
+                    else if (isVector) sysNode.isVector = true;
+                    else if (isSummary) sysNode.isSummary = true;
                     bottomSysMsgs.push(sysNode);
                 } else {
                     topSysMsgs.push(sysNode);
@@ -952,26 +961,27 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     newFrozenSequence.push(frozenItem); 
                     handledIncomingSys.add(bestIdx);
 
-                    if (Settings.nanoPatching && bestScore > 0.85) {
+                    // 互斥邏輯：如果是主角色卡(i===0)且開啟了熱更新，則優先熱更新；否則走量子微創
+                    if (Settings.hotReloadPersona && i === 0) {
+                        const patch = createMsg({role: 'system', content: `[系统提示：角色设定已热更新，最新特征如下：\n${incomingItem.content}]`}, 'SYS');
+                        patch._omniCat = 'patch_hotreload';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🔥 设定热更新] 生成热更新补丁。`);
+                            QuantumToastAggregator.add('hotreload', '设定热更新：已生成更新补丁', 'success', '🔥');
+                        }
+                    } else if (Settings.nanoPatching && bestScore > 0.85) {
                         let addedText = extractAddedText(frozenItem.content, incomingItem.content);
                         if (addedText) {
                             const patch = createMsg({role: 'system', content: `[系统提示：设定微调补充。新增细节：${addedText}]`}, 'SYS');
-                            patch._omniCat = 'patch';
+                            patch._omniCat = 'patch_nano';
                             patch._sourceHash = frozenItem.hash;
                             newAdditions.patches.push(patch);
                             if (!isDryRun) {
                                 Logger.debug(`[🔬 量子微创] 生成设定差异补丁。`);
                                 QuantumToastAggregator.add('nano', '量子微创：已生成设定差异补丁', 'success', '🔬');
                             }
-                        }
-                    } else if (Settings.hotReloadPersona && i === 0) {
-                        const patch = createMsg({role: 'system', content: `[系统提示：角色设定已热更新，最新特征如下：\n${incomingItem.content}]`}, 'SYS');
-                        patch._omniCat = 'patch';
-                        patch._sourceHash = frozenItem.hash;
-                        newAdditions.patches.push(patch);
-                        if (!isDryRun) {
-                            Logger.debug(`[🔥 设定热更新] 生成热更新补丁。`);
-                            QuantumToastAggregator.add('hotreload', '设定热更新：已生成更新补丁', 'success', '🔥');
                         }
                     } else {
                         if (Settings.dynamicMode === 1) {
@@ -986,10 +996,20 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         }
                     }
                 } else {
-                    // 即使 ST 刪除了它，只要它在凍結序列中，我們就強制保留 (100% 緩存的核心)
-                    if (Settings.permanentMemoryImprint || Settings.amnesiaProtocol) {
-                        frozenItem._omniCat = 'frozen';
-                        newFrozenSequence.push(frozenItem); 
+                    // SYS 節點被刪除
+                    frozenItem._omniCat = 'frozen';
+                    newFrozenSequence.push(frozenItem); 
+                    
+                    if (Settings.voidBridging) {
+                        const patch = createMsg({role: 'system', content: `[系统提示：设定已解除。之前的规则 "${truncateLog(frozenItem.content, 20)}" 已不再适用。]`}, 'SYS');
+                        patch._omniCat = 'patch_void';
+                        patch._sourceHash = frozenItem.hash;
+                        newAdditions.patches.push(patch);
+                        if (!isDryRun) {
+                            Logger.debug(`[🌉 虚空架桥] 生成设定解除声明。`);
+                            QuantumToastAggregator.add('void', '虚空架桥：已生成设定解除声明', 'success', '🌉');
+                        }
+                    } else if (Settings.permanentMemoryImprint || Settings.amnesiaProtocol) {
                         if (!isDryRun) Logger.trace(`[🖨️ 永久记忆] 强制保留被删除的设定/记忆: ${truncateLog(frozenItem.content)}`);
                     }
                 }
@@ -1013,11 +1033,12 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     handledIncomingHis.add(bestIdx);
                     lastHandledIncomingHisIdx = Math.max(lastHandledIncomingHisIdx, bestIdx);
 
+                    // 互斥邏輯：>98% 走熵減，否則走時空補丁
                     if (Settings.entropyShield && bestScore > 0.98) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：错字修正。之前的对话中，"${truncateLog(frozenItem.content, 15)}" 已修正为 "${truncateLog(incomingItem.content, 15)}"]`}, 'SYS');
-                        patch._omniCat = 'patch';
+                        patch._omniCat = 'patch_entropy';
                         patch._sourceHash = frozenItem.hash;
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
@@ -1028,7 +1049,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：时空修正。之前的对话中，"${truncateLog(frozenItem.content, 20)}" 实际上已发生改变，最新情况为："${incomingItem.content}"]`}, 'SYS');
-                        patch._omniCat = 'patch';
+                        patch._omniCat = 'patch_history';
                         patch._sourceHash = frozenItem.hash;
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
@@ -1044,6 +1065,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         newFrozenSequence.push(incomingItem); 
                     }
                 } else {
+                    // HIS 節點被刪除
                     const isPrefix = (i === 0);
                     if (isPrefix && Settings.prefixAnchor) {
                         frozenItem._omniCat = 'frozen';
@@ -1056,7 +1078,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                         frozenItem._omniCat = 'frozen';
                         newFrozenSequence.push(frozenItem); 
                         const patch = createMsg({role: 'system', content: `[系统提示：世界意志发动了记忆抹除。之前的事件 "${truncateLog(frozenItem.content, 20)}" 已被抹除，请当作从未发生过。]`}, 'SYS');
-                        patch._omniCat = 'retcon';
+                        patch._omniCat = 'patch_retcon';
                         patch._sourceHash = frozenItem.hash;
                         newAdditions.patches.push(patch);
                         if (!isDryRun) {
@@ -1077,7 +1099,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 const h = incomingHistoryPool[j];
                 if (Settings.flashbackInsertion && j < lastHandledIncomingHisIdx) {
                     const patch = createMsg({role: 'system', content: `[系统提示：闪回补充。在之前的事件中，还发生了以下细节：\n${h.content}]`}, 'SYS');
-                    patch._omniCat = 'flashback';
+                    patch._omniCat = 'patch_flashback';
                     newAdditions.patches.push(patch);
                     if (!isDryRun) {
                         Logger.debug(`[⏪ 闪回插入] 将新插入的对话转为闪回补丁。`);
@@ -1095,7 +1117,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                 const sys = incomingSysPool[j];
                 if (sys.isTimeSkip) {
                     const patch = createMsg({role: 'system', content: `[系统提示：叙事过渡。${sys.content}]`}, 'SYS');
-                    patch._omniCat = 'patch';
+                    patch._omniCat = 'patch_chronos';
                     newAdditions.patches.push(patch);
                     if (!isDryRun) QuantumToastAggregator.add('chronos', '克罗诺斯协议：已生成时间跳跃补丁', 'info', '⏳');
                 } else if (sys.isVector) {
@@ -1663,7 +1685,7 @@ async function renderOmniVision(state) {
         let bestMatchIdx = -1;
         let bestScore = 0;
         
-        if (rNode._omniCat === 'patch' || rNode._omniCat === 'retcon' || rNode._omniCat === 'flashback') {
+        if (rNode._omniCat && rNode._omniCat.startsWith('patch_')) {
             if (rNode._sourceHash) {
                 bestMatchIdx = leftArray.findIndex(l => l.hash === rNode._sourceHash);
                 if (bestMatchIdx !== -1) {
@@ -1694,9 +1716,7 @@ async function renderOmniVision(state) {
             if (rNode._omniCat === 'lorebook') type = 'new_lorebook';
             else if (rNode._omniCat === 'dynamic') type = 'new_dynamic';
             else if (rNode._omniCat === 'history') type = 'new_history';
-            else if (rNode._omniCat === 'flashback') type = 'new_flashback';
-            else if (rNode._omniCat === 'retcon') type = 'new_retcon';
-            else if (rNode._omniCat === 'patch') type = 'new_patch';
+            else if (rNode._omniCat && rNode._omniCat.startsWith('patch_')) type = 'new_patch';
             omniMappings.push({ left: -1, right: rIdx, type: type });
         }
     });
@@ -1731,11 +1751,16 @@ async function renderOmniVision(state) {
             if (node._omniCat === 'lorebook') { cardClass = 'ds-node-new-lore'; newLabel = '<span style="color:#56b6c2; font-weight:bold; margin-left:6px;">(NEW LORE)</span>'; }
             else if (node._omniCat === 'dynamic') { cardClass = 'ds-node-new-dyn'; newLabel = '<span style="color:var(--ds-orange); font-weight:bold; margin-left:6px;">(NEW DYN)</span>'; }
             else if (node._omniCat === 'history') { cardClass = 'ds-node-new-his'; newLabel = '<span style="color:var(--ds-green); font-weight:bold; margin-left:6px;">(NEW HIS)</span>'; }
-            else if (node._omniCat === 'flashback') { cardClass = 'ds-node-flashback'; newLabel = '<span style="color:var(--ds-pink); font-weight:bold; margin-left:6px;">(FLASHBACK)</span>'; }
-            else if (node._omniCat === 'retcon') { cardClass = 'ds-node-retcon'; newLabel = '<span style="color:var(--ds-gray); font-weight:bold; margin-left:6px;">(RETCON)</span>'; }
-            else if (node._omniCat === 'patch') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(PATCH)</span>'; }
+            else if (node._omniCat === 'patch_flashback') { cardClass = 'ds-node-flashback'; newLabel = '<span style="color:var(--ds-pink); font-weight:bold; margin-left:6px;">(FLASHBACK)</span>'; }
+            else if (node._omniCat === 'patch_retcon') { cardClass = 'ds-node-retcon'; newLabel = '<span style="color:var(--ds-gray); font-weight:bold; margin-left:6px;">(RETCON)</span>'; }
+            else if (node._omniCat === 'patch_void') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(VOID PATCH)</span>'; }
+            else if (node._omniCat === 'patch_nano') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(NANO PATCH)</span>'; }
+            else if (node._omniCat === 'patch_hotreload') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(HOT RELOAD)</span>'; }
+            else if (node._omniCat === 'patch_entropy') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TYPO PATCH)</span>'; }
+            else if (node._omniCat === 'patch_history') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TIME PATCH)</span>'; }
+            else if (node._omniCat === 'patch_chronos') { cardClass = 'ds-node-patch'; newLabel = '<span style="color:var(--ds-purple); font-weight:bold; margin-left:6px;">(TIME SKIP)</span>'; }
             else { cardClass = 'ds-node-new-sys'; newLabel = '<span style="color:var(--ds-cyan); font-weight:bold; margin-left:6px;">(NEW SYS)</span>'; }
-        } else if (node._omniCat === 'patch' || node._omniCat === 'retcon' || node._omniCat === 'flashback') {
+        } else if (node._omniCat && node._omniCat.startsWith('patch_')) {
             cardClass = 'ds-node-patch';
         }
 
@@ -2211,8 +2236,8 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-void" ${Settings.voidBridging ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某句话，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
-                                    <span>(中间删除不破缓存)</span>
+                                    <b style="color:var(--ds-purple);">🌉 虚空架桥协议 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你在对话中间删除了某条系统设定或世界书，系统会自动生成微型补丁桥接上下文，保住尾部所有缓存！">?</span></b>
+                                    <span>(中间删除设定不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2331,8 +2356,8 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-cache-hotreload" ${Settings.hotReloadPersona ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改了角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
-                                    <span>(修改设定不破缓存)</span>
+                                    <b style="color:#ffb86c;">🔥 角色卡热更新 <span class="ds-perf-badge ds-perf-low">低消耗</span> <span class="ds-tooltip-icon" title="当你修改了主角色卡，系统会冻结旧卡，并在底部告诉AI「角色设定已更新」。">?</span></b>
+                                    <span>(修改主设定不破缓存)</span>
                                 </div>
                             </label>
                         </div>
@@ -2392,7 +2417,7 @@ async function setupUI() {
                             <label class="ds-row-left">
                                 <input type="checkbox" id="ds-toast-his" ${Settings.toastHistory ? 'checked' : ''}> 
                                 <div class="ds-row-text">
-                                    <b style="color:#abb2bf;">当我修改或删除旧对话时，在右上角提醒我</b>
+                                    <b style="color:#abb2bf;">允许显示绝对真理协议的弹窗提示</b>
                                 </div>
                             </label>
                         </div>
@@ -2421,6 +2446,24 @@ async function setupUI() {
                                     <span>(遇到冲突时，不弹全屏警告，直接在后台默默修复并发送)</span>
                                 </div>
                             </label>
+                        </div>
+                        
+                        <hr style="border:0; border-top:1px dashed rgba(255,255,255,0.1); width:100%; margin:4px 0;">
+                        <span style="font-size:12px; color:var(--ds-cyan); font-weight:bold;"><i class="fa-solid fa-sliders"></i> 细分协议弹窗独立控制矩阵：</span>
+                        <div class="ds-toast-grid">
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="warp" ${Settings.toastToggles.warp ? 'checked' : ''}> 曲率引擎过滤</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="multiverse" ${Settings.toastToggles.multiverse ? 'checked' : ''}> 平行宇宙跳跃</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="fuzzy" ${Settings.toastToggles.fuzzy ? 'checked' : ''}> 模糊语义引擎</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="nano" ${Settings.toastToggles.nano ? 'checked' : ''}> 量子微创手术</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="hotreload" ${Settings.toastToggles.hotreload ? 'checked' : ''}> 角色卡热更新</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="entropy" ${Settings.toastToggles.entropy ? 'checked' : ''}> 熵减护盾(错字)</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="patch" ${Settings.toastToggles.patch ? 'checked' : ''}> 时空补丁(修改)</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="prefix" ${Settings.toastToggles.prefix ? 'checked' : ''}> 绝对前缀锚点</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="retcon" ${Settings.toastToggles.retcon ? 'checked' : ''}> 吃书协议(删历史)</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="void" ${Settings.toastToggles.void ? 'checked' : ''}> 虚空架桥(删设定)</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="flashback" ${Settings.toastToggles.flashback ? 'checked' : ''}> 闪回插入协议</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="chronos" ${Settings.toastToggles.chronos ? 'checked' : ''}> 克罗诺斯(时间跳跃)</label>
+                            <label><input type="checkbox" class="ds-toast-toggle" data-key="vector" ${Settings.toastToggles.vector ? 'checked' : ''}> 向量隔离区</label>
                         </div>
                     </div>
                 </div>
@@ -2570,6 +2613,12 @@ async function setupUI() {
         $('#ds-cache-matrix').on('change', function () { Settings.absoluteOrderMatrix = $(this).is(':checked'); safeSave(); });
         $('#ds-cache-vector').on('change', function () { Settings.vectorQuarantine = $(this).is(':checked'); safeSave(); });
         $('#ds-log-autoscroll').on('change', function () { Settings.autoScrollLog = $(this).is(':checked'); safeSave(); });
+
+        $('.ds-toast-toggle').on('change', function() {
+            const key = $(this).data('key');
+            Settings.toastToggles[key] = $(this).is(':checked');
+            safeSave();
+        });
 
         $('#ds-btn-diagnostic').on('click', () => { if(typeof toastr !== 'undefined') toastr.info("此功能已集成于后台运算", "系统提示"); });
         $('#ds-btn-diagnostic-report').on('click', generateDiagnosticReport);
