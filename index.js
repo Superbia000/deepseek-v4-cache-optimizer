@@ -139,7 +139,7 @@ const injectCSS = () => {
         .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
         
-        .ds-node-row { display: flex; width: 100%; gap: 15px; margin-bottom: 10px; align-items: stretch; }
+        .ds-node-row { display: flex; width: 100%; margin-bottom: 10px; align-items: stretch; }
         .ds-node-cell { flex: 1; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; display: flex; flex-direction: column; }
         .ds-node-cell:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
         .ds-node-empty { background: transparent; border: 1px dashed rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.2); font-style: italic; }
@@ -962,6 +962,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             currentTurn.prefills = parsedStream.slice(lastUserIdx + 1).filter(m => m.tag === 'AI').map(m => ({...m, tag: 'PREFILL'}));
         }
 
+        // 🚀 徹底移除了 stripPrefillFromAssistant，完美保留 AI 預填充文字
+
         // 2. 匹配凍結陣列 (Base Sequence)
         let newFrozenSequence = [];
         let timeSpacePatches = [];
@@ -970,7 +972,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const thresholds = getTolerance();
 
         // 🚀 致命 Bug 修復：深層拷貝隔離，防止 isDryRun 污染真實狀態矩陣
-        const baseSequence = state.frozenSequence ? state.frozenSequence.map(item => ({...item})) : [];
+        const baseSequence = state.frozenSequence ? JSON.parse(JSON.stringify(state.frozenSequence)) : [];
 
         for (let i = 0; i < baseSequence.length; i++) {
             const frozenItem = baseSequence[i];
@@ -1320,7 +1322,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
             if (currentTurn.user) finalStream.push(currentTurn.user);
             for (const p of currentTurn.prefills) finalStream.push(p);
 
-            state.lastSentSequence = finalStream;
+            // 🚀 深層拷貝，徹底隔離 ST UI 污染
+            state.lastSentSequence = JSON.parse(JSON.stringify(finalStream));
             safeSave();
 
             stream.splice(0, stream.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
@@ -1335,23 +1338,24 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         }
 
         if (decision === 'accept') {
-            // 🚀 核心修復：絕對保留神聖屬性，只刪除臨時標籤
-            state.frozenSequence = dedupedSequence.map(n => {
+            // 🚀 核心修復：絕對保留神聖屬性，只刪除臨時標籤，並深層拷貝
+            state.frozenSequence = JSON.parse(JSON.stringify(dedupedSequence.map(n => {
                 const clean = {...n};
                 delete clean.isDynamicUpdate; 
                 return clean;
-            });
+            })));
             state.lastPrefills = currentTurn.prefills;
 
             const finalStream = [...state.frozenSequence];
             if (currentTurn.user) finalStream.push(currentTurn.user);
             for (const p of currentTurn.prefills) finalStream.push(p);
 
-            state.lastSentSequence = finalStream;
+            // 🚀 深層拷貝，徹底隔離 ST UI 污染 (Req 9 修復)
+            state.lastSentSequence = JSON.parse(JSON.stringify(finalStream));
             
             if (Settings.multiverseProtocol) {
                 if (!state.multiverse) state.multiverse = [];
-                state.multiverse.unshift([...state.frozenSequence]);
+                state.multiverse.unshift(JSON.parse(JSON.stringify(state.frozenSequence)));
                 if (state.multiverse.length > 5) state.multiverse.pop();
             }
 
@@ -1384,10 +1388,10 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 7.0 (Req 10, 11)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI 7.5 (Req 6, 7, 8, 9, 10)
 // ==========================================
 let omniRenderTimeout = null;
-let isOmniCollapsed = false;
+let isOmniCollapsed = true; // 🚀 Req 9: 預設折疊長文本
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1402,7 +1406,7 @@ async function showOmniVisionUI() {
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 <div class="ds-omni-header">
-                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒 7.0</h2>
+                    <h2 class="ds-modal-title ds-blue" style="margin:0;"><i class="fa-solid fa-eye"></i> Omni-Vision 全视之眼沙盒 7.5</h2>
                     <button class="ds-btn ds-btn-reset" style="padding: 8px 15px; font-size: 13px;" onclick="$('#ds-omni-modal-wrapper').remove();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
                 
@@ -1436,7 +1440,13 @@ async function showOmniVisionUI() {
                     <span id="omni-sync-badge" style="font-size:11px; color:var(--ds-green); margin-right:15px; display:none;"><i class="fa-solid fa-check-circle"></i> 预览已同步</span>
                     <button id="ds-btn-omni-refresh" class="ds-btn ds-btn-accept" style="padding: 6px 12px; font-size: 12px; margin-right:10px;"><i class="fa-solid fa-rotate-right"></i> 强制刷新</button>
                     <button id="ds-btn-omni-jump" class="ds-btn ds-btn-revert" style="padding: 6px 12px; font-size: 12px; margin-right:10px; display:none;"><i class="fa-solid fa-location-crosshairs"></i> 定位断点</button>
-                    <button id="ds-btn-omni-collapse" class="ds-btn ds-btn-blue" style="padding: 6px 12px; font-size: 12px;"><i class="fa-solid fa-compress"></i> 折叠长文本</button>
+                    <button id="ds-btn-omni-collapse" class="ds-btn ds-btn-blue" style="padding: 6px 12px; font-size: 12px;"><i class="fa-solid fa-expand"></i> 展开长文本</button>
+                </div>
+
+                <!-- 🚀 Req 10: 模擬使用者輸入框 -->
+                <div class="ds-omni-mock-panel" style="padding: 10px 15px; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(255,255,255,0.05); display: flex; gap: 10px; align-items: center;">
+                    <span style="color: var(--ds-cyan); font-size: 12px; font-weight: bold; white-space: nowrap;"><i class="fa-solid fa-keyboard"></i> 模拟用户输入:</span>
+                    <input type="text" id="omni-mock-input" class="ds-input-styled" style="flex: 1; border-color: rgba(0,229,255,0.3);" placeholder="输入测试文字，沙盒将即时预测缓存命中率 (Dry-Run)...">
                 </div>
 
                 <div class="ds-omni-body">
@@ -1499,6 +1509,12 @@ async function showOmniVisionUI() {
         triggerOmniRender(state);
     });
 
+    // 🚀 Req 10: 綁定模擬輸入事件
+    $('#omni-mock-input').on('input', function() {
+        $('#omni-sync-badge').hide();
+        triggerOmniRender(state);
+    });
+
     $('#ds-btn-omni-jump').on('click', function() {
         const firstMiss = document.querySelector('.ds-status-break');
         if (firstMiss) {
@@ -1515,7 +1531,7 @@ async function showOmniVisionUI() {
 
 function triggerOmniRender(state) {
     if (omniRenderTimeout) clearTimeout(omniRenderTimeout);
-    omniRenderTimeout = setTimeout(() => renderOmniVision(state), 100);
+    omniRenderTimeout = setTimeout(() => renderOmniVision(state), 200);
 }
 
 async function renderOmniVision(state) {
@@ -1523,7 +1539,8 @@ async function renderOmniVision(state) {
     const minimapContainer = document.getElementById('omni-minimap');
     if (!dualContainer || !minimapContainer) return;
 
-    const leftArray = state.lastSentSequence || [];
+    // 🚀 Req 9: 嚴格讀取最後一次發送的絕對快照
+    const leftArray = state.lastSentSequence ? JSON.parse(JSON.stringify(state.lastSentSequence)) : [];
     let rightArray = [];
     let breakIndex = -1;
     let dropPercent = "0.0";
@@ -1531,8 +1548,19 @@ async function renderOmniVision(state) {
     let recomputeTokens = 0;
 
     try {
+        let dryRunStream = [];
         if (state.lastRawStream && state.lastRawStream.length > 0) {
-            const dryRunResult = await interceptAndRestructurePrompt({ chat: JSON.parse(JSON.stringify(state.lastRawStream)) }, true);
+            dryRunStream = JSON.parse(JSON.stringify(state.lastRawStream));
+        }
+        
+        // 🚀 Req 10: 將使用者的模擬輸入注入到沙盒預測陣列中
+        const mockText = $('#omni-mock-input').val();
+        if (mockText && mockText.trim() !== '') {
+            dryRunStream.push({ role: 'user', content: mockText });
+        }
+
+        if (dryRunStream.length > 0) {
+            const dryRunResult = await interceptAndRestructurePrompt({ chat: dryRunStream }, true);
             if (dryRunResult) {
                 rightArray = dryRunResult.proposedStream;
                 breakIndex = dryRunResult.breakIndex;
@@ -1655,8 +1683,35 @@ async function renderOmniVision(state) {
                 </div>
             `;
         }
+
+        // 🚀 Req 8: 生成視覺化神經連接線 SVG
+        let svgHtml = '';
+        if (row.left && row.right) {
+            let strokeColor = 'rgba(255,255,255,0.1)';
+            if (row.status === 'hit') strokeColor = 'var(--ds-green)';
+            else if (row.status === 'phantom') strokeColor = 'var(--ds-yellow)';
+            else if (row.status === 'patch') strokeColor = 'var(--ds-purple)';
+            else if (row.status === 'break') strokeColor = 'var(--ds-red)';
+
+            svgHtml = `<svg width="100%" height="100%" style="position: absolute; top: 0; left: 0; pointer-events: none;">
+                           <path d="M 0,24 C 20,24 20,24 40,24" stroke="${strokeColor}" stroke-width="2" fill="none" />
+                       </svg>`;
+        } else if (row.left && !row.right) {
+            svgHtml = `<svg width="100%" height="100%" style="position: absolute; top: 0; left: 0; pointer-events: none;">
+                           <path d="M 0,24 L 20,24" stroke="var(--ds-red)" stroke-width="2" stroke-dasharray="4" fill="none" style="opacity:0.5;" />
+                       </svg>`;
+        } else if (!row.left && row.right) {
+            svgHtml = `<svg width="100%" height="100%" style="position: absolute; top: 0; left: 0; pointer-events: none;">
+                           <path d="M 20,24 L 40,24" stroke="var(--ds-cyan)" stroke-width="2" stroke-dasharray="4" fill="none" style="opacity:0.5;" />
+                       </svg>`;
+        }
         
-        el.innerHTML = `${leftHtml}${rightHtml}`;
+        // 🚀 Req 8: 構建三段式 Flex 佈局 (左 - 線 - 右)
+        el.innerHTML = `
+            <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">${leftHtml}</div>
+            <div style="width: 40px; position: relative; flex-shrink: 0;">${svgHtml}</div>
+            <div style="flex: 1; display: flex; flex-direction: column; min-width: 0;">${rightHtml}</div>
+        `;
         frag.appendChild(el);
 
         const mapSeg = document.createElement('div');
