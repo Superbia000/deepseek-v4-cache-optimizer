@@ -142,7 +142,6 @@ const injectCSS = () => {
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
         .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
         
-        /* 確保 content 區域為 relative */
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
         
         .ds-omni-canvas-container { width: 140px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
@@ -1231,15 +1230,14 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Absolute Horizon)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Viewport Matrix)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = [];
 let isSyncLocked = true;
-let isSyncingLeft = false;
-let isSyncingRight = false;
 let isDrawingCanvas = false;
 let omniResizeObserver = null;
+let activeScrollPane = null; // 懸停驅動鎖
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1266,8 +1264,9 @@ async function showOmniVisionUI() {
                     <div class="ds-health-bar" style="height:8px; border-radius:4px; background:rgba(224,108,117,0.3);"><div id="omni-hit-bar" class="ds-health-fill" style="width:0%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);"></div></div>
                 </div>
 
-                <div class="ds-omni-panel open">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
+                <!-- 預設折疊面板 -->
+                <div class="ds-omni-panel">
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(requestCanvasUpdate, 250);">
                         <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (即时生效)</span>
                         <i class="fa-solid fa-chevron-down"></i>
                     </div>
@@ -1296,8 +1295,9 @@ async function showOmniVisionUI() {
                     </div>
                 </div>
 
-                <div class="ds-omni-panel open">
-                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(updateOmniCanvas, 250);">
+                <!-- 預設折疊面板 -->
+                <div class="ds-omni-panel">
+                    <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(requestCanvasUpdate, 250);">
                         <span><i class="fa-solid fa-keyboard"></i> 模拟输入测试</span>
                         <i class="fa-solid fa-chevron-down"></i>
                     </div>
@@ -1363,12 +1363,10 @@ async function showOmniVisionUI() {
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-            isSyncingRight = true;
             const leftPane = document.getElementById('omni-left-pane');
             const rightPane = document.getElementById('omni-right-pane');
             const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
             rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
-            setTimeout(() => { isSyncingRight = false; }, 50);
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
         }
@@ -1406,28 +1404,27 @@ async function showOmniVisionUI() {
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 綁定滾動事件 (使用 passive 提升流暢度，並使用硬體鎖防止死循環)
+    // 綁定滾動事件 (Hover-Driver 模式，徹底解決死鎖)
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
+    leftPane.addEventListener('mouseenter', () => activeScrollPane = 'left');
+    rightPane.addEventListener('mouseenter', () => activeScrollPane = 'right');
+    
     leftPane.addEventListener('scroll', () => {
         requestCanvasUpdate();
-        if (!isSyncLocked) return;
-        if (isSyncingLeft) { isSyncingLeft = false; return; }
-        
-        isSyncingRight = true;
-        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
-        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
+        if (isSyncLocked && activeScrollPane === 'left') {
+            const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+            rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
+        }
     }, { passive: true });
     
     rightPane.addEventListener('scroll', () => {
         requestCanvasUpdate();
-        if (!isSyncLocked) return;
-        if (isSyncingRight) { isSyncingRight = false; return; }
-        
-        isSyncingLeft = true;
-        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
-        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
+        if (isSyncLocked && activeScrollPane === 'right') {
+            const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
+            leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
+        }
     }, { passive: true });
 
     window.addEventListener('resize', () => {
@@ -1561,7 +1558,7 @@ async function renderOmniVision(state) {
         }
     });
 
-    // 2. 渲染左側 DOM (強制預設折疊)
+    // 2. 渲染左側 DOM (預設 collapsed)
     const leftFrag = document.createDocumentFragment();
     leftArray.forEach((node, idx) => {
         const isDeleted = !leftMatched.has(idx);
@@ -1583,7 +1580,7 @@ async function renderOmniVision(state) {
     leftContainer.innerHTML = '';
     leftContainer.appendChild(leftFrag);
 
-    // 3. 渲染右側 DOM (強制預設折疊)
+    // 3. 渲染右側 DOM (預設 collapsed)
     const rightFrag = document.createDocumentFragment();
     rightArray.forEach((node, idx) => {
         const isMiss = breakIndex !== -1 && idx >= breakIndex;
@@ -1626,7 +1623,7 @@ async function renderOmniVision(state) {
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
             resizeCanvas();
-            updateOmniCanvas();
+            requestCanvasUpdate();
         });
     });
 }
@@ -1656,49 +1653,57 @@ function updateOmniCanvas() {
     
     ctx.clearRect(0, 0, width, height);
 
-    // 獲取 Canvas 的絕對邊界，作為所有座標的基準點
+    // 獲取 Canvas 的絕對螢幕座標，作為基準點
     const cRect = canvas.getBoundingClientRect();
 
     omniMappings.forEach(m => {
-        const lEl = m.left !== -1 ? document.getElementById(`omni-left-node-${m.left}`) : null;
-        const rEl = m.right !== -1 ? document.getElementById(`omni-right-node-${m.right}`) : null;
-
-        let startY = 0, endY = 0;
+        let startY = -999, endY = -999;
         let isVisible = false;
 
-        // 絕對視口映射：直接讀取 DOM 元素在螢幕上的真實位置，減去 Canvas 的頂部位置
-        // 這是最精準、絕對不會脫位的終極解法
-        if (lEl) startY = lEl.getBoundingClientRect().top - cRect.top + (lEl.offsetHeight / 2);
-        if (rEl) endY = rEl.getBoundingClientRect().top - cRect.top + (rEl.offsetHeight / 2);
+        // 絕對視口座標映射：直接向瀏覽器詢問卡片的當前絕對位置
+        if (m.left !== -1) {
+            const el = document.getElementById(`omni-left-node-${m.left}`);
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                startY = rect.top - cRect.top + (rect.height / 2);
+            }
+        }
+        if (m.right !== -1) {
+            const el = document.getElementById(`omni-right-node-${m.right}`);
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                endY = rect.top - cRect.top + (rect.height / 2);
+            }
+        }
 
-        // 效能優化：只繪製在可視範圍內（或稍微超出）的線條
         if (m.type === 'deleted') {
-            if (lEl && startY > -50 && startY < height + 50) isVisible = true;
+            if (startY > -50 && startY < height + 50) isVisible = true;
         } else if (m.type.startsWith('new_')) {
-            if (rEl && endY > -50 && endY < height + 50) isVisible = true;
+            if (endY > -50 && endY < height + 50) isVisible = true;
         } else {
-            if ((lEl && startY > -50 && startY < height + 50) || (rEl && endY > -50 && endY < height + 50)) isVisible = true;
+            if ((startY > -50 && startY < height + 50) || (endY > -50 && endY < height + 50)) isVisible = true;
         }
 
         if (!isVisible) return;
 
         ctx.beginPath();
         
-        // 仿生神經曲線：動態計算控制點，確保曲線永遠平滑優雅
-        const cpOffset = width * 0.5; 
+        // 虛幻引擎級別的 Cubic Bezier 曲線 (雙控制點，強制水平進出)
+        const cp1X = width * 0.4;
+        const cp2X = width * 0.6;
 
         if (m.type === 'deleted') {
-            // 刪除線：從左側延伸並向下優雅消散
+            // 刪除線：從左側水平延伸，然後向下優雅消散
             ctx.moveTo(0, startY);
-            ctx.bezierCurveTo(cpOffset, startY, width * 0.8, startY + 40, width * 0.8, startY + 40);
+            ctx.bezierCurveTo(cp1X, startY, cp2X, startY + 40, width * 0.8, startY + 40);
         } else if (m.type.startsWith('new_')) {
-            // 新增線：從虛空上升並連接到右側
+            // 新增線：從虛空上升，然後水平連接到右側
             ctx.moveTo(width * 0.2, endY - 40);
-            ctx.bezierCurveTo(width * 0.2, endY - 40, width - cpOffset, endY, width, endY);
+            ctx.bezierCurveTo(cp1X, endY - 40, cp2X, endY, width, endY);
         } else {
             // 正常連接線：完美的 S 曲線
             ctx.moveTo(0, startY);
-            ctx.bezierCurveTo(cpOffset, startY, width - cpOffset, endY, width, endY);
+            ctx.bezierCurveTo(cp1X, startY, cp2X, endY, width, endY);
         }
 
         ctx.lineWidth = 2.5;
