@@ -141,12 +141,14 @@ const injectCSS = () => {
         .ds-omni-workspace { display: flex; flex: 1; min-height: 0; position: relative; gap: 0; }
         .ds-omni-pane { flex: 1; display: flex; flex-direction: column; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; box-shadow: inset 0 0 30px rgba(0,0,0,0.8); z-index: 2; }
         .ds-omni-pane-header { padding: 12px 15px; background: rgba(255,255,255,0.05); border-bottom: 1px solid rgba(255,255,255,0.1); font-weight: bold; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; }
+        
+        /* 確保 content 區域為 relative，讓 offsetTop 計算絕對精準 */
         .ds-omni-pane-content { flex: 1; overflow-y: auto; padding: 15px; display: flex; flex-direction: column; gap: 12px; position: relative; will-change: scroll-position; }
         
         .ds-omni-canvas-container { width: 140px; position: relative; flex-shrink: 0; z-index: 1; pointer-events: none; }
         #omni-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
-        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; }
+        .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: 0.2s; width: 100%; box-sizing: border-box; flex-shrink: 0; }
         .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
         
         .ds-node-hit { border-left: 4px solid var(--ds-green); background: linear-gradient(90deg, rgba(152,195,121,0.08) 0%, rgba(0,0,0,0) 100%); }
@@ -191,9 +193,9 @@ function fastClone(obj) {
 }
 
 function initSettings() {
-    const oldSettings = extension_settings.ds_cache_v52 || extension_settings.ds_cache_v51 || {};
-    if (!extension_settings.ds_cache_v53) {
-        extension_settings.ds_cache_v53 = {
+    const oldSettings = extension_settings.ds_cache_v53 || extension_settings.ds_cache_v52 || {};
+    if (!extension_settings.ds_cache_v54) {
+        extension_settings.ds_cache_v54 = {
             enabled: oldSettings.enabled ?? true,
             zenMode: oldSettings.zenMode ?? false,
             toastHistory: oldSettings.toastHistory ?? true,
@@ -233,13 +235,13 @@ function initSettings() {
             pinnedChats: oldSettings.pinnedChats || {} 
         };
     }
-    Settings = extension_settings.ds_cache_v53;
+    Settings = extension_settings.ds_cache_v54;
     if (!Settings.pinnedChats) Settings.pinnedChats = {};
     if (!Settings.chats) Settings.chats = {}; 
     
     if (Settings.autoBackup) {
         try {
-            const vaultStr = localStorage.getItem('ds_cache_v53_vault');
+            const vaultStr = localStorage.getItem('ds_cache_v54_vault');
             if (vaultStr) backupVault = JSON.parse(vaultStr);
         } catch(e) {}
         createVaultBackup("自动启动备份");
@@ -255,7 +257,7 @@ function flushSaveSync() {
             if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
             const dataStr = JSON.stringify(Settings);
             cachedStorageBytes = dataStr.length * 2; 
-            localStorage.setItem('ds_cache_v53_snapshot', dataStr);
+            localStorage.setItem('ds_cache_v54_snapshot', dataStr);
         } catch (e) {}
         pendingSave = false;
         saveTimeout = null;
@@ -280,7 +282,7 @@ function createVaultBackup(label = "手动备份") {
     };
     backupVault.unshift(snapshot);
     if (backupVault.length > 5) backupVault.pop();
-    localStorage.setItem('ds_cache_v53_vault', JSON.stringify(backupVault));
+    localStorage.setItem('ds_cache_v54_vault', JSON.stringify(backupVault));
     $('#ds-btn-undo-action').show();
 }
 
@@ -1229,15 +1231,17 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
 }
 
 // ==========================================
-// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Quantum Canvas)
+// 8. 👁️ Omni-Vision 全視之眼沙盒 UI (Absolute Alignment)
 // ==========================================
 let omniRenderTimeout = null;
 let omniMappings = [];
 let isSyncLocked = true;
-let isSyncing = false;
+let isSyncingLeft = false;
+let isSyncingRight = false;
 let isDrawingCanvas = false;
 let leftOffsetY = 0;
 let rightOffsetY = 0;
+let omniResizeObserver = null;
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1361,7 +1365,11 @@ async function showOmniVisionUI() {
         $(this).toggleClass('active', isSyncLocked);
         if (isSyncLocked) {
             $(this).html('<i class="fa-solid fa-link"></i> 锁定滚动同步');
-            syncScroll('left'); 
+            isSyncingRight = true;
+            const leftPane = document.getElementById('omni-left-pane');
+            const rightPane = document.getElementById('omni-right-pane');
+            const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+            rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
         } else {
             $(this).html('<i class="fa-solid fa-link-slash"></i> 解除滚动同步');
         }
@@ -1370,13 +1378,11 @@ async function showOmniVisionUI() {
     $('#omni-btn-expand').on('click', function() {
         $('.ds-node-content').removeClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-up"></i> 收起');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
     });
 
     $('#omni-btn-collapse').on('click', function() {
         $('.ds-node-content').addClass('collapsed');
         $('.ds-node-expand-btn').html('<i class="fa-solid fa-chevron-down"></i> 展开');
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
     });
 
     let inputTimeout;
@@ -1394,23 +1400,32 @@ async function showOmniVisionUI() {
             contentDiv.addClass('collapsed');
             $(this).html('<i class="fa-solid fa-chevron-down"></i> 展开');
         }
-        setTimeout(() => { cacheOmniPositions(); updateOmniCanvas(); }, 250);
     });
 
     $('#ds-omni-modal-wrapper').on('click', function(e) { if(e.target === this) closeOmniVision(); });
 
-    // 綁定滾動事件 (使用 passive 提升流暢度)
+    // 綁定滾動事件 (使用 passive 提升流暢度，並使用硬體鎖防止死循環)
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
     leftPane.addEventListener('scroll', () => {
-        if (isSyncLocked && !isSyncing) syncScroll('left');
         requestCanvasUpdate();
+        if (!isSyncLocked) return;
+        if (isSyncingLeft) { isSyncingLeft = false; return; }
+        
+        isSyncingRight = true;
+        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
+        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
     }, { passive: true });
     
     rightPane.addEventListener('scroll', () => {
-        if (isSyncLocked && !isSyncing) syncScroll('right');
         requestCanvasUpdate();
+        if (!isSyncLocked) return;
+        if (isSyncingRight) { isSyncingRight = false; return; }
+        
+        isSyncingLeft = true;
+        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
+        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
     }, { passive: true });
 
     window.addEventListener('resize', () => {
@@ -1419,29 +1434,25 @@ async function showOmniVisionUI() {
         updateOmniCanvas();
     });
 
+    // 引入 ResizeObserver 徹底解決 DOM 渲染時序導致的脫位問題
+    omniResizeObserver = new ResizeObserver(() => {
+        cacheOmniPositions();
+        requestCanvasUpdate();
+    });
+    omniResizeObserver.observe(leftPane);
+    omniResizeObserver.observe(rightPane);
+
     triggerOmniRender(state);
 }
 
 window.closeOmniVision = function() {
+    if (omniResizeObserver) {
+        omniResizeObserver.disconnect();
+        omniResizeObserver = null;
+    }
     $('#ds-omni-modal-wrapper').remove();
     omniMappings = [];
 };
-
-function syncScroll(source) {
-    const leftPane = document.getElementById('omni-left-pane');
-    const rightPane = document.getElementById('omni-right-pane');
-    if (!leftPane || !rightPane) return;
-
-    isSyncing = true;
-    if (source === 'left') {
-        const pct = leftPane.scrollTop / (leftPane.scrollHeight - leftPane.clientHeight || 1);
-        rightPane.scrollTop = pct * (rightPane.scrollHeight - rightPane.clientHeight);
-    } else {
-        const pct = rightPane.scrollTop / (rightPane.scrollHeight - rightPane.clientHeight || 1);
-        leftPane.scrollTop = pct * (leftPane.scrollHeight - leftPane.clientHeight);
-    }
-    setTimeout(() => { isSyncing = false; }, 50);
-}
 
 function requestCanvasUpdate() {
     if (!isDrawingCanvas) {
@@ -1611,11 +1622,13 @@ async function renderOmniVision(state) {
     rightContainer.innerHTML = '';
     rightContainer.appendChild(rightFrag);
 
-    // 4. 初始化 Canvas 並快取座標
+    // 4. 雙重 rAF 確保 DOM 完全排版後再計算座標
     requestAnimationFrame(() => {
-        resizeCanvas();
-        cacheOmniPositions();
-        updateOmniCanvas();
+        requestAnimationFrame(() => {
+            resizeCanvas();
+            cacheOmniPositions();
+            updateOmniCanvas();
+        });
     });
 }
 
@@ -1639,6 +1652,10 @@ function cacheOmniPositions() {
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     if (!canvas || !leftPane || !rightPane) return;
+
+    // 強制瀏覽器重排，確保獲取到最精準的座標
+    void leftPane.offsetHeight;
+    void rightPane.offsetHeight;
 
     // 獲取絕對邊界，計算出滾動視窗相對於 Canvas 的 Y 軸偏移量
     const cRect = canvas.getBoundingClientRect();
@@ -1674,7 +1691,9 @@ function updateOmniCanvas() {
 
     const lScroll = leftPane.scrollTop;
     const rScroll = rightPane.scrollTop;
-    const cpOffset = width / 2.5; // 動態控制點，讓 S 曲線更平滑
+    
+    // 採用節點編輯器標準的完美 S 曲線控制點 (固定在水平中點)
+    const cpX = width / 2; 
 
     omniMappings.forEach(m => {
         let startY = 0, endY = 0;
@@ -1697,17 +1716,17 @@ function updateOmniCanvas() {
         ctx.beginPath();
         
         if (m.type === 'deleted') {
-            // 刪除線：從左側延伸並向下消散
+            // 刪除線：從左側延伸並向下優雅消散
             ctx.moveTo(0, startY);
-            ctx.bezierCurveTo(cpOffset, startY, cpOffset, startY + 30, width / 2, startY + 30);
+            ctx.bezierCurveTo(width * 0.4, startY, width * 0.6, startY + 40, width * 0.8, startY + 40);
         } else if (m.type.startsWith('new_')) {
             // 新增線：從虛空上升並連接到右側
-            ctx.moveTo(width / 2, endY - 30);
-            ctx.bezierCurveTo(width - cpOffset, endY - 30, width - cpOffset, endY, width, endY);
+            ctx.moveTo(width * 0.2, endY - 40);
+            ctx.bezierCurveTo(width * 0.4, endY - 40, width * 0.6, endY, width, endY);
         } else {
-            // 正常連接線：平滑的 S 曲線
+            // 正常連接線：完美的 S 曲線
             ctx.moveTo(0, startY);
-            ctx.bezierCurveTo(cpOffset, startY, width - cpOffset, endY, width, endY);
+            ctx.bezierCurveTo(cpX, startY, cpX, endY, width, endY);
         }
 
         ctx.lineWidth = 2.5;
@@ -1728,14 +1747,14 @@ function updateOmniCanvas() {
                 ctx.shadowColor = 'rgba(198,120,221,0.5)';
             }
             else if (m.type === 'deleted') {
-                const grad = ctx.createLinearGradient(0, 0, width/2, 0);
+                const grad = ctx.createLinearGradient(0, 0, width * 0.8, 0);
                 grad.addColorStop(0, 'rgba(224,108,117,0.9)');
                 grad.addColorStop(1, 'rgba(224,108,117,0)');
                 ctx.strokeStyle = grad;
                 ctx.shadowColor = 'rgba(224,108,117,0.5)';
             }
             else if (m.type.startsWith('new_')) {
-                const grad = ctx.createLinearGradient(width/2, 0, width, 0);
+                const grad = ctx.createLinearGradient(width * 0.2, 0, width, 0);
                 let color = '0,229,255'; // sys
                 if (m.type === 'new_lorebook') color = '86,182,194';
                 else if (m.type === 'new_dynamic') color = '209,154,102';
@@ -1962,9 +1981,9 @@ async function setupUI() {
     try {
         injectCSS();
         const html = `
-        <div class="inline-drawer" id="ds-v53-opt-drawer">
+        <div class="inline-drawer" id="ds-v54-opt-drawer">
             <div class="inline-drawer-toggle inline-drawer-header" style="background: linear-gradient(90deg, rgba(0,229,255,0.1) 0%, rgba(0,0,0,0) 100%); border-left: 3px solid var(--ds-cyan);">
-                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v53)</b>
+                <b style="color:var(--ds-cyan); text-shadow: 0 0 8px rgba(0,229,255,0.3);"><span class="fa-solid fa-microchip"></span> DeepSeek 绝对真理优化器 (v54)</b>
                 <div class="inline-drawer-icon fa-solid fa-chevron-down down" style="color:var(--ds-cyan);"></div>
             </div>
             <div class="inline-drawer-content ds-scroll" style="padding:18px; background: rgba(0,0,0,0.2);">
@@ -2489,7 +2508,7 @@ async function setupUI() {
         $('#ds-btn-export').on('click', () => {
             const blob = new Blob([JSON.stringify(Settings, null, 2)], { type: "application/json" });
             const url = URL.createObjectURL(blob); const a = document.createElement("a");
-            a.href = url; a.download = `DeepSeek_Cache_Backup_v53_${new Date().getTime()}.json`;
+            a.href = url; a.download = `DeepSeek_Cache_Backup_v54_${new Date().getTime()}.json`;
             document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
             if (typeof toastr !== 'undefined') toastr.success("💾 备份文件已导出！");
         });
@@ -2557,7 +2576,7 @@ jQuery(async () => {
             if (event_types?.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, () => triggerToast('his_edit', '您修改了历史对话，已标记断层！下次发送将原位修补。', 'warning', '✏️'));
         }
 
-        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v53 引擎上线 ══════', LogLevels.BASIC);
+        Logger.log('══════ 🚀 DeepSeek 绝对真理优化器 v54 引擎上线 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件启动失败:', e);
     }
