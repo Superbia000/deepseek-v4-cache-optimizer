@@ -129,10 +129,8 @@ const injectCSS = () => {
         /* 智能跳轉箭頭 */
         .ds-omni-arrow { position: absolute; width: 22px; height: 22px; background: rgba(15, 20, 25, 0.9); border: 1px solid currentColor; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10; font-size: 11px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); box-shadow: 0 0 10px currentColor; pointer-events: auto; opacity: 0.7; }
         .ds-omni-arrow:hover { opacity: 1; transform: scale(1.3); background: currentColor; color: #000 !important; z-index: 20; }
-        .ds-omni-arrow-left { left: 0; transform: translate(-50%, -50%); }
-        .ds-omni-arrow-left:hover { transform: translate(-50%, -50%) scale(1.3); }
-        .ds-omni-arrow-right { right: 0; transform: translate(50%, -50%); }
-        .ds-omni-arrow-right:hover { transform: translate(50%, -50%) scale(1.3); }
+        .ds-omni-arrow-left { left: 10px; transform: translateY(-50%); }
+        .ds-omni-arrow-right { right: 10px; transform: translateY(-50%); }
         
         .ds-node-card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; font-family: 'Fira Code', monospace; font-size: 12px; color: #abb2bf; word-wrap: break-word; position: relative; transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s; width: 100%; box-sizing: border-box; }
         .ds-node-card:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.3); z-index: 10; box-shadow: 0 0 20px rgba(0,0,0,0.6); transform: translateY(-2px); }
@@ -556,7 +554,7 @@ const Logger = {
         if (!text) return '';
         let t = text.toLowerCase();
         if (Settings.timeVarNeutralizer) {
-            t = t.replace(/\b\d{1,2}:\d{2}(?:\s?[ap]m)?\b/gi, '')
+            t = t.replace(/\b\d{1,2}:\d{2}(?::\d{2})?(?:\s?[ap]m)?\b/gi, '')
                  .replace(/\b\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?\b/gi, '')
                  .replace(/\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi, '')
                  .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b/gi, '');
@@ -793,26 +791,6 @@ function extractAddedText(oldStr, newStr) {
     return added.length > 0 ? added.join(' ') : null;
 }
 
-function stripPrefillFromAssistant(assistantObj, prefills) {
-    if (!assistantObj || !prefills || prefills.length === 0) return assistantObj;
-    let content = assistantObj.content || '';
-    let modified = false;
-    for (const p of prefills) {
-        const pContent = p.content || '';
-        const trimmedContent = content.trimStart();
-        const trimmedPContent = pContent.trimStart();
-        if (trimmedContent.startsWith(trimmedPContent)) { 
-            content = trimmedContent.substring(trimmedPContent.length); 
-            modified = true; 
-        }
-    }
-    if (modified) {
-        content = content.replace(/^[\s\n]+/, ''); 
-        return createMsg({role: assistantObj.role, content: content}, assistantObj.tag);
-    }
-    return assistantObj;
-}
-
 // ==========================================
 // 7. 🧊 絕對真理追加架構 (The Holy Grail Order)
 // ==========================================
@@ -902,7 +880,8 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
         const incomingHistoryPool = [];
         for(let t of historyTurns) {
             incomingHistoryPool.push(t.user);
-            if(t.assistant) incomingHistoryPool.push(stripPrefillFromAssistant(t.assistant, state.lastPrefills));
+            // 終極修復：不再剝離預填充，保證 AI 歷史記憶的絕對完整性
+            if(t.assistant) incomingHistoryPool.push(t.assistant);
         }
 
         // 3. 平行宇宙協議 (分支切換)
@@ -963,7 +942,7 @@ async function interceptAndRestructurePrompt(data, isDryRun = false) {
                     newFrozenSequence.push(frozenItem); 
                     handledIncomingSys.add(bestIdx);
 
-                    if (Settings.hotReloadPersona && frozenItem.content.length > 400) {
+                    if (Settings.hotReloadPersona && (i === 0 || frozenItem.content.length > 400)) {
                         const patch = createMsg({role: 'system', content: `[系统提示：角色设定已热更新，最新特征如下：\n${incomingItem.content}]`}, 'SYS');
                         patch._omniCat = 'patch_hotreload';
                         patch._sourceHash = frozenItem.hash;
@@ -1365,7 +1344,7 @@ let omniLeftArrayFrozen = [];
 let omniNeedsRedraw = false;
 let isOmniRendering = false;
 let resizeObserver = null;
-let nodePositionCache = { left: {}, right: {} }; // 虛擬座標緩存矩陣，解決滾動卡頓
+let nodePositionCache = { left: {}, right: {} };
 
 async function showOmniVisionUI() {
     const chatKeyInfo = getChatKey();
@@ -1376,14 +1355,12 @@ async function showOmniVisionUI() {
         return;
     }
 
-    // Req 5: 左側嚴格綁定 frozenSequence (真正的絕對真理)
     omniLeftArrayFrozen = fastClone(state.frozenSequence || []);
 
     const html = `
         <div class="ds-overlay ds-gpu-accel" id="ds-omni-modal-wrapper">
             <div class="ds-modal ds-omni-modal ds-gpu-accel" onclick="event.stopPropagation();">
                 
-                <!-- Req 4: 頂部整合，節省高度 -->
                 <div class="ds-omni-header-row">
                     <h2 class="ds-modal-title ds-blue"><i class="fa-solid fa-eye"></i> Omni-Vision 量子画布沙盒</h2>
                     <div class="ds-omni-stats-bar">
@@ -1396,7 +1373,6 @@ async function showOmniVisionUI() {
                     <button class="ds-btn-reset" onclick="closeOmniVision();"><i class="fa-solid fa-xmark"></i> 关闭</button>
                 </div>
 
-                <!-- 預設折疊面板 -->
                 <div class="ds-omni-panel">
                     <div class="ds-omni-panel-header" onclick="this.parentElement.classList.toggle('open'); setTimeout(() => { cacheNodePositions(); requestCanvasUpdate(); }, 300);">
                         <span><i class="fa-solid fa-gears"></i> 核心协议控制台 (点击展开并即时生效)</span>
@@ -1468,7 +1444,7 @@ async function showOmniVisionUI() {
                     <!-- 神經網路連線畫布 (Canvas) -->
                     <div class="ds-omni-canvas-container">
                         <canvas id="omni-canvas"></canvas>
-                        <div id="omni-arrows-layer"></div> <!-- Req 2: 實體箭頭層 -->
+                        <div id="omni-arrows-layer"></div>
                     </div>
 
                     <!-- 右視窗：即時沙盒預覽 -->
@@ -1556,7 +1532,6 @@ async function showOmniVisionUI() {
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     
-    // Req 3: 滾動時不再調用 getBoundingClientRect，直接觸發重繪
     leftPane.addEventListener('scroll', function() {
         requestCanvasUpdate();
         if (!isSyncLocked) return;
@@ -1604,8 +1579,11 @@ window.closeOmniVision = function() {
     nodePositionCache = { left: {}, right: {} };
 };
 
-// Req 3: 緩存所有節點的絕對 Y 座標，徹底解決滾動卡頓
 function cacheNodePositions() {
+    const canvasContainer = document.querySelector('.ds-omni-canvas-container');
+    if (!canvasContainer) return;
+    const canvasRect = canvasContainer.getBoundingClientRect();
+    
     const leftPane = document.getElementById('omni-left-pane');
     const rightPane = document.getElementById('omni-right-pane');
     if (!leftPane || !rightPane) return;
@@ -1613,16 +1591,20 @@ function cacheNodePositions() {
     nodePositionCache.left = {};
     nodePositionCache.right = {};
 
+    const leftPaneRect = leftPane.getBoundingClientRect();
+    const leftOffset = leftPaneRect.top - canvasRect.top;
     const leftNodes = leftPane.querySelectorAll('.ds-node-card');
     leftNodes.forEach(node => {
         const id = parseInt(node.id.replace('omni-left-node-', ''));
-        nodePositionCache.left[id] = node.offsetTop + (node.offsetHeight / 2);
+        nodePositionCache.left[id] = { baseY: node.offsetTop + (node.offsetHeight / 2), offset: leftOffset };
     });
 
+    const rightPaneRect = rightPane.getBoundingClientRect();
+    const rightOffset = rightPaneRect.top - canvasRect.top;
     const rightNodes = rightPane.querySelectorAll('.ds-node-card');
     rightNodes.forEach(node => {
         const id = parseInt(node.id.replace('omni-right-node-', ''));
-        nodePositionCache.right[id] = node.offsetTop + (node.offsetHeight / 2);
+        nodePositionCache.right[id] = { baseY: node.offsetTop + (node.offsetHeight / 2), offset: rightOffset };
     });
 }
 
@@ -1668,12 +1650,10 @@ function triggerOmniRender(state) {
     omniRenderTimeout = setTimeout(() => renderOmniVision(state), 50);
 }
 
-// Req 2: 點擊箭頭跳轉並高亮
 window.jumpToOmniNode = function(side, id) {
     const targetPane = document.getElementById(`omni-${side}-pane`);
     const targetNode = document.getElementById(`omni-${side}-node-${id}`);
     if (targetPane && targetNode) {
-        // 暫時解除滾動同步，防止互相拉扯
         const wasSyncLocked = isSyncLocked;
         isSyncLocked = false;
         
@@ -1683,7 +1663,7 @@ window.jumpToOmniNode = function(side, id) {
         });
         
         targetNode.classList.remove('highlight-pulse');
-        void targetNode.offsetWidth; // trigger reflow
+        void targetNode.offsetWidth; 
         targetNode.classList.add('highlight-pulse');
         
         setTimeout(() => { isSyncLocked = wasSyncLocked; }, 800);
@@ -1702,7 +1682,6 @@ async function renderOmniVision(state) {
     let preservedTokens = 0;
     let recomputeTokens = 0;
 
-    // Req 5: 獲取真實的當前 ST 聊天上下文，確保預覽 100% 準確
     let currentContextChat = [];
     try {
         const context = getContext();
@@ -1895,12 +1874,13 @@ function updateOmniCanvas() {
         let startX = 0, startY = 0, endX = width, endY = 0;
         let isVisible = false;
 
-        // Req 3: 使用緩存的座標，避免 getBoundingClientRect 導致的卡頓
         if (m.left !== -1 && nodePositionCache.left[m.left] !== undefined) {
-            startY = nodePositionCache.left[m.left] - leftPane.scrollTop;
+            const leftData = nodePositionCache.left[m.left];
+            startY = leftData.baseY - leftPane.scrollTop + leftData.offset;
         }
         if (m.right !== -1 && nodePositionCache.right[m.right] !== undefined) {
-            endY = nodePositionCache.right[m.right] - rightPane.scrollTop;
+            const rightData = nodePositionCache.right[m.right];
+            endY = rightData.baseY - rightPane.scrollTop + rightData.offset;
         }
 
         if (m.type === 'deleted') {
@@ -1922,7 +1902,6 @@ function updateOmniCanvas() {
 
         if (!isVisible) return;
 
-        // Req 1: 絕美連線 - 優化貝茲曲線控制點，水平射出再彎曲
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         const cpOffset = width * 0.45; 
@@ -1966,7 +1945,6 @@ function updateOmniCanvas() {
         ctx.shadowColor = `rgba(${colorHex},0.5)`;
         ctx.stroke();
 
-        // Req 2: 渲染實體 DOM 箭頭
         if (m.left !== -1 && m.right !== -1) {
             arrowsHtml += `<div class="ds-omni-arrow ds-omni-arrow-left" style="top:${startY}px; color:rgb(${colorHex});" onclick="jumpToOmniNode('right', ${m.right})" title="跳转到右侧对应节点"><i class="fa-solid fa-chevron-right"></i></div>`;
             arrowsHtml += `<div class="ds-omni-arrow ds-omni-arrow-right" style="top:${endY}px; color:rgb(${colorHex});" onclick="jumpToOmniNode('left', ${m.left})" title="跳转到左侧对应节点"><i class="fa-solid fa-chevron-left"></i></div>`;
@@ -2176,6 +2154,7 @@ function applyOneClickOptimize() {
     
     $('#ds-cache-enable').prop('checked', true);
     $('#ds-cache-dynamic-mode').val(1);
+    $('.ds-omni-toggle[data-setting="dynamicMode"]').addClass('active');
     $('#ds-cache-history-mode').val(1);
     $('#ds-cache-prefix').prop('checked', true);
     $('#ds-cache-semantic').prop('checked', true);
@@ -2198,6 +2177,12 @@ function applyOneClickOptimize() {
     $('#ds-cache-cot').prop('checked', true);
     $('#ds-cache-timevar').prop('checked', true);
     $('#ds-cache-overflow').prop('checked', true);
+    
+    $('.ds-omni-toggle').each(function() {
+        if ($(this).data('setting') !== 'dynamicMode') {
+            $(this).addClass('active');
+        }
+    });
     
     updateTopBarState();
     if (typeof toastr !== 'undefined') toastr.success("🌟 已成功套用 DeepSeek 最佳化设定！");
@@ -2680,7 +2665,6 @@ async function setupUI() {
         
         $('#extensions_settings').append(html);
 
-        // UI 事件綁定
         $('#ds-btn-omni-vision').on('click', showOmniVisionUI);
         $('#ds-btn-one-click').on('click', applyOneClickOptimize);
         
@@ -2694,7 +2678,14 @@ async function setupUI() {
         $('#ds-cache-loglevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
         $('#ds-cache-maxsize').on('change', function () { Settings.maxCacheSize = parseInt($(this).val()) || 30; safeSave(); performGarbageCollection(); });
         $('#ds-cache-autopin').on('change', function () { Settings.autoPinThreshold = parseInt($(this).val()) || 0; safeSave(); });
-        $('#ds-cache-dynamic-mode').on('change', function () { Settings.dynamicMode = parseInt($(this).val()); safeSave(); });
+        
+        // 終極修復：UI 狀態完美同步
+        $('#ds-cache-dynamic-mode').on('change', function () { 
+            Settings.dynamicMode = parseInt($(this).val()); 
+            $('.ds-omni-toggle[data-setting="dynamicMode"]').removeClass('active');
+            if(Settings.dynamicMode === 1) $('.ds-omni-toggle[data-setting="dynamicMode"]').addClass('active');
+            safeSave(); 
+        });
         
         $('#ds-cache-history-mode').on('change', function () { Settings.historyEditMode = parseInt($(this).val()); safeSave(); });
         $('#ds-cache-lorebook-sink').on('change', function () { Settings.lorebookSink = $(this).is(':checked'); safeSave(); });
