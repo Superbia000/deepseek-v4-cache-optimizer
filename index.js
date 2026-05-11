@@ -127,16 +127,32 @@ const Logger = {
     }
 };
 
+// ==========================================
+// 📂 存檔與角色卡分組系統 (Archive System)
+// ==========================================
 function getChatKey() {
     const context = getContext();
     let chatId = context.chatId || "default_chat";
-    return { key: `chat_${chatId}`, label: `存檔: ${chatId}` };
+    let character = context.name2 || "未分類/群聊";
+    if (context.groupId) character = "群聊: " + (context.groupName || context.groupId);
+    
+    return { key: `chat_${chatId}`, label: `${chatId}`, character: character };
 }
 
 function getChatState(chatKeyInfo) {
     if (!Settings.chats[chatKeyInfo.key]) {
-        Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, frozenSequence: [] };
+        Settings.chats[chatKeyInfo.key] = { 
+            label: chatKeyInfo.label, 
+            character: chatKeyInfo.character,
+            frozenSequence: [] 
+        };
         safeSave();
+    } else {
+        // 舊版數據遷移：補上角色名稱
+        if (!Settings.chats[chatKeyInfo.key].character) {
+            Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
+            safeSave();
+        }
     }
     return Settings.chats[chatKeyInfo.key];
 }
@@ -253,8 +269,6 @@ async function interceptAndRestructurePrompt(data) {
             });
         }
 
-        // ⚠️ 階段 2 (提取臨時態) 已被徹底廢除！所有提示詞都必須進入凍結池以保證 100% 快取命中！
-
         // --- 階段 3：絕對秩序矩陣 (比對凍結池) ---
         const nextFrozenSequence = [];
         const seenHashes = new Set();
@@ -306,7 +320,6 @@ async function interceptAndRestructurePrompt(data) {
                 }
                 missingHistoryCount = 0;
             }
-            // ⚠️ 修復：協議 9 現在只對用戶和 AI 的歷史對話生效，防止系統提示詞微調產生垃圾補丁
             else if (Settings.timeSpacePatch && bestSim > 0.5 && frozenMsg.role !== 'system') {
                 const matched = incomingPool.splice(bestMatchIdx, 1)[0];
                 ledger.push({ ref: frozenMsg, origIdx: matched.originalIndex, ...origin, gen: '修改', action: '原位凍結', proto: '協議9', status: '已凍結' });
@@ -339,7 +352,6 @@ async function interceptAndRestructurePrompt(data) {
             }
 
             if (msg.role === 'system') {
-                // ⚠️ 修復：將原本不凍結的 RAG/Author's Note 轉化為動態提示詞，徹底凍結在底部！
                 if (Detectors.isEphemeral(msg.norm) || (Settings.floatingAnchor && msg.name === "Author's Note")) {
                     dynamicPrompts.push(msg);
                     ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '協議2/15/19', status: '將凍結' });
@@ -372,7 +384,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // --- 階段 5：雙軌排序引擎 (嚴格遵守用戶藍圖) ---
+        // --- 階段 5：雙軌排序引擎 ---
         let rawNewItems = [];
         if (state.frozenSequence.length === 0) {
             rawNewItems = [...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...newHistory, ...dynamicPrompts, ...patches];
@@ -449,21 +461,75 @@ function renderChatsUI() {
         return;
     }
 
+    // 🌟 角色卡分組邏輯
+    const groups = {};
     keys.forEach(key => {
         const chat = Settings.chats[key];
-        const html = `
-            <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); padding:8px 12px; margin-bottom:6px; border-radius:6px; border: 1px solid rgba(255,255,255,0.05);">
-                <span style="font-size:0.85em; color:#ddd;">${chat.label} <span style="color:#00e5ff;">(凍結節點: ${chat.frozenSequence.length})</span></span>
-                <button class="menu_button interactable ds-reset-btn" data-key="${key}" style="font-size:0.8em; padding:4px 8px; margin:0;">清空快取鏈</button>
-            </div>
-        `;
-        container.append(html);
+        const charName = chat.character || "未分類存檔";
+        if (!groups[charName]) groups[charName] = [];
+        groups[charName].push({ key, ...chat });
     });
 
-    container.find('.ds-reset-btn').on('click', function() {
+    // 🌟 渲染分組折疊面板
+    for (const [charName, chats] of Object.entries(groups)) {
+        const groupHtml = $(`
+            <div style="margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden;">
+                <div class="ds-char-header" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.05); cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.05)'">
+                    <b style="font-size: 13px; color: #00e5ff;">👤 ${charName} <span style="color:#aaa; font-size:11px;">(${chats.length} 個存檔)</span></b>
+                    <span class="fa-solid fa-chevron-down" style="font-size: 12px; color: #aaa; transition: transform 0.3s; transform: rotate(-90deg);"></span>
+                </div>
+                <div class="ds-char-content" style="display: none; padding: 8px; background: rgba(0,0,0,0.2);"></div>
+            </div>
+        `);
+
+        const contentDiv = groupHtml.find('.ds-char-content');
+        chats.forEach(chat => {
+            const cleanLabel = chat.label.replace('.jsonl', '');
+            const chatHtml = $(`
+                <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); padding:6px 10px; margin-bottom:4px; border-radius:4px; border: 1px solid rgba(255,255,255,0.02);">
+                    <span style="font-size:0.8em; color:#ccc; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${chat.label}">${cleanLabel} <span style="color:#00e5ff;">(${chat.frozenSequence.length} 節點)</span></span>
+                    <button class="menu_button interactable ds-reset-btn" data-key="${chat.key}" style="font-size:0.75em; padding:2px 6px; margin:0;">清空</button>
+                </div>
+            `);
+            contentDiv.append(chatHtml);
+        });
+
+        groupHtml.find('.ds-char-header').on('click', function() {
+            const $content = $(this).next('.ds-char-content');
+            const $icon = $(this).find('.fa-chevron-down');
+            $content.slideToggle(200);
+            if ($content.is(':visible')) $icon.css('transform', 'rotate(0deg)');
+            else $icon.css('transform', 'rotate(-90deg)');
+        });
+
+        container.append(groupHtml);
+    }
+
+    container.find('.ds-reset-btn').on('click', function(e) {
+        e.stopPropagation();
         delete Settings.chats[$(this).data('key')];
         safeSave(); renderChatsUI();
     });
+}
+
+// 🌟 魔法棒選單按鈕注入
+function setupMagicWandButton() {
+    if ($('#ds_reset_current_chat').length === 0) {
+        const btn = $(`<div id="ds_reset_current_chat" class="list-group-item interactable"><span class="fa-solid fa-broom" style="margin-right: 8px; color: #00e5ff;"></span>重置當前 DS 快取</div>`);
+        btn.on('click', () => {
+            const keyInfo = getChatKey();
+            if (Settings.chats[keyInfo.key]) {
+                delete Settings.chats[keyInfo.key];
+                safeSave();
+                renderChatsUI();
+                if (typeof toastr !== 'undefined') toastr.success("已清空當前聊天的 DS 快取鏈");
+                Logger.write(`🧹 已手動清空當前聊天 (${keyInfo.label}) 的快取鏈`, LogLevels.BASIC);
+            } else {
+                if (typeof toastr !== 'undefined') toastr.info("當前聊天無 DS 快取數據");
+            }
+        });
+        $('#extension_menu').append(btn);
+    }
 }
 
 function createToggle(id, title, desc, checked) {
@@ -558,8 +624,8 @@ async function setupUI() {
                     </select>
                 </div>
                 
-                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 5px;">📂 存檔凍結池管理：</b>
-                <div id="ds-chat-list-container" style="max-height: 120px; overflow-y: auto; margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 5px; background: rgba(0,0,0,0.2);"></div>
+                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 5px;">📂 存檔凍結池管理 (按角色分類)：</b>
+                <div id="ds-chat-list-container" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 5px; background: rgba(0,0,0,0.2);"></div>
                 <button id="ds-cache-factory-reset" class="menu_button" style="width: 100%; margin-bottom: 15px; background: #8b0000; color: white; border-radius: 6px; padding: 8px;">⚠️ 廠級清空所有凍結池 (還原 ST 默認)</button>
                 
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
@@ -608,6 +674,7 @@ async function setupUI() {
     $('#ds-log-clear').on('click', Logger.clear);
     
     renderChatsUI();
+    setupMagicWandButton(); // 注入魔法棒按鈕
 }
 
 jQuery(async () => {
@@ -622,7 +689,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (Cache-100% 修復版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (UI 體驗升級版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
