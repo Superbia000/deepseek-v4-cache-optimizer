@@ -140,12 +140,27 @@ function getChatKey() {
 }
 
 function getChatState(chatKeyInfo) {
+    const now = Date.now();
     if (!Settings.chats[chatKeyInfo.key]) {
-        Settings.chats[chatKeyInfo.key] = { label: chatKeyInfo.label, character: chatKeyInfo.character, frozenSequence: [] };
+        Settings.chats[chatKeyInfo.key] = { 
+            label: chatKeyInfo.label, 
+            character: chatKeyInfo.character, 
+            frozenSequence: [],
+            updatedAt: now // 🌟 新增時間軸追蹤
+        };
         safeSave();
-    } else if (!Settings.chats[chatKeyInfo.key].character) {
-        Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
-        safeSave();
+    } else {
+        // 舊數據遷移與修復
+        let modified = false;
+        if (!Settings.chats[chatKeyInfo.key].character) {
+            Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
+            modified = true;
+        }
+        if (!Settings.chats[chatKeyInfo.key].updatedAt) {
+            Settings.chats[chatKeyInfo.key].updatedAt = now;
+            modified = true;
+        }
+        if (modified) safeSave();
     }
     return Settings.chats[chatKeyInfo.key];
 }
@@ -399,25 +414,22 @@ async function interceptAndRestructurePrompt(data) {
         }));
 
         state.frozenSequence = [...nextFrozenSequence, ...newItemsToFreeze];
+        state.updatedAt = Date.now(); // 🌟 更新時間軸
         safeSave();
 
         const finalStream = [...state.frozenSequence];
         if (currentUserMsg) finalStream.push(currentUserMsg);
         prefills.forEach(p => finalStream.push(p));
 
-        // 🌟 寫入最終索引到帳本 (改為 1-Based Indexing，消除視覺錯覺)
         ledger.forEach(entry => {
             if (entry.status === '已刪除' || entry.action === '剔除' || entry.action === '抹除') {
                 entry.finalIdx = '-';
             } else {
                 let idx = finalStream.indexOf(entry.ref);
                 if (idx === -1) idx = finalStream.findIndex(m => m.content === (entry.ref.content || entry.content) && m.role === entry.ref.role);
-                entry.finalIdx = idx !== -1 ? idx + 1 : '-'; // +1 轉換為人類直覺的計數
+                entry.finalIdx = idx !== -1 ? idx + 1 : '-'; 
             }
-            
-            if (entry.origIdx !== '-') {
-                entry.origIdx = entry.origIdx + 1; // 原始排序也同步 +1
-            }
+            if (entry.origIdx !== '-') entry.origIdx = entry.origIdx + 1; 
         });
 
         data.chat.splice(0, data.chat.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
@@ -432,7 +444,6 @@ async function interceptAndRestructurePrompt(data) {
             mdLog += `| 最終排序 | 原始排序 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 觸發協議 | 狀態 | 提示詞內容摘要 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
             
-            // 嚴格按照最終排序輸出，被刪除的沉底
             ledger.sort((a, b) => {
                 if (a.finalIdx === '-' && b.finalIdx === '-') return (a.origIdx === '-' ? 999 : a.origIdx) - (b.origIdx === '-' ? 999 : b.origIdx);
                 if (a.finalIdx === '-') return 1;
@@ -455,7 +466,7 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// UI 與初始化 (UI & Initialization)
+// 🌟 徹底重構的 SaaS 級存檔管理 UI
 // ==========================================
 function renderChatsUI() {
     const container = $('#ds-chat-list-container');
@@ -464,56 +475,107 @@ function renderChatsUI() {
     
     const keys = Object.keys(Settings.chats);
     if (keys.length === 0) {
-        container.append('<p style="font-size:0.85em; opacity:0.6; padding: 10px;">尚無接管的存檔數據。</p>');
+        container.append(`
+            <div style="padding: 25px 10px; text-align: center; color: #888; font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                <i class="fa-solid fa-inbox" style="font-size: 28px; margin-bottom: 12px; opacity: 0.4; display: block; color: #00e5ff;"></i>
+                尚無接管的存檔數據<br><span style="font-size: 11px; opacity: 0.6;">開始聊天後，防禦矩陣會自動在此建立快取鏈</span>
+            </div>
+        `);
         return;
     }
 
+    // 1. 數據分組與統計
     const groups = {};
     keys.forEach(key => {
         const chat = Settings.chats[key];
         const charName = chat.character || "未分類存檔";
-        if (!groups[charName]) groups[charName] = [];
-        groups[charName].push({ key, ...chat });
+        if (!groups[charName]) groups[charName] = { chats: [], totalNodes: 0, lastUpdated: 0 };
+        
+        groups[charName].chats.push({ key, ...chat });
+        groups[charName].totalNodes += chat.frozenSequence.length;
+        groups[charName].lastUpdated = Math.max(groups[charName].lastUpdated, chat.updatedAt || 0);
     });
 
-    for (const [charName, chats] of Object.entries(groups)) {
+    // 2. 角色層級排序 (最新活動的排最上面)
+    const sortedChars = Object.keys(groups).sort((a, b) => groups[b].lastUpdated - groups[a].lastUpdated);
+
+    // 3. 渲染卡片 UI
+    sortedChars.forEach(charName => {
+        const group = groups[charName];
+        // 存檔層級排序 (最新活動的排最上面)
+        group.chats.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
         const groupHtml = $(`
-            <div style="margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden;">
-                <div class="ds-char-header" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.05); cursor: pointer; transition: 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.05)'">
-                    <b style="font-size: 13px; color: #00e5ff;">👤 ${charName} <span style="color:#aaa; font-size:11px;">(${chats.length} 個存檔)</span></b>
-                    <span class="fa-solid fa-chevron-down" style="font-size: 12px; color: #aaa; transition: transform 0.3s; transform: rotate(-90deg);"></span>
+            <div class="ds-char-card">
+                <div class="ds-char-header">
+                    <div class="ds-char-title">
+                        <i class="fa-solid fa-user-astronaut" style="color: #aaa; font-size: 14px;"></i>
+                        <span style="max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${charName}">${charName}</span>
+                        <span class="ds-badge">${group.chats.length} 存檔</span>
+                        <span class="ds-badge ds-badge-nodes">${group.totalNodes} 節點</span>
+                    </div>
+                    <div style="display: flex; gap: 6px; align-items: center;">
+                        <button class="ds-action-btn ds-clear-char-btn" data-char="${charName}" title="清空此角色的所有快取">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                        <i class="fa-solid fa-chevron-down ds-chevron" style="color: #666; font-size: 12px; transition: 0.3s; transform: rotate(-90deg); margin-left: 4px;"></i>
+                    </div>
                 </div>
-                <div class="ds-char-content" style="display: none; padding: 8px; background: rgba(0,0,0,0.2);"></div>
+                <div class="ds-chat-list"></div>
             </div>
         `);
 
-        const contentDiv = groupHtml.find('.ds-char-content');
-        chats.forEach(chat => {
+        const listContainer = groupHtml.find('.ds-chat-list');
+        
+        group.chats.forEach(chat => {
             const cleanLabel = chat.label.replace('.jsonl', '');
             const chatHtml = $(`
-                <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.3); padding:6px 10px; margin-bottom:4px; border-radius:4px; border: 1px solid rgba(255,255,255,0.02);">
-                    <span style="font-size:0.8em; color:#ccc; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${chat.label}">${cleanLabel} <span style="color:#00e5ff;">(${chat.frozenSequence.length} 節點)</span></span>
-                    <button class="menu_button interactable ds-reset-btn" data-key="${chat.key}" style="font-size:0.75em; padding:2px 6px; margin:0;">清空</button>
+                <div class="ds-chat-item">
+                    <div class="ds-chat-name" title="${chat.label}">
+                        <i class="fa-regular fa-message" style="margin-right: 8px; opacity: 0.5; font-size: 11px;"></i>
+                        ${cleanLabel}
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span class="ds-badge ds-badge-nodes" style="font-size: 9px; padding: 1px 5px;">${chat.frozenSequence.length}</span>
+                        <button class="ds-action-btn ds-clear-chat-btn" data-key="${chat.key}" title="清空此存檔">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
                 </div>
             `);
-            contentDiv.append(chatHtml);
+            listContainer.append(chatHtml);
         });
 
-        groupHtml.find('.ds-char-header').on('click', function() {
-            const $content = $(this).next('.ds-char-content');
-            const $icon = $(this).find('.fa-chevron-down');
-            $content.slideToggle(200);
-            if ($content.is(':visible')) $icon.css('transform', 'rotate(0deg)');
+        // 事件綁定：折疊面板 (排除點擊垃圾桶)
+        groupHtml.find('.ds-char-header').on('click', function(e) {
+            if ($(e.target).closest('.ds-clear-char-btn').length) return;
+            const $list = $(this).next('.ds-chat-list');
+            const $icon = $(this).find('.ds-chevron');
+            $list.slideToggle(200);
+            if ($list.is(':visible')) $icon.css('transform', 'rotate(0deg)');
             else $icon.css('transform', 'rotate(-90deg)');
         });
 
         container.append(groupHtml);
-    }
+    });
 
-    container.find('.ds-reset-btn').on('click', function(e) {
-        e.stopPropagation();
+    // 事件綁定：刪除單一存檔
+    container.find('.ds-clear-chat-btn').on('click', function() {
         delete Settings.chats[$(this).data('key')];
         safeSave(); renderChatsUI();
+    });
+
+    // 事件綁定：批量刪除角色存檔
+    container.find('.ds-clear-char-btn').on('click', function() {
+        const charToClear = $(this).data('char');
+        if (confirm(`⚠️ 確定要清空「${charToClear}」底下的所有快取存檔嗎？\n這將會重置該角色的所有防禦矩陣狀態！`)) {
+            Object.keys(Settings.chats).forEach(k => {
+                if ((Settings.chats[k].character || "未分類存檔") === charToClear) {
+                    delete Settings.chats[k];
+                }
+            });
+            safeSave(); renderChatsUI();
+        }
     });
 }
 
@@ -563,20 +625,42 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
-    // 🌟 注入極致優化的 Markdown 表格與圖示按鈕 CSS (增加底部安全邊距防遮擋)
+    // 🌟 注入 SaaS 級卡片化 UI 與 Markdown 表格 CSS
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
+                /* 日誌表格樣式 */
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
-                .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; margin-bottom: 15px; } /* 增加底部邊距防遮擋 */
+                .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; margin-bottom: 15px; } 
                 .ds-log-table th, .ds-log-table td { white-space: nowrap; } 
                 .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
                 .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
                 .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.15); }
                 
+                /* 圖示按鈕樣式 */
                 .ds-icon-btn { background: transparent; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 4px 8px; transition: 0.2s; border-radius: 4px; }
                 .ds-icon-btn:hover { color: #00e5ff; background: rgba(0, 229, 255, 0.1); }
+
+                /* 🌟 SaaS 級存檔卡片樣式 */
+                .ds-char-card { margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.2); overflow: hidden; }
+                .ds-char-header { display: flex; align-items: center; padding: 10px 12px; cursor: pointer; transition: background 0.2s; user-select: none; }
+                .ds-char-header:hover { background: rgba(255,255,255,0.05); }
+                .ds-char-title { flex-grow: 1; font-size: 13px; font-weight: bold; color: #e0e0e0; display: flex; align-items: center; gap: 8px; }
+                
+                /* 發光徽章 */
+                .ds-badge { font-size: 10px; padding: 2px 6px; border-radius: 10px; background: rgba(0, 229, 255, 0.1); color: #00e5ff; border: 1px solid rgba(0, 229, 255, 0.2); font-weight: normal; }
+                .ds-badge-nodes { background: rgba(167, 139, 250, 0.1); color: #a78bfa; border-color: rgba(167, 139, 250, 0.2); }
+                
+                /* 動作按鈕 (垃圾桶/叉叉) */
+                .ds-action-btn { background: none; border: none; color: #888; cursor: pointer; padding: 4px 6px; border-radius: 4px; transition: 0.2s; display: flex; align-items: center; justify-content: center; }
+                .ds-action-btn:hover { color: #ff4444; background: rgba(255, 68, 68, 0.1); }
+                
+                /* 存檔列表內部 */
+                .ds-chat-list { display: none; border-top: 1px solid rgba(255,255,255,0.05); background: rgba(0,0,0,0.3); }
+                .ds-chat-item { display: flex; align-items: center; padding: 8px 12px 8px 24px; border-bottom: 1px solid rgba(255,255,255,0.02); transition: 0.2s; }
+                .ds-chat-item:hover { background: rgba(255,255,255,0.03); }
+                .ds-chat-name { flex-grow: 1; font-size: 12px; color: #ccc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 10px; }
             </style>
         `);
     }
@@ -633,9 +717,9 @@ async function setupUI() {
                     </select>
                 </div>
                 
-                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 5px;">📂 存檔凍結池管理 (按角色分類)：</b>
-                <div id="ds-chat-list-container" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 5px; background: rgba(0,0,0,0.2);"></div>
-                <button id="ds-cache-factory-reset" class="menu_button" style="width: 100%; margin-bottom: 15px; background: #8b0000; color: white; border-radius: 6px; padding: 8px;">⚠️ 廠級清空所有凍結池 (還原 ST 默認)</button>
+                <b style="font-size: 13px; color: #aaa; display: block; margin-bottom: 8px;">📂 存檔凍結池管理 (按角色分類)：</b>
+                <div id="ds-chat-list-container" style="max-height: 250px; overflow-y: auto; margin-bottom: 10px; padding-right: 4px;"></div>
+                <button id="ds-cache-factory-reset" class="menu_button" style="width: 100%; margin-bottom: 15px; background: rgba(255, 68, 68, 0.1); color: #ff4444; border: 1px solid rgba(255, 68, 68, 0.3); border-radius: 6px; padding: 8px; transition: 0.2s;" onmouseover="this.style.background='rgba(255, 68, 68, 0.2)'" onmouseout="this.style.background='rgba(255, 68, 68, 0.1)'">⚠️ 廠級清空所有凍結池 (還原 ST 默認)</button>
                 
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                     <b style="font-size: 13px; color: #aaa;">📝 全景 Markdown 日誌：</b>
@@ -676,7 +760,7 @@ async function setupUI() {
     });
 
     $('#ds-opt-logLevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
-    $('#ds-cache-factory-reset').on('click', () => { if (confirm("這將摧毀所有存檔的快取連續性！確定要清除嗎？")) { Settings.chats = {}; safeSave(); renderChatsUI(); } });
+    $('#ds-cache-factory-reset').on('click', () => { if (confirm("⚠️ 這將摧毀所有存檔的快取連續性！確定要清除嗎？")) { Settings.chats = {}; safeSave(); renderChatsUI(); } });
     
     $('#ds-log-copy').on('click', Logger.copy);
     $('#ds-log-export').on('click', Logger.export);
@@ -698,7 +782,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (UI 視覺與追蹤重構版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (存檔系統重構版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
