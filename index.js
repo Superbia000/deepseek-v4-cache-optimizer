@@ -18,8 +18,8 @@ function initSettings() {
     if (!extension_settings.ds_cache_v13_ultimate) {
         extension_settings.ds_cache_v13_ultimate = defaultSettings;
     }
-    Settings = Object.assign(defaultSettings, extension_settings.ds_cache_v13_ultimate);
-    if (!Settings.chats) Settings.chats = {}; 
+    // 🧹 清理：使用 {} 防止污染 defaultSettings，並移除下方無用的 Settings.chats 檢查
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v13_ultimate);
 }
 
 function safeSave() {
@@ -139,30 +139,22 @@ function getChatKey() {
     return { key: `chat_${chatId}`, label: `${chatId}`, character: character };
 }
 
+// 🧹 清理：精簡狀態同步邏輯，去除冗餘的 if/else 分支
 function getChatState(chatKeyInfo) {
-    const now = Date.now();
-    if (!Settings.chats[chatKeyInfo.key]) {
-        Settings.chats[chatKeyInfo.key] = { 
-            label: chatKeyInfo.label, 
-            character: chatKeyInfo.character, 
-            frozenSequence: [],
-            updatedAt: now // 🌟 新增時間軸追蹤
-        };
-        safeSave();
-    } else {
-        // 舊數據遷移與修復
-        let modified = false;
-        if (!Settings.chats[chatKeyInfo.key].character) {
-            Settings.chats[chatKeyInfo.key].character = chatKeyInfo.character;
-            modified = true;
-        }
-        if (!Settings.chats[chatKeyInfo.key].updatedAt) {
-            Settings.chats[chatKeyInfo.key].updatedAt = now;
-            modified = true;
-        }
-        if (modified) safeSave();
+    let chat = Settings.chats[chatKeyInfo.key];
+    let modified = false;
+    
+    if (!chat) {
+        chat = Settings.chats[chatKeyInfo.key] = { frozenSequence: [] };
+        modified = true;
     }
-    return Settings.chats[chatKeyInfo.key];
+    
+    if (chat.label !== chatKeyInfo.label) { chat.label = chatKeyInfo.label; modified = true; }
+    if (chat.character !== chatKeyInfo.character) { chat.character = chatKeyInfo.character; modified = true; }
+    if (!chat.updatedAt) { chat.updatedAt = Date.now(); modified = true; }
+    
+    if (modified) safeSave();
+    return chat;
 }
 
 function getSimilarity(str1, str2) {
@@ -239,7 +231,6 @@ async function interceptAndRestructurePrompt(data) {
         let ledger = [];
         let otherPluginActions = [];
 
-        // --- 階段 1：拆解 ST 傳入的原始陣列 (精準定位) ---
         let lastUserIdx = -1;
         let prefillIdxs = [];
         
@@ -286,7 +277,6 @@ async function interceptAndRestructurePrompt(data) {
             });
         }
 
-        // --- 階段 3：絕對秩序矩陣 (比對凍結池) ---
         const nextFrozenSequence = [];
         const seenHashes = new Set();
         let missingHistoryCount = 0;
@@ -349,7 +339,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (frozenMsg.role !== 'system') {
                     missingHistoryCount++;
                     if (Settings.amnesia && missingHistoryCount > 5) {
-                        if (missingHistoryCount === 6) createPatch(`[系統提示] 早期的記憶已歸檔，請根據當前上下文繼續。`, '協議12');
+                        if (missingHistoryCount === 6) createPatch(`[系統提示] 早期的記憶已歸檔，請根据當前上下文繼續。`, '協議12');
                     } else if (Settings.retconMode && missingHistoryCount <= 3) {
                         createPatch(`[世界意志] 之前的某個事件已被抹除，請當作從未發生過。`, '協議13');
                     } else if (Settings.voidBridging) {
@@ -359,7 +349,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // --- 階段 4：精準分類新生代數據 ---
         let newDefaultPrompts = [], newLorebooks = [], newOtherPrompts = [], newHistory = [], dynamicPrompts = [];
 
         for (const msg of incomingPool) {
@@ -401,7 +390,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // --- 階段 5：雙軌排序引擎 ---
         let rawNewItems = [];
         if (state.frozenSequence.length === 0) {
             rawNewItems = [...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...newHistory, ...dynamicPrompts, ...patches];
@@ -409,12 +397,16 @@ async function interceptAndRestructurePrompt(data) {
             rawNewItems = [...newHistory, ...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...dynamicPrompts, ...patches];
         }
 
+        // 🧹 清理：加入短路求值，避免對已存在 norm/hash 的項目進行重複的 CPU 運算
         const newItemsToFreeze = rawNewItems.map(item => ({
-            role: item.role, content: item.content, norm: Logger.normalize(item.content), hash: Logger.hash(item.content)
+            role: item.role, 
+            content: item.content, 
+            norm: item.norm || Logger.normalize(item.content), 
+            hash: item.hash || Logger.hash(item.content)
         }));
 
         state.frozenSequence = [...nextFrozenSequence, ...newItemsToFreeze];
-        state.updatedAt = Date.now(); // 🌟 更新時間軸
+        state.updatedAt = Date.now(); 
         safeSave();
 
         const finalStream = [...state.frozenSequence];
@@ -434,7 +426,6 @@ async function interceptAndRestructurePrompt(data) {
 
         data.chat.splice(0, data.chat.length, ...finalStream.map(i => ({ role: i.role, content: i.content })));
         
-        // --- 階段 6：生成 Markdown 日誌 ---
         if (Settings.logLevel >= LogLevels.DETAILED) {
             let mdLog = `### 🛡️ 絕對防禦矩陣處理報告\n\n`;
             if (otherPluginActions.length > 0) {
@@ -461,7 +452,8 @@ async function interceptAndRestructurePrompt(data) {
         }
 
     } catch (err) {
-        Logger.error('攔截器發生錯誤', err);
+        // 🧹 清理：修復了原本呼叫不存在的 Logger.error 導致的二次崩潰 Bug
+        console.error('[DS Cache] 攔截器發生錯誤:', err);
     }
 }
 
@@ -484,7 +476,6 @@ function renderChatsUI() {
         return;
     }
 
-    // 1. 數據分組與統計
     const groups = {};
     keys.forEach(key => {
         const chat = Settings.chats[key];
@@ -496,13 +487,10 @@ function renderChatsUI() {
         groups[charName].lastUpdated = Math.max(groups[charName].lastUpdated, chat.updatedAt || 0);
     });
 
-    // 2. 角色層級排序 (最新活動的排最上面)
     const sortedChars = Object.keys(groups).sort((a, b) => groups[b].lastUpdated - groups[a].lastUpdated);
 
-    // 3. 渲染卡片 UI
     sortedChars.forEach(charName => {
         const group = groups[charName];
-        // 存檔層級排序 (最新活動的排最上面)
         group.chats.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
         const groupHtml = $(`
@@ -546,7 +534,6 @@ function renderChatsUI() {
             listContainer.append(chatHtml);
         });
 
-        // 事件綁定：折疊面板 (排除點擊垃圾桶)
         groupHtml.find('.ds-char-header').on('click', function(e) {
             if ($(e.target).closest('.ds-clear-char-btn').length) return;
             const $list = $(this).next('.ds-chat-list');
@@ -559,13 +546,11 @@ function renderChatsUI() {
         container.append(groupHtml);
     });
 
-    // 事件綁定：刪除單一存檔
     container.find('.ds-clear-chat-btn').on('click', function() {
         delete Settings.chats[$(this).data('key')];
         safeSave(); renderChatsUI();
     });
 
-    // 事件綁定：批量刪除角色存檔
     container.find('.ds-clear-char-btn').on('click', function() {
         const charToClear = $(this).data('char');
         if (confirm(`⚠️ 確定要清空「${charToClear}」底下的所有快取存檔嗎？\n這將會重置該角色的所有防禦矩陣狀態！`)) {
@@ -580,9 +565,26 @@ function renderChatsUI() {
 }
 
 function setupMagicWandButton() {
-    if ($('#ds_reset_current_chat').length === 0) {
-        const btn = $(`<div id="ds_reset_current_chat" class="list-group-item interactable"><span class="fa-solid fa-broom" style="margin-right: 8px; color: #00e5ff;"></span>重置當前 DS 快取</div>`);
-        btn.on('click', () => {
+    const menu = document.getElementById('extensionsMenu');
+    if (!menu) return;
+    
+    if (!document.getElementById('ds-reset-current-chat-menu-item')) {
+        const item = document.createElement('div');
+        item.id = 'ds-reset-current-chat-menu-item';
+        item.className = 'list-group-item flex-container flexGap5 interactable';
+        item.tabIndex = 0;
+        item.setAttribute('role', 'listitem');
+        item.title = '重置當前聊天的 DS 快取鏈';
+        
+        item.innerHTML = `
+            <div class="fa-fw fa-solid fa-broom extensionsMenuExtensionButton" style="color: #00e5ff;"></div>
+            <span style="white-space: nowrap;">重置當前 DS 快取</span>
+        `;
+        
+        item.addEventListener('click', () => {
+            const menuEl = document.getElementById('extensionsMenu');
+            if (menuEl) menuEl.style.display = 'none';
+            
             const keyInfo = getChatKey();
             if (Settings.chats[keyInfo.key]) {
                 delete Settings.chats[keyInfo.key];
@@ -594,7 +596,8 @@ function setupMagicWandButton() {
                 if (typeof toastr !== 'undefined') toastr.info("當前聊天無 DS 快取數據");
             }
         });
-        $('#extension_menu').append(btn);
+        
+        menu.appendChild(item);
     }
 }
 
@@ -625,7 +628,6 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
-    // 🌟 注入 SaaS 級卡片化 UI 與 Markdown 表格 CSS
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
@@ -642,7 +644,7 @@ async function setupUI() {
                 .ds-icon-btn { background: transparent; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 4px 8px; transition: 0.2s; border-radius: 4px; }
                 .ds-icon-btn:hover { color: #00e5ff; background: rgba(0, 229, 255, 0.1); }
 
-                /* 🌟 SaaS 級存檔卡片樣式 */
+                /* SaaS 級存檔卡片樣式 */
                 .ds-char-card { margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(0,0,0,0.2); overflow: hidden; }
                 .ds-char-header { display: flex; align-items: center; padding: 10px 12px; cursor: pointer; transition: background 0.2s; user-select: none; }
                 .ds-char-header:hover { background: rgba(255,255,255,0.05); }
@@ -782,7 +784,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (存檔系統重構版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致純淨優化版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
