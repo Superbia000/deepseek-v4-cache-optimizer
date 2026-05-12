@@ -18,7 +18,6 @@ function initSettings() {
     if (!extension_settings.ds_cache_v13_ultimate) {
         extension_settings.ds_cache_v13_ultimate = defaultSettings;
     }
-    // 🧹 清理：使用 {} 防止污染 defaultSettings，並移除下方無用的 Settings.chats 檢查
     Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v13_ultimate);
 }
 
@@ -139,7 +138,6 @@ function getChatKey() {
     return { key: `chat_${chatId}`, label: `${chatId}`, character: character };
 }
 
-// 🧹 清理：精簡狀態同步邏輯，去除冗餘的 if/else 分支
 function getChatState(chatKeyInfo) {
     let chat = Settings.chats[chatKeyInfo.key];
     let modified = false;
@@ -196,6 +194,7 @@ const Detectors = {
         return n.includes('lorebook') || n.includes('world') || n.includes('wi-');
     },
     
+    // 🌟 升級版：精準辨識動態摘要、向量檢索與浮動提示詞
     getOriginInfo: (msg, isLastUser, isPrefill) => {
         if (msg.isDSPatch) return { source: '本插件', creator: 'DS Cache', category: 'PATCH' };
         
@@ -208,10 +207,18 @@ const Detectors = {
                              : { source: 'AI歷史回覆', creator: '大模型', category: 'AI' };
         }
         
+        if (msg.role === 'system') {
+            const lower = msg.content.toLowerCase();
+            const isRag = ['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容'].some(k => lower.includes(k));
+            const isSum = ['summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k));
+            if (isRag) return { source: '向量檢索', creator: 'RAG系統', category: 'DYN' };
+            if (isSum) return { source: '動態摘要', creator: 'ST核心', category: 'DYN' };
+        }
+
         if (msg.name) {
             const n = msg.name.toLowerCase();
             if (Detectors.isLorebook(msg)) return { source: '世界書', creator: msg.name, category: 'SYS' };
-            if (n.includes('author')) return { source: '預設', creator: '用戶(Author Note)', category: 'SYS' };
+            if (n.includes('author')) return { source: '浮動提示詞', creator: '用戶(Author Note)', category: 'SYS' };
             if (!Detectors.isDefaultPrompt(msg)) return { source: `其他插件(${msg.name})`, creator: msg.name, category: 'SYS' };
         }
         return { source: '預設', creator: 'ST核心', category: 'SYS' };
@@ -349,6 +356,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 🌟 階段 4：精準分類新生代數據 (修復動態與靜態的誤判)
         let newDefaultPrompts = [], newLorebooks = [], newOtherPrompts = [], newHistory = [], dynamicPrompts = [];
 
         for (const msg of incomingPool) {
@@ -358,22 +366,33 @@ async function interceptAndRestructurePrompt(data) {
             }
 
             if (msg.role === 'system') {
-                if (Detectors.isEphemeral(msg.norm) || (Settings.floatingAnchor && msg.name === "Author's Note")) {
+                // 1. 真正的動態內容 (摘要、RAG)
+                if (Detectors.isEphemeral(msg.norm)) {
                     dynamicPrompts.push(msg);
-                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '協議2/15/19', status: '將凍結' });
-                } else if (Settings.diaryMode && Detectors.isDynamicPrompt(msg.content)) {
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '協議2/19', status: '將凍結' });
+                } 
+                // 2. 日記模式的時間更新
+                else if (Settings.diaryMode && Detectors.isDynamicPrompt(msg.content)) {
                     const p = { role: 'system', content: `[狀態更新] ${msg.content}`, isDSPatch: true };
                     dynamicPrompts.push(p);
-                    ledger.push({ ref: p, origIdx: msg.originalIndex, source: '本插件', creator: 'DS Cache', category: 'SYS', gen: '轉換', action: '追加凍結', proto: '協議14', status: '將凍結' });
-                } else if (Detectors.isLorebook(msg)) {
+                    ledger.push({ ref: p, origIdx: msg.originalIndex, source: '本插件', creator: 'DS Cache', category: 'DYN', gen: '轉換', action: '追加凍結', proto: '協議14', status: '將凍結' });
+                } 
+                // 3. 世界書
+                else if (Detectors.isLorebook(msg)) {
                     newLorebooks.push(msg);
                     ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '-', status: '將凍結' });
-                } else if (Detectors.isDefaultPrompt(msg)) {
+                } 
+                // 4. 預設系統提示詞
+                else if (Detectors.isDefaultPrompt(msg)) {
                     newDefaultPrompts.push(msg);
                     ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '-', status: '將凍結' });
-                } else {
+                } 
+                // 5. 其他靜態提示詞 (包含被 ST 標記為 Author's Note 的靜態設定)
+                else {
                     newOtherPrompts.push(msg);
-                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: '-', status: '將凍結' });
+                    let proto = '-';
+                    if (Settings.floatingAnchor && msg.name === "Author's Note") proto = '協議15';
+                    ledger.push({ ref: msg, origIdx: msg.originalIndex, source: msg.source, creator: msg.creator, category: msg.category, gen: '新增', action: '追加凍結', proto: proto, status: '將凍結' });
                 }
             } 
             else {
@@ -390,14 +409,16 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 🌟 階段 5：雙軌排序引擎 (完美符合對話1與對話2+的絕對追加邏輯)
         let rawNewItems = [];
         if (state.frozenSequence.length === 0) {
+            // 對話1：預設 -> 世界書 -> 其他 -> 歷史 -> 動態 -> 補丁
             rawNewItems = [...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...newHistory, ...dynamicPrompts, ...patches];
         } else {
+            // 對話2+：舊凍結(已在前面) -> 新歷史 -> 新預設 -> 新世界書 -> 新其他 -> 新動態 -> 補丁
             rawNewItems = [...newHistory, ...newDefaultPrompts, ...newLorebooks, ...newOtherPrompts, ...dynamicPrompts, ...patches];
         }
 
-        // 🧹 清理：加入短路求值，避免對已存在 norm/hash 的項目進行重複的 CPU 運算
         const newItemsToFreeze = rawNewItems.map(item => ({
             role: item.role, 
             content: item.content, 
@@ -452,7 +473,6 @@ async function interceptAndRestructurePrompt(data) {
         }
 
     } catch (err) {
-        // 🧹 清理：修復了原本呼叫不存在的 Logger.error 導致的二次崩潰 Bug
         console.error('[DS Cache] 攔截器發生錯誤:', err);
     }
 }
@@ -784,7 +804,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致純淨優化版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V13 終極全景日誌旗艦版 (極致排序與精準辨識版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
