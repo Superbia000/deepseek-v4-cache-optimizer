@@ -189,7 +189,6 @@ const Detectors = {
         return n.includes('lorebook') || n.includes('world') || n.includes('wi-');
     },
     
-    // 🌟 終極精準來源辨識器
     getOriginInfo: (msg, isLastUser, isPrefill) => {
         if (msg.isDSPatch) return { source: '本插件', creator: 'DS Cache', category: 'PATCH' };
         
@@ -229,7 +228,6 @@ async function interceptAndRestructurePrompt(data) {
         let lastUserIdx = -1;
         let prefillIdxs = [];
         
-        // 預掃描：找出真正的最後一次用戶輸入與預填充
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             if (incomingStream[i].role === 'user' && lastUserIdx === -1) lastUserIdx = i;
             else if (incomingStream[i].role === 'assistant' && lastUserIdx === -1) prefillIdxs.push(i);
@@ -291,7 +289,6 @@ async function interceptAndRestructurePrompt(data) {
             nextFrozenSequence.push(frozenMsg); 
             seenHashes.add(frozenMsg.hash);
             
-            // 凍結池內的來源還原
             const origin = Detectors.getOriginInfo(frozenMsg, false, false);
 
             let bestMatchIdx = -1;
@@ -408,14 +405,18 @@ async function interceptAndRestructurePrompt(data) {
         if (currentUserMsg) finalStream.push(currentUserMsg);
         prefills.forEach(p => finalStream.push(p));
 
-        // 寫入最終索引到帳本
+        // 🌟 寫入最終索引到帳本 (改為 1-Based Indexing，消除視覺錯覺)
         ledger.forEach(entry => {
             if (entry.status === '已刪除' || entry.action === '剔除' || entry.action === '抹除') {
                 entry.finalIdx = '-';
             } else {
                 let idx = finalStream.indexOf(entry.ref);
                 if (idx === -1) idx = finalStream.findIndex(m => m.content === (entry.ref.content || entry.content) && m.role === entry.ref.role);
-                entry.finalIdx = idx !== -1 ? idx : '-';
+                entry.finalIdx = idx !== -1 ? idx + 1 : '-'; // +1 轉換為人類直覺的計數
+            }
+            
+            if (entry.origIdx !== '-') {
+                entry.origIdx = entry.origIdx + 1; // 原始排序也同步 +1
             }
         });
 
@@ -562,13 +563,13 @@ function createCategory(id, icon, title, contentHtml) {
 }
 
 async function setupUI() {
-    // 🌟 注入極致優化的 Markdown 表格與圖示按鈕 CSS
+    // 🌟 注入極致優化的 Markdown 表格與圖示按鈕 CSS (增加底部安全邊距防遮擋)
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
-                .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; }
-                .ds-log-table th, .ds-log-table td { white-space: nowrap; } /* 強制橫向排列不換行 */
+                .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; margin-bottom: 15px; } /* 增加底部邊距防遮擋 */
+                .ds-log-table th, .ds-log-table td { white-space: nowrap; } 
                 .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
                 .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
