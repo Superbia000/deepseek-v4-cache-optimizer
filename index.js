@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v15_absolute) {
-        extension_settings.ds_cache_v15_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v16_absolute) {
+        extension_settings.ds_cache_v16_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v15_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v16_absolute);
 }
 
 function safeSave() {
@@ -182,8 +182,8 @@ const CoreEngine = {
         const text = msg.content;
         if (!text) return false;
         
-        // 1. 探測未解析的 ST 動態變數 (涵蓋所有已知 ST 宏)
-        if (/\{\{(time|date|weekday|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|wi|description|personality|scenario|mesExamples|charVersion|userGender|charGender|original|rule34|model|prompt|generation|lastMessage.*?)\}\}/i.test(text)) return true;
+        // 1. 探測未解析的 ST 動態變數 (涵蓋所有會頻繁改變的 ST 宏)
+        if (/\{\{(time|date|weekday|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|idle_duration|total_messages|if|var|pipe)(::|:|}|\s)/i.test(text)) return true;
         
         // 2. 探測已解析的時間與日期變數
         const timeRegex = /\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b/;
@@ -191,7 +191,7 @@ const CoreEngine = {
         if (timeRegex.test(text) || dateRegex.test(text)) return true;
         
         // 3. 探測是否包含最後一次用戶輸入 ({{lastusermessage}} 解析結果)
-        if (lastUserMsg && lastUserMsg.content && text.includes(lastUserMsg.content)) return true;
+        if (lastUserMsg && lastUserMsg.content && lastUserMsg.content.length > 10 && text.includes(lastUserMsg.content)) return true;
         
         // 4. 探測 RAG 向量檢索與自動摘要
         const lower = text.toLowerCase();
@@ -236,7 +236,7 @@ async function interceptAndRestructurePrompt(data) {
         const lastUserMsg = lastUserIdx !== -1 ? incomingStream[lastUserIdx] : null;
         let incomingPool = [];
 
-        // 階段 1：歸屬感知與動態探測 (將所有訊息放入池中以供量子糾纏比對)
+        // 階段 1：歸屬感知與動態探測
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             const isLastUser = (i === lastUserIdx);
@@ -259,14 +259,27 @@ async function interceptAndRestructurePrompt(data) {
         let cacheDrop = 0;
         let syncMessages = [];
 
-        // 階段 2：量子糾纏 (全自動感知修改與刪除)
+        // 階段 2：量子糾纏 (全自動感知修改與刪除，包含預填充智能切割)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
             
             let bestMatchIdx = -1;
             let bestSim = 0;
+            let isMergedPrefill = false;
+            let mergedRemainder = null;
+
             for (let j = 0; j < incomingPool.length; j++) {
                 if (incomingPool[j].role !== frozen.role) continue;
+                
+                // 智能切割引擎：ST 有時會將「預填充」與「AI回覆」合併成同一個歷史訊息
+                if (frozen.role === 'assistant' && incomingPool[j].content.startsWith(frozen.content) && incomingPool[j].content.length > frozen.content.length) {
+                    bestSim = 1;
+                    bestMatchIdx = j;
+                    isMergedPrefill = true;
+                    mergedRemainder = incomingPool[j].content.substring(frozen.content.length);
+                    break;
+                }
+
                 let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
@@ -275,6 +288,20 @@ async function interceptAndRestructurePrompt(data) {
                 let matched = incomingPool.splice(bestMatchIdx, 1)[0];
                 nextFrozen.push(frozen);
                 ledger.push({ ref: frozen, origIdx: matched._origIdx, attr: frozen._attr, gen: '繼承', action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
+                
+                // 如果偵測到合併，將切割出來的 AI 回覆作為新歷史放回池中等待追加
+                if (isMergedPrefill && mergedRemainder.trim().length > 0) {
+                    let newAiMsg = {
+                        role: 'assistant',
+                        content: mergedRemainder,
+                        name: matched.name,
+                        _attr: { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' },
+                        _norm: CoreEngine.normalize(mergedRemainder),
+                        _isDynamic: false,
+                        _origIdx: matched._origIdx
+                    };
+                    incomingPool.push(newAiMsg);
+                }
             } else if (bestSim > 0.6) {
                 if (frozen._isDynamic) {
                     nextFrozen.push(frozen);
@@ -303,6 +330,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 即時提醒
         if (cacheDrop > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
             toastr.warning(
                 `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>
@@ -313,7 +341,7 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
-        // 階段 3：分類新生代提示詞 (只剩下未被量子糾纏匹配的全新提示詞)
+        // 階段 3：分類新生代提示詞
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], newDynamic = [], newCurrent = [], newPrefill = [];
         incomingPool.forEach(msg => {
             if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
@@ -357,7 +385,7 @@ async function interceptAndRestructurePrompt(data) {
         state.updatedAt = Date.now();
         safeSave();
 
-        // 階段 5：構建最終輸出流
+        // 階段 5：構建最終輸出流 (剝離所有內部標記)
         data.chat.length = 0;
         data.chat.push(...nextFrozen.map(m => {
             let clean = { role: m.role, content: m.content };
@@ -464,9 +492,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v15-opt-drawer">
+    <div class="inline-drawer" id="ds-v16-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v15.0 絕對凍結版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v16.0 完美凍結版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -535,7 +563,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V15 絕對凍結版 (只追加不移位架構) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V16 完美凍結版 (只追加不移位架構) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
