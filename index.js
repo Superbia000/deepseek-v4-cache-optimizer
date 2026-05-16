@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v14_quantum) {
-        extension_settings.ds_cache_v14_quantum = defaultSettings;
+    if (!extension_settings.ds_cache_v15_absolute) {
+        extension_settings.ds_cache_v15_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v14_quantum);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v15_absolute);
 }
 
 function safeSave() {
@@ -36,14 +36,12 @@ const Logger = {
     
     getTime: () => {
         const now = new Date();
-        // 瀏覽器本地時區時間
         return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     },
     
     truncate: (text) => {
         if (!text) return '';
         const clean = text.replace(/[\n\r]/g, ' ');
-        // 嚴格限制在 30 個字元以內
         return clean.length > 30 ? clean.substring(0, 30) + '...' : clean;
     },
     
@@ -59,12 +57,10 @@ const Logger = {
     updateUI: (newEntry) => {
         if (!Logger._uiViewer) return;
         
-        // 基礎 Markdown 解析
         let html = newEntry
             .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
             .replace(/^- (.*)/gm, '<li>$1</li>');
             
-        // 深度解析 Markdown 表格
         if (html.includes('|')) {
             const lines = html.split('\n');
             let tableHtml = '<div class="ds-log-container"><table class="ds-log-table">';
@@ -149,6 +145,7 @@ function getChatState(chatKeyInfo) {
 // 🛡️ 核心引擎：浮光排除、歸屬感知、動態探測
 // ==========================================
 const CoreEngine = {
+    // 浮光排除：徹底抹除空格、換行、所有標點符號與簡單代碼
     normalize: (text) => {
         if (!text) return '';
         return text.replace(/[\s\n\r\t]/g, '')
@@ -157,9 +154,9 @@ const CoreEngine = {
                    .trim();
     },
 
-    // 深度歸屬感知：精準識別來源與創造者
+    // 歸屬感知：深度識別提示詞最初來源與創造者
     getAttribution: (msg, isLastUser, isPrefill) => {
-        if (msg._isDSPlugin) return { cat: '系統', source: '本插件', creator: 'DS Cache', type: 'PLUGIN' };
+        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
         
         if (msg.role === 'user') {
             return isLastUser ? { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' } 
@@ -172,22 +169,34 @@ const CoreEngine = {
         
         if (msg.name) {
             const n = msg.name.toLowerCase();
-            if (n.includes('lorebook') || n.includes('world') || n.includes('wi-')) return { cat: '系統', source: `世界書`, creator: msg.name, type: 'LOREBOOK' };
-            if (n.includes('system') || n.includes('main') || n.includes('nsfw') || n.includes('jailbreak') || n.includes('persona') || n.includes('character')) return { cat: '系統', source: '預設提示詞', creator: 'ST核心', type: 'DEFAULT' };
-            return { cat: '系統', source: `其他插件`, creator: msg.name, type: 'OTHER_PLUGIN' };
+            if (n.includes('lorebook') || n.includes('world') || n.includes('wi-')) return { cat: '世界書', source: `世界書提示詞(${msg.name})`, creator: msg.name, type: 'LOREBOOK' };
+            if (n.includes('system') || n.includes('main') || n.includes('nsfw') || n.includes('jailbreak') || n.includes('persona') || n.includes('character')) return { cat: '預設', source: '預設提示詞', creator: 'ST核心', type: 'DEFAULT' };
+            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
         }
-        return { cat: '系統', source: '預設提示詞', creator: 'ST核心', type: 'DEFAULT' };
+        return { cat: '預設', source: '預設提示詞', creator: 'ST核心', type: 'DEFAULT' };
     },
 
-    isDynamic: (msg) => {
+    // 動態探測：基於 ST 宏解析後的特徵進行逆向探測
+    isDynamic: (msg, lastUserMsg) => {
         if (msg.role !== 'system') return false; 
         const text = msg.content;
         if (!text) return false;
-        const lower = text.toLowerCase();
-        if (['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容', 'summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k))) return true;
+        
+        // 1. 探測未解析的 ST 動態變數 (涵蓋所有已知 ST 宏)
+        if (/\{\{(time|date|weekday|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|wi|description|personality|scenario|mesExamples|charVersion|userGender|charGender|original|rule34|model|prompt|generation|lastMessage.*?)\}\}/i.test(text)) return true;
+        
+        // 2. 探測已解析的時間與日期變數
         const timeRegex = /\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b/;
         const dateRegex = /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/;
         if (timeRegex.test(text) || dateRegex.test(text)) return true;
+        
+        // 3. 探測是否包含最後一次用戶輸入 ({{lastusermessage}} 解析結果)
+        if (lastUserMsg && lastUserMsg.content && text.includes(lastUserMsg.content)) return true;
+        
+        // 4. 探測 RAG 向量檢索與自動摘要
+        const lower = text.toLowerCase();
+        if (['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容', 'summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k))) return true;
+        
         return false;
     },
 
@@ -217,19 +226,17 @@ async function interceptAndRestructurePrompt(data) {
         let lastUserIdx = -1;
         let prefillIdxs = [];
         let otherPluginActions = [];
-        let ledger = []; // 全景追蹤帳本
+        let ledger = []; 
         
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             if (incomingStream[i].role === 'user' && lastUserIdx === -1) lastUserIdx = i;
             else if (incomingStream[i].role === 'assistant' && lastUserIdx === -1) prefillIdxs.push(i);
         }
 
-        let currentUserMsg = null;
-        let prefills = [];
+        const lastUserMsg = lastUserIdx !== -1 ? incomingStream[lastUserIdx] : null;
         let incomingPool = [];
-        let dynamicPool = [];
 
-        // 階段 1：歸屬感知與動態探測
+        // 階段 1：歸屬感知與動態探測 (將所有訊息放入池中以供量子糾纏比對)
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             const isLastUser = (i === lastUserIdx);
@@ -237,18 +244,14 @@ async function interceptAndRestructurePrompt(data) {
             
             msg._attr = CoreEngine.getAttribution(msg, isLastUser, isPrefill);
             msg._norm = CoreEngine.normalize(msg.content);
-            msg._isDynamic = CoreEngine.isDynamic(msg);
-            msg._origIdx = i + 1; // 記錄原始排序 (1-based)
+            msg._isDynamic = CoreEngine.isDynamic(msg, lastUserMsg);
+            msg._origIdx = i + 1; 
 
-            // 偵測其他插件動作
             if (msg._attr.type === 'OTHER_PLUGIN') {
                 otherPluginActions.push(`- 偵測到其他插件 (**${msg._attr.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
             }
 
-            if (isLastUser) currentUserMsg = msg;
-            else if (isPrefill) prefills.push(msg);
-            else if (msg._isDynamic) dynamicPool.push(msg);
-            else incomingPool.push(msg);
+            incomingPool.push(msg);
         }
 
         let nextFrozen = [];
@@ -310,10 +313,13 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
-        // 階段 3：分類新生代提示詞
-        let newHistory = [], newDefault = [], newLorebook = [], newOther = [];
+        // 階段 3：分類新生代提示詞 (只剩下未被量子糾纏匹配的全新提示詞)
+        let newHistory = [], newDefault = [], newLorebook = [], newOther = [], newDynamic = [], newCurrent = [], newPrefill = [];
         incomingPool.forEach(msg => {
-            if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
+            if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
+            else if (msg._attr.type === 'PREFILL') newPrefill.push(msg);
+            else if (msg._isDynamic) newDynamic.push(msg);
+            else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
             else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
             else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
             else newOther.push(msg);
@@ -326,19 +332,25 @@ async function interceptAndRestructurePrompt(data) {
             });
         };
 
-        // 階段 4：絕對凍結排序邏輯
+        // 階段 4：絕對凍結排序邏輯 (嚴格遵守只追加不移位)
         if (state.frozenSequence.length === 0) {
+            // 對話 1
             appendToFrozen(newDefault, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newLorebook, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newOther, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newHistory, '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(dynamicPool, '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(newDynamic, '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(newCurrent, '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(newPrefill, '即時凍結', '絕對凍結(對話1)');
         } else {
+            // 對話 2+
             appendToFrozen(newHistory, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newLorebook, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newOther, '追加凍結', '絕對凍結(對話2+)');
-            appendToFrozen(dynamicPool, '鏡像追加', '絕對凍結(對話2+)');
+            appendToFrozen(newDynamic, '鏡像追加', '絕對凍結(對話2+)');
+            appendToFrozen(newCurrent, '即時凍結', '絕對凍結(對話2+)');
+            appendToFrozen(newPrefill, '即時凍結', '絕對凍結(對話2+)');
         }
 
         state.frozenSequence = nextFrozen;
@@ -347,18 +359,7 @@ async function interceptAndRestructurePrompt(data) {
 
         // 階段 5：構建最終輸出流
         data.chat.length = 0;
-        const finalStream = [...nextFrozen];
-        
-        if (currentUserMsg) {
-            finalStream.push(currentUserMsg);
-            ledger.push({ ref: currentUserMsg, origIdx: currentUserMsg._origIdx, attr: currentUserMsg._attr, gen: '新增', action: '置底發送', func: '歸屬感知', status: '未凍結' });
-        }
-        prefills.forEach(p => {
-            finalStream.push(p);
-            ledger.push({ ref: p, origIdx: p._origIdx, attr: p._attr, gen: '新增', action: '置底發送', func: '歸屬感知', status: '未凍結' });
-        });
-
-        data.chat.push(...finalStream.map(m => {
+        data.chat.push(...nextFrozen.map(m => {
             let clean = { role: m.role, content: m.content };
             if (m.name) clean.name = m.name;
             return clean;
@@ -375,17 +376,15 @@ async function interceptAndRestructurePrompt(data) {
             mdLog += `| 最終排序 | 原始排序 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
             
-            // 計算最終排序
             ledger.forEach(entry => {
                 if (entry.status === '已刪除') {
                     entry.finalIdx = '-';
                 } else {
-                    let idx = finalStream.indexOf(entry.ref);
+                    let idx = nextFrozen.indexOf(entry.ref);
                     entry.finalIdx = idx !== -1 ? idx + 1 : '-';
                 }
             });
 
-            // 按照最終排序排列 (已刪除的放最後)
             ledger.sort((a, b) => {
                 if (a.finalIdx === '-' && b.finalIdx === '-') return 0;
                 if (a.finalIdx === '-') return 1;
@@ -448,10 +447,10 @@ async function setupUI() {
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
-                /* 日誌表格樣式 (橫向排列與優化) */
+                /* 日誌表格樣式 (強制橫向排列與優化) */
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
                 .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; margin-bottom: 15px; } 
-                .ds-log-table th, .ds-log-table td { white-space: nowrap; } /* 強制橫向排列 */
+                .ds-log-table th, .ds-log-table td { white-space: nowrap; } 
                 .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
                 .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
@@ -465,9 +464,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v14-opt-drawer">
+    <div class="inline-drawer" id="ds-v15-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v14.0 量子糾纏版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v15.0 絕對凍結版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -517,7 +516,6 @@ async function setupUI() {
         } 
     });
 
-    // 綁定日誌按鈕事件
     $('#ds-log-copy').on('click', Logger.copy);
     $('#ds-log-export').on('click', Logger.export);
     $('#ds-log-clear').on('click', Logger.clear);
@@ -537,7 +535,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V14 量子糾纏版 (全景日誌架構) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V15 絕對凍結版 (只追加不移位架構) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
