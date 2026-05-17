@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v41_absolute) {
-        extension_settings.ds_cache_v41_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v42_absolute) {
+        extension_settings.ds_cache_v42_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v41_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v42_absolute);
 }
 
 function safeSave() {
@@ -121,123 +121,132 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🌟 終極溯源引擎：純淨骨架共振算法 (V41 核心突破)
+// 🌟 終極溯源引擎：全域宏解析與碎片共振 (V42 核心突破)
 // ==========================================
-const SourceTracker = {
-    // 淨化文本：移除所有宏 {{...}}，並剝離所有非文字元(標點、空白、括號等)
-    cleanMsg: (str) => {
-        if (!str || typeof str !== 'string') return '';
-        return str.replace(/\{\{.*?\}\}/g, '').replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '').toLowerCase();
-    },
-    
-    // 將源碼按宏切割成多個純淨骨架區塊
-    getChunks: (str) => {
-        if (!str || typeof str !== 'string') return [];
-        const parts = str.split(/\{\{.*?\}\}/);
-        return parts.map(p => SourceTracker.cleanMsg(p)).filter(p => p.length >= 2);
-    },
+const GlobalPromptRegistry = {
+    registry: [],
 
-    // 全域暴力尋址：獲取 ST 擴展設定
-    getExtSettings: () => {
+    build: () => {
+        GlobalPromptRegistry.registry = [];
+        const add = (cat, name, text, type) => {
+            if (!text || typeof text !== 'string' || text.trim().length < 2) return;
+            GlobalPromptRegistry.registry.push({ cat, name, text, type });
+        };
+
+        // 1. 角色卡數據
         try {
-            if (typeof window !== 'undefined' && window.extension_settings) return window.extension_settings;
-            if (typeof getContext === 'function') {
-                const ctx = getContext();
-                if (ctx && ctx.extension_settings) return ctx.extension_settings;
+            if (window.this_character !== undefined && window.characters && window.characters[window.this_character]) {
+                let c = window.characters[window.this_character];
+                add('角色卡', '角色設定(Description)', c.description, 'CHAR');
+                add('角色卡', '角色性格(Personality)', c.personality, 'CHAR');
+                add('角色卡', '場景設定(Scenario)', c.scenario, 'CHAR');
+                add('角色卡', '首條訊息(First Mes)', c.first_mes, 'CHAR');
+                add('角色卡', '對話範例(Mes Example)', c.mes_example, 'CHAR');
+                add('角色卡', '創作者筆記(Creator Notes)', c.creator_notes, 'CHAR');
+                add('角色卡', '專屬系統提示詞', c.system_prompt, 'CHAR');
+                add('角色卡', '專屬後綴', c.post_history_instructions, 'CHAR');
             }
-            if (typeof extension_settings !== 'undefined') return extension_settings;
-        } catch(e) {}
-        return {};
+        } catch(e){}
+
+        // 2. 格式化設定
+        try {
+            if (window.settings) {
+                add('格式化', '主系統提示詞(Main)', window.settings.main_prompt, 'FMT');
+                add('格式化', 'NSFW提示詞', window.settings.nsfw_prompt, 'FMT');
+                add('格式化', '越獄提示詞(Jailbreak)', window.settings.jailbreak_prompt, 'FMT');
+                add('格式化', '全局後綴(Post-History)', window.settings.post_history_instructions, 'FMT');
+                add('格式化', '作者筆記(Author Note)', window.settings.authors_note, 'FMT');
+                add('格式化', '用戶設定(Persona)', window.settings.persona_description, 'FMT');
+            }
+        } catch(e){}
+
+        // 3. 世界書 (Lorebooks)
+        try {
+            let wiData = window.world_info_data || window.world_info?.entries || extension_settings?.world_info?.entries || {};
+            for (let bookName in wiData) {
+                let book = wiData[bookName];
+                let entries = book.entries || book;
+                for (let key in entries) {
+                    let entry = entries[key];
+                    let title = entry.comment || entry.name || (Array.isArray(entry.key) ? entry.key.join(',') : '未命名');
+                    add('世界書', `世界書(${bookName} - ${title})`, entry.content || entry.text, 'WI');
+                }
+            }
+        } catch(e){}
+
+        // 4. 提示詞管理器 (Prompt Manager)
+        try {
+            let pmPrompts = [];
+            if (extension_settings?.prompt_manager?.prompts) pmPrompts.push(...extension_settings.prompt_manager.prompts);
+            if (window.extension_prompt_manager?.prompts) pmPrompts.push(...window.extension_prompt_manager.prompts);
+            if (window.power_user?.prompt_manager?.prompts) pmPrompts.push(...window.power_user.prompt_manager.prompts);
+            pmPrompts.forEach(p => {
+                add('預設', `預設提示詞(${p.name || p.identifier || '無名'})`, p.content || p.text || p.value, 'PM');
+            });
+        } catch(e){}
+
+        // 5. 正則擴展 (Regex)
+        try {
+            if (extension_settings?.regex) {
+                extension_settings.regex.forEach(r => {
+                    add('正則', `正則注入(${r.scriptName || '無名'})`, r.replacement, 'REGEX');
+                });
+            }
+        } catch(e){}
     },
 
-    // 獲取提示詞管理器數據庫
-    getPromptManagerPrompts: () => {
-        const ext = SourceTracker.getExtSettings();
-        if (ext?.prompt_manager?.prompts) return ext.prompt_manager.prompts;
-        if (typeof window !== 'undefined' && window.extension_prompt_manager?.prompts) return window.extension_prompt_manager.prompts;
-        return [];
+    getPure: (text) => {
+        if (!text) return '';
+        // 剝離所有標點符號、空白、特殊字元，只保留純粹的文字骨架
+        return String(text).replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '').toLowerCase();
     },
 
-    // 獲取世界書數據庫
-    getWorldInfoData: () => {
-        if (typeof window !== 'undefined' && window.world_info_data) return window.world_info_data;
-        const ext = SourceTracker.getExtSettings();
-        if (ext?.world_info?.entries) return ext.world_info.entries;
-        return {};
-    },
-
-    // 核心識別邏輯
     identify: (msgContent) => {
         if (!msgContent) return null;
-        const msgClean = SourceTracker.cleanMsg(msgContent);
-        if (msgClean.length < 2) return null;
+        let mPure = GlobalPromptRegistry.getPure(msgContent);
+        if (mPure.length < 2) return null;
 
         let bestMatch = null;
         let bestScore = 0;
 
-        // 1. 掃描世界書 (World Info)
-        const wiData = SourceTracker.getWorldInfoData();
-        for (const bookName of Object.keys(wiData)) {
-            const book = wiData[bookName];
-            const entries = book?.entries || book || {};
-            for (const entryKey of Object.keys(entries)) {
-                const entry = entries[entryKey];
-                if (!entry) continue;
-                const text = entry.content || entry.text || '';
-                const chunks = SourceTracker.getChunks(text);
-                if (chunks.length === 0) continue;
+        for (let entry of GlobalPromptRegistry.registry) {
+            // 🌟 核心突破：主動調用 ST 函數，提前解析宏變數 (解決小明注入問題)
+            let resolvedText = entry.text;
+            if (typeof window.substituteParams === 'function') {
+                try { resolvedText = window.substituteParams(entry.text); } catch(e){}
+            }
+            
+            let sPure = GlobalPromptRegistry.getPure(resolvedText);
+            if (sPure.length < 2) continue;
 
-                let matchedLen = 0;
-                let lastIdx = 0;
-                for (const chunk of chunks) {
-                    let idx = msgClean.indexOf(chunk, lastIdx);
-                    if (idx === -1) idx = msgClean.indexOf(chunk); // 允許亂序或跳躍匹配
-                    if (idx !== -1) {
-                        lastIdx = idx + chunk.length;
-                        matchedLen += chunk.length;
-                    }
-                }
+            // 完美匹配
+            if (sPure === mPure) {
+                let creatorMap = { 'CHAR': '角色卡', 'FMT': '格式化設定', 'WI': '世界書系統', 'PM': '提示詞管理器', 'REGEX': '正則擴展' };
+                return { cat: entry.cat, source: entry.name, creator: creatorMap[entry.type] || 'ST核心', type: entry.type };
+            }
 
-                const totalChunkLen = chunks.reduce((acc, c) => acc + c.length, 0);
-                // 只要骨架吻合度 >= 75%，即視為精準命中
-                if (totalChunkLen > 0 && (matchedLen / totalChunkLen >= 0.75) && matchedLen > bestScore) {
-                    bestScore = matchedLen;
-                    let entryTitle = entry.comment || entry.name || '';
-                    if (!entryTitle && entry.key && Array.isArray(entry.key)) entryTitle = entry.key.join(', ');
-                    if (!entryTitle) entryTitle = '未命名條目';
-                    bestMatch = { cat: '世界書', source: `世界書(${bookName} - ${entryTitle})`, creator: '世界書系統', type: 'LOREBOOK' };
-                }
+            // 🌟 核心突破：雙向碎片共振 (解決 ST 切割提示詞問題)
+            if (sPure.includes(mPure)) {
+                // 最終訊息是原始提示詞的碎片
+                let score = 1.0 + (mPure.length / sPure.length);
+                if (score > bestScore) { bestScore = score; bestMatch = entry; }
+            } else if (mPure.includes(sPure)) {
+                // 原始提示詞是最終訊息的碎片
+                let score = 1.0 + (sPure.length / mPure.length);
+                if (score > bestScore) { bestScore = score; bestMatch = entry; }
             }
         }
 
-        // 2. 掃描提示詞管理器 (Prompt Manager)
-        const pmPrompts = SourceTracker.getPromptManagerPrompts();
-        for (const p of pmPrompts) {
-            if (!p) continue;
-            const text = p.content || p.text || p.value || '';
-            const chunks = SourceTracker.getChunks(text);
-            if (chunks.length === 0) continue;
-
-            let matchedLen = 0;
-            let lastIdx = 0;
-            for (const chunk of chunks) {
-                let idx = msgClean.indexOf(chunk, lastIdx);
-                if (idx === -1) idx = msgClean.indexOf(chunk);
-                if (idx !== -1) {
-                    lastIdx = idx + chunk.length;
-                    matchedLen += chunk.length;
-                }
-            }
-
-            const totalChunkLen = chunks.reduce((acc, c) => acc + c.length, 0);
-            if (totalChunkLen > 0 && (matchedLen / totalChunkLen >= 0.75) && matchedLen > bestScore) {
-                bestScore = matchedLen;
-                const name = p.name || p.identifier || '未命名提示詞';
-                bestMatch = { cat: '預設', source: `預設提示詞(${name})`, creator: '提示詞管理器', type: 'DEFAULT' };
-            }
+        if (bestMatch) {
+            let creatorMap = { 'CHAR': '角色卡', 'FMT': '格式化設定', 'WI': '世界書系統', 'PM': '提示詞管理器', 'REGEX': '正則擴展' };
+            return {
+                cat: bestMatch.cat,
+                source: bestMatch.name,
+                creator: creatorMap[bestMatch.type] || 'ST核心',
+                type: bestMatch.type
+            };
         }
-
-        return bestMatch;
+        return null;
     }
 };
 
@@ -278,13 +287,28 @@ const CoreEngine = {
                 window._ds_orig_substituteParams = window.substituteParams;
                 window.substituteParams = hook(window._ds_orig_substituteParams);
             }
-            if (typeof window.substituteParamsExtended === 'function' && !window._ds_orig_substituteParamsExtended) {
-                window._ds_orig_substituteParamsExtended = window.substituteParamsExtended;
-                window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
-            }
         } catch (e) {
             console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
         }
+    },
+
+    getSimilarity: (str1, str2) => {
+        if (str1 === str2) return 1;
+        if (!str1 || !str2) return 0;
+        const getGrams = (str) => {
+            let grams = new Set();
+            let len = str.length;
+            if (len < 3) { grams.add(str); return grams; }
+            for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
+            return grams;
+        };
+        const g1 = getGrams(str1);
+        const g2 = getGrams(str2);
+        if (g1.size === 0 || g2.size === 0) return 0;
+        let intersect = 0;
+        for (let g of g1) { if (g2.has(g)) intersect++; }
+        let union = g1.size + g2.size - intersect;
+        return union === 0 ? 0 : intersect / union;
     },
 
     classify: (msg, structuralTag, isDynamic) => {
@@ -300,8 +324,8 @@ const CoreEngine = {
             return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
-        // 🌟 啟動 V41 終極骨架共振溯源
-        const trackedSource = SourceTracker.identify(msg.content);
+        // 🌟 啟動 V42 終極碎片共振溯源
+        const trackedSource = GlobalPromptRegistry.identify(msg.content);
         if (trackedSource) return trackedSource;
 
         // 傳統特徵回退判斷 (Fallback)
@@ -339,6 +363,9 @@ async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
     try {
+        // 🌟 V42：在處理前，即時構建全域提示詞註冊表
+        GlobalPromptRegistry.build();
+
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
         let incomingPool = [];
@@ -787,9 +814,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v41-opt-drawer">
+    <div class="inline-drawer" id="ds-v42-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v41.0 終極完美溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v42.0 終極完美溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -863,7 +890,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V41 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V42 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
