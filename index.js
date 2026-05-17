@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v27_absolute) {
-        extension_settings.ds_cache_v27_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v28_absolute) {
+        extension_settings.ds_cache_v28_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v27_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v28_absolute);
 }
 
 function safeSave() {
@@ -122,38 +122,44 @@ function resetCurrentChatCache() {
 // 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
 // ==========================================
 const CoreEngine = {
-    macroCache: new Map(), // 儲存: 解析後的純文字 -> 包含 {{}} 的原始代碼
-    chatHistoryCache: new Map(), // 儲存: 真實聊天紀錄
+    dynamicOutputs: new Set(), // 儲存由 ST 動態標籤生成的最終純文字
+    chatHistoryCache: new Map(), // 儲存真實聊天紀錄
 
     normalize: (text) => {
         if (!text) return '';
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 終極劫持：攔截 ST 的宏編譯器，獲取最原始的代碼
+    // 🌟 終極劫持：攔截 ST 的宏編譯器，只要原始代碼有動態標籤，就記錄其結果！
     patchSTEngine: () => {
         try {
-            if (typeof window.substituteParams === 'function' && !window._ds_orig_substituteParams) {
-                window._ds_orig_substituteParams = window.substituteParams;
-                window.substituteParams = function(...args) {
+            const dynamicRegex = /\{\{(time|date|weekday|isotime|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|var|if|pipe|idle_duration|total_messages|macro)(::|:|}|\s)/i;
+            
+            const hook = (origFunc) => {
+                return function(...args) {
                     const orig = args[0];
-                    const res = window._ds_orig_substituteParams.apply(this, args);
+                    const res = origFunc.apply(this, args);
                     if (typeof orig === 'string' && typeof res === 'string' && orig !== res) {
-                        CoreEngine.macroCache.set(CoreEngine.normalize(res), orig);
+                        // 只要原始代碼包含動態標籤，這個結果就 100% 是動態提示詞！
+                        if (dynamicRegex.test(orig)) {
+                            CoreEngine.dynamicOutputs.add(CoreEngine.normalize(res));
+                            if (CoreEngine.dynamicOutputs.size > 500) {
+                                const iterator = CoreEngine.dynamicOutputs.values();
+                                CoreEngine.dynamicOutputs.delete(iterator.next().value);
+                            }
+                        }
                     }
                     return res;
                 };
+            };
+
+            if (typeof window.substituteParams === 'function' && !window._ds_orig_substituteParams) {
+                window._ds_orig_substituteParams = window.substituteParams;
+                window.substituteParams = hook(window._ds_orig_substituteParams);
             }
             if (typeof window.substituteParamsExtended === 'function' && !window._ds_orig_substituteParamsExtended) {
                 window._ds_orig_substituteParamsExtended = window.substituteParamsExtended;
-                window.substituteParamsExtended = function(...args) {
-                    const orig = args[0];
-                    const res = window._ds_orig_substituteParamsExtended.apply(this, args);
-                    if (typeof orig === 'string' && typeof res === 'string' && orig !== res) {
-                        CoreEngine.macroCache.set(CoreEngine.normalize(res), orig);
-                    }
-                    return res;
-                };
+                window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
             }
         } catch (e) {
             console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
@@ -174,51 +180,80 @@ const CoreEngine = {
     },
 
     // 🌟 100% 完美的十維度分類引擎
-    classify: (msg, isUserCurrent, isPrefill) => {
-        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', type: 'PLUGIN' };
+    classify: (msg, index, lastUserIdx) => {
+        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
 
-        const norm = CoreEngine.normalize(msg.content);
-        // 透過映射找回原始代碼 (如果沒有被宏替換過，則等於原內容)
-        const orig = CoreEngine.macroCache.get(norm) || msg.content;
+        const normContent = CoreEngine.normalize(msg.content);
 
-        // 1. 絕對真理：比對真實聊天紀錄
-        if (CoreEngine.chatHistoryCache.has(norm) || CoreEngine.chatHistoryCache.has(CoreEngine.normalize(orig))) {
-            if (msg.role === 'user') {
-                if (isUserCurrent) return { cat: '用戶', source: '用戶當前輸入', type: 'USER_CURRENT' };
-                return { cat: '用戶', source: '用戶歷史輸入', type: 'USER_HISTORY' };
-            } else if (msg.role === 'assistant') {
-                if (isPrefill) return { cat: 'AI', source: '預填充', type: 'PREFILL' };
-                return { cat: 'AI', source: 'AI歷史回覆', type: 'AI_HISTORY' };
+        // 1. 絕對定位：用戶當前輸入 & 預填充
+        if (index === lastUserIdx && msg.role === 'user') {
+            return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
+        }
+        if (lastUserIdx !== -1 && index > lastUserIdx && msg.role === 'assistant') {
+            return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
+        }
+
+        // 2. 真實對話：包含比對 (解決 ST 添加 <content> 標籤導致的誤判)
+        let isRealChat = false;
+        for (let [shadowNorm, origMsg] of CoreEngine.chatHistoryCache.entries()) {
+            if (shadowNorm.length > 5) {
+                if (normContent.includes(shadowNorm) || shadowNorm.includes(normContent)) {
+                    isRealChat = true; break;
+                }
+            } else if (normContent === shadowNorm) {
+                isRealChat = true; break;
             }
         }
 
-        // 2. 預填充 (在用戶當前輸入之後的 AI 訊息)
-        if (isPrefill && msg.role === 'assistant') {
-            return { cat: 'AI', source: '預填充', type: 'PREFILL' };
+        if (isRealChat) {
+            if (msg.role === 'user') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
+            if (msg.role === 'assistant') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
         }
 
-        // 3. 🌟 終極動態判斷：直接掃描原始代碼中的 ST 動態變數！絕不瞎猜！
-        const dynamicRegex = /\{\{(time|date|weekday|isotime|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|var|if|pipe|idle_duration|total_messages|macro)(::|:|}|\s)/i;
-        if (dynamicRegex.test(orig)) {
-            return { cat: '動態', source: '動態提示詞', type: 'DYNAMIC' };
+        // 3. 🌟 終極動態判斷：直接核對 ST 宏引擎的攔截記錄！絕不瞎猜文字！
+        let isDynamic = false;
+        for (let dyn of CoreEngine.dynamicOutputs) {
+            if (normContent === dyn) {
+                isDynamic = true; break;
+            }
+        }
+        if (!isDynamic) {
+            for (let dyn of CoreEngine.dynamicOutputs) {
+                if (dyn.length > 10 && normContent.includes(dyn)) {
+                    isDynamic = true; break;
+                }
+            }
+        }
+        if (isDynamic) {
+            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
         // 4. 世界書提示詞 (精準提取全名)
         let name = msg.name ? msg.name.toLowerCase() : '';
-        if (name.startsWith('world info') || name.startsWith('lorebook') || name.startsWith('wi-')) {
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
+        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `世界書提示詞(${entryName})`, type: 'LOREBOOK' };
+            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+        }
+        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
+            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
         // 5. 其他插件提示詞 (精準提取插件名)
-        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization'];
+        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
         if (msg.name && !defaultNames.includes(name)) {
-            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, type: 'OTHER_PLUGIN' };
+            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('author') || name.includes('note')) {
+            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
+            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
         }
 
         // 6. 預設提示詞
-        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', type: 'DEFAULT' };
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     },
 
     getSimilarity: (str1, str2) => {
@@ -262,14 +297,9 @@ async function interceptAndRestructurePrompt(data) {
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             msg._norm = CoreEngine.normalize(msg.content);
-            
-            let isUserCurrent = (i === lastUserIdx);
-            let isPrefill = (i > lastUserIdx && msg.role === 'assistant');
-            
-            msg._attr = CoreEngine.classify(msg, isUserCurrent, isPrefill);
+            msg._attr = CoreEngine.classify(msg, i, lastUserIdx);
             msg._isDynamic = (msg._attr.type === 'DYNAMIC');
             msg._origIdx = i + 1;
-            
             incomingPool.push(msg);
         }
 
@@ -278,16 +308,16 @@ async function interceptAndRestructurePrompt(data) {
                 ledger.push({
                     time: processTime, ref: msg, origIdx: msg._origIdx, finalIdx: idx + 1,
                     role: msg.role.charAt(0).toUpperCase() + msg.role.slice(1),
-                    attr: msg._attr, gen: '原始載入', action: '未處理', func: '插件已停用', status: '未凍結'
+                    attr: msg._attr, gen: '原始載入', creator: msg._attr.creator, action: '未處理', func: '插件已停用', status: '未凍結'
                 });
             });
 
             if (Settings.logLevel >= LogLevels.DETAILED) {
                 let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (插件已停用)\n\n`;
-                mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-                mdLog += `|---|---|---|---|---|---|---|---|---|---|---|\n`;
+                mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+                mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
                 ledger.forEach(l => {
-                    mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                    mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
                 });
                 Logger.write(mdLog, LogLevels.DETAILED);
             }
@@ -316,6 +346,10 @@ async function interceptAndRestructurePrompt(data) {
                 }
 
                 let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
+                // 🌟 動態提示詞強制原位更新
+                if (frozen._isDynamic && incomingPool[j]._isDynamic && frozen.role === incomingPool[j].role) {
+                    sim += 0.5; 
+                }
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
 
@@ -324,41 +358,37 @@ async function interceptAndRestructurePrompt(data) {
             if (bestSim === 1) {
                 let matched = incomingPool.splice(bestMatchIdx, 1)[0];
                 nextFrozen.push(frozen);
-                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
+                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 
                 if (isMergedPrefill && mergedRemainder.trim().length > 0) {
                     let newAiMsg = {
                         role: 'assistant', content: mergedRemainder, name: matched.name,
-                        _attr: { cat: 'AI', source: 'AI歷史回覆', type: 'AI_HISTORY' },
+                        _attr: { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' },
                         _norm: CoreEngine.normalize(mergedRemainder), _isDynamic: false, _origIdx: matched._origIdx
                     };
                     incomingPool.push(newAiMsg);
                 }
+            } else if (bestSim > 0.4 && (frozen._isDynamic || (bestMatchIdx !== -1 && incomingPool[bestMatchIdx]._isDynamic))) {
+                // 🌟 動態提示詞的鏡像同步更新
+                let matched = incomingPool.splice(bestMatchIdx, 1)[0];
+                frozen.content = matched.content; 
+                frozen._norm = matched._norm;
+                nextFrozen.push(frozen);
+                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: '動態更新', status: '已凍結' });
             } else if (bestSim > 0.6) {
-                let matched = incomingPool[bestMatchIdx];
-                if (frozen._isDynamic || matched._isDynamic) {
-                    nextFrozen.push(frozen);
-                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', action: '保留舊動態', func: '動態探測', status: '已凍結' });
-                } else {
-                    incomingPool.splice(bestMatchIdx, 1);
-                    let drop = (matched.content.length / totalFrozenLen) * 100;
-                    cacheDrop += drop;
-                    syncMessages.push(`[修改] ${matched._attr.source} (-${drop.toFixed(1)}%)`);
-                    
-                    frozen.content = matched.content; frozen._norm = matched._norm;
-                    nextFrozen.push(frozen);
-                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', action: '鏡像同步', func: '量子糾纏(修改感知)', status: '已凍結' });
-                }
+                let matched = incomingPool.splice(bestMatchIdx, 1)[0];
+                let drop = (matched.content.length / totalFrozenLen) * 100;
+                cacheDrop += drop;
+                syncMessages.push(`[修改] ${matched._attr.source} (-${drop.toFixed(1)}%)`);
+                
+                frozen.content = matched.content; frozen._norm = matched._norm;
+                nextFrozen.push(frozen);
+                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: '量子糾纏(修改感知)', status: '已凍結' });
             } else {
-                if (frozen._isDynamic) {
-                    nextFrozen.push(frozen);
-                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', action: '保留舊動態', func: '動態探測', status: '已凍結' });
-                } else {
-                    let drop = (frozen.content.length / totalFrozenLen) * 100;
-                    cacheDrop += drop;
-                    syncMessages.push(`[刪除] ${frozen._attr.source} (-${drop.toFixed(1)}%)`);
-                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
-                }
+                let drop = (frozen.content.length / totalFrozenLen) * 100;
+                cacheDrop += drop;
+                syncMessages.push(`[刪除] ${frozen._attr.source} (-${drop.toFixed(1)}%)`);
+                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
             }
         }
 
@@ -375,7 +405,7 @@ async function interceptAndRestructurePrompt(data) {
         incomingPool.forEach(msg => {
             if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
             else if (msg._attr.type === 'PREFILL') newPrefill.push(msg);
-            else if (!isChat1 && msg._isDynamic) newDynamic.push(msg); 
+            else if (msg._isDynamic) newDynamic.push(msg); 
             else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
             else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
             else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
@@ -386,7 +416,7 @@ async function interceptAndRestructurePrompt(data) {
             arr.forEach(msg => {
                 nextFrozen.push(msg);
                 const roleStr = msg.role.charAt(0).toUpperCase() + msg.role.slice(1);
-                ledger.push({ time: processTime, ref: msg, origIdx: msg._origIdx, role: roleStr, attr: msg._attr, gen: '新增', action: actionName, func: funcName, status: '已凍結' });
+                ledger.push({ time: processTime, ref: msg, origIdx: msg._origIdx, role: roleStr, attr: msg._attr, gen: '新增', creator: msg._attr.creator, action: actionName, func: funcName, status: '已凍結' });
             });
         };
 
@@ -395,6 +425,7 @@ async function interceptAndRestructurePrompt(data) {
             appendToFrozen(newDefault, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newLorebook, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newOther, '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(newDynamic, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newHistory, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newCurrent, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newPrefill, '即時凍結', '絕對凍結(對話1)');
@@ -421,8 +452,8 @@ async function interceptAndRestructurePrompt(data) {
 
         if (Settings.logLevel >= LogLevels.DETAILED) {
             let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (量子糾纏)\n\n`;
-            mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|\n`;
+            mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
             
             ledger.forEach(entry => {
                 if (entry.status === '已刪除') entry.finalIdx = '-';
@@ -440,7 +471,7 @@ async function interceptAndRestructurePrompt(data) {
             });
 
             ledger.forEach(l => {
-                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
             });
 
             Logger.write(mdLog, LogLevels.DETAILED);
@@ -573,9 +604,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v27-opt-drawer">
+    <div class="inline-drawer" id="ds-v28-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v27.0 終極精準溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v28.0 終極精準溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -650,7 +681,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V27 終極精準溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V28 終極精準溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
