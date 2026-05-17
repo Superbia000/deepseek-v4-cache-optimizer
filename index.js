@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v17_absolute) {
-        extension_settings.ds_cache_v17_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v18_absolute) {
+        extension_settings.ds_cache_v18_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v17_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v18_absolute);
 }
 
 function safeSave() {
@@ -153,12 +153,12 @@ const CoreEngine = {
                    .trim();
     },
 
-    getAttribution: (msg, isLastUser, isPrefill) => {
+    getAttribution: (msg, isCurrentUserMsg, isPrefill) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
         
         if (msg.role === 'user') {
-            return isLastUser ? { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' } 
-                              : { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
+            return isCurrentUserMsg ? { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' } 
+                                    : { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         }
         if (msg.role === 'assistant') {
             return isPrefill ? { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' } 
@@ -198,7 +198,7 @@ const CoreEngine = {
         return { cat: '預設', source: '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     },
 
-    isDynamic: (msg, lastUserMsg) => {
+    isDynamic: (msg, currentTurnUserMsgs) => {
         if (msg.role !== 'system') return false; 
         const text = msg.content;
         if (!text) return false;
@@ -209,7 +209,12 @@ const CoreEngine = {
         const dateRegex = /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/;
         if (timeRegex.test(text) || dateRegex.test(text)) return true;
         
-        if (lastUserMsg && lastUserMsg.content && lastUserMsg.content.length > 10 && text.includes(lastUserMsg.content)) return true;
+        // 深度探測：如果系統提示詞內包含了當前輪次的用戶輸入 (長度>=3)，即視為動態變數解析結果
+        for (let uMsg of currentTurnUserMsgs) {
+            if (uMsg.content && uMsg.content.trim().length >= 3) {
+                if (text.includes(uMsg.content.trim())) return true;
+            }
+        }
         
         const lower = text.toLowerCase();
         if (['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容', 'summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k))) return true;
@@ -240,28 +245,43 @@ async function interceptAndRestructurePrompt(data) {
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
         
-        let lastUserIdx = -1;
+        let lastAssistantIdx = -1;
         let prefillIdxs = [];
         let otherPluginActions = [];
         let ledger = []; 
         
+        // 🌟 核心修復：精準定位「上一次 AI 回覆」與「預填充」
         for (let i = incomingStream.length - 1; i >= 0; i--) {
-            if (incomingStream[i].role === 'user' && lastUserIdx === -1) lastUserIdx = i;
-            else if (incomingStream[i].role === 'assistant' && lastUserIdx === -1) prefillIdxs.push(i);
+            if (incomingStream[i].role === 'assistant') {
+                let hasUserAfter = false;
+                for(let j = i + 1; j < incomingStream.length; j++) {
+                    if(incomingStream[j].role === 'user') { hasUserAfter = true; break; }
+                }
+                if (!hasUserAfter) prefillIdxs.push(i);
+                else if (lastAssistantIdx === -1) lastAssistantIdx = i;
+            }
         }
 
-        const lastUserMsg = lastUserIdx !== -1 ? incomingStream[lastUserIdx] : null;
+        // 提取當前輪次的所有用戶輸入 (用於動態變數深度探測)
+        let currentTurnUserMsgs = [];
+        for (let i = 0; i < incomingStream.length; i++) {
+            if (incomingStream[i].role === 'user' && (lastAssistantIdx === -1 || i > lastAssistantIdx)) {
+                currentTurnUserMsgs.push(incomingStream[i]);
+            }
+        }
+
         let incomingPool = [];
 
         // 階段 1：歸屬感知與動態探測
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
-            const isLastUser = (i === lastUserIdx);
             const isPrefill = prefillIdxs.includes(i);
+            // 🌟 核心修復：任何在 AI 回覆之後的用戶訊息，皆為當前輸入 (包含 ST 隱藏指令)
+            const isCurrentUserMsg = msg.role === 'user' && (lastAssistantIdx === -1 || i > lastAssistantIdx);
             
-            msg._attr = CoreEngine.getAttribution(msg, isLastUser, isPrefill);
+            msg._attr = CoreEngine.getAttribution(msg, isCurrentUserMsg, isPrefill);
             msg._norm = CoreEngine.normalize(msg.content);
-            msg._isDynamic = CoreEngine.isDynamic(msg, lastUserMsg);
+            msg._isDynamic = CoreEngine.isDynamic(msg, currentTurnUserMsgs);
             msg._origIdx = i + 1; 
 
             if (msg._attr.type === 'OTHER_PLUGIN') {
@@ -318,11 +338,13 @@ async function interceptAndRestructurePrompt(data) {
                     incomingPool.push(newAiMsg);
                 }
             } else if (bestSim > 0.6) {
-                if (frozen._isDynamic) {
+                let matched = incomingPool[bestMatchIdx];
+                // 🌟 核心修復：動態變數相似度豁免機制 (絕對不允許原位修改動態提示詞)
+                if (frozen._isDynamic || matched._isDynamic) {
                     nextFrozen.push(frozen);
                     ledger.push({ ref: frozen, origIdx: '-', attr: frozen._attr, gen: '繼承', action: '保留舊動態', func: '動態探測', status: '已凍結' });
                 } else {
-                    let matched = incomingPool.splice(bestMatchIdx, 1)[0];
+                    incomingPool.splice(bestMatchIdx, 1);
                     let drop = (matched.content.length / totalFrozenLen) * 100;
                     cacheDrop += drop;
                     syncMessages.push(`[修改] ${matched._attr.source} (-${drop.toFixed(1)}%)`);
@@ -355,7 +377,7 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
-        // 🌟 階段 3：分類新生代提示詞 (修復排序錯亂的核心)
+        // 階段 3：分類新生代提示詞
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], newDynamic = [], newCurrent = [], newPrefill = [];
         let isChat1 = state.frozenSequence.length === 0;
 
@@ -363,7 +385,6 @@ async function interceptAndRestructurePrompt(data) {
             if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
             else if (msg._attr.type === 'PREFILL') newPrefill.push(msg);
             else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
-            // 🌟 首輪動態靜默機制：對話1時絕對不抽離動態提示詞，完美保留預設提示詞的原始順序
             else if (!isChat1 && msg._isDynamic) newDynamic.push(msg); 
             else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
             else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
@@ -379,7 +400,6 @@ async function interceptAndRestructurePrompt(data) {
 
         // 階段 4：絕對凍結排序邏輯 (嚴格遵守只追加不移位)
         if (isChat1) {
-            // 對話 1：動態提示詞已靜默保留在 Default/Lorebook/Other 中，確保順序 100% 完美
             appendToFrozen(newDefault, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newLorebook, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newOther, '即時凍結', '絕對凍結(對話1)');
@@ -387,7 +407,6 @@ async function interceptAndRestructurePrompt(data) {
             appendToFrozen(newCurrent, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newPrefill, '即時凍結', '絕對凍結(對話1)');
         } else {
-            // 對話 2+：更新的動態提示詞會被抽離並鏡像追加到最底部
             appendToFrozen(newHistory, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newLorebook, '追加凍結', '絕對凍結(對話2+)');
@@ -508,9 +527,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v17-opt-drawer">
+    <div class="inline-drawer" id="ds-v18-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v17.0 排序修復版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v18.0 終極排序修復版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -579,7 +598,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V17 排序修復版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V18 終極排序修復版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
