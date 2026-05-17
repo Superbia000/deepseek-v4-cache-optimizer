@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v43_absolute) {
-        extension_settings.ds_cache_v43_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v37_absolute) {
+        extension_settings.ds_cache_v37_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v43_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v37_absolute);
 }
 
 function safeSave() {
@@ -121,203 +121,37 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🌟 終極溯源引擎：全域 N-Gram 雙向指紋共振 (V43 核心突破)
-// ==========================================
-const GlobalPromptRegistry = {
-    registry: [],
-
-    // 提取文本的 DNA 指紋 (3-Gram)
-    getGrams: (text) => {
-        // 剝離宏變數與所有標點，只保留純文字骨架
-        const clean = String(text).replace(/\{\{.*?\}\}/g, '').replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '').toLowerCase();
-        const grams = new Set();
-        if (clean.length < 3) {
-            if (clean.length > 0) grams.add(clean);
-            return grams;
-        }
-        for (let i = 0; i <= clean.length - 3; i++) {
-            grams.add(clean.substring(i, i + 3));
-        }
-        return grams;
-    },
-
-    build: () => {
-        GlobalPromptRegistry.registry = [];
-        const addedTexts = new Set();
-
-        const add = (cat, name, text, type) => {
-            if (!text || typeof text !== 'string') return;
-            const cleanText = text.trim();
-            if (cleanText.length < 2) return;
-            if (addedTexts.has(cleanText)) return;
-            addedTexts.add(cleanText);
-            
-            const grams = GlobalPromptRegistry.getGrams(cleanText);
-            if (grams.size > 0) {
-                GlobalPromptRegistry.registry.push({ cat, name, text: cleanText, type, _grams: grams });
-            }
-        };
-
-        // 1. 角色卡數據 (精準定位當前角色)
-        try {
-            const context = typeof getContext === 'function' ? getContext() : {};
-            let charsToScan = [];
-            
-            if (context.characterId !== undefined && window.characters && window.characters[context.characterId]) {
-                charsToScan.push(window.characters[context.characterId]);
-            } else if (window.this_character !== undefined && window.characters && window.characters[window.this_character]) {
-                charsToScan.push(window.characters[window.this_character]);
-            }
-
-            if (context.groupId && window.groups) {
-                const group = window.groups.find(g => g.id === context.groupId);
-                if (group && group.members) {
-                    group.members.forEach(m => {
-                        const c = window.characters?.find(char => char.avatar === m || char.name === m);
-                        if (c) charsToScan.push(c);
-                    });
-                }
-            }
-
-            charsToScan.forEach(c => {
-                let cName = c.name || '角色';
-                add('角色卡', `${cName}(Description)`, c.description, 'CHAR');
-                add('角色卡', `${cName}(Personality)`, c.personality, 'CHAR');
-                add('角色卡', `${cName}(Scenario)`, c.scenario, 'CHAR');
-                add('角色卡', `${cName}(First Mes)`, c.first_mes, 'CHAR');
-                add('角色卡', `${cName}(Mes Example)`, c.mes_example, 'CHAR');
-                add('角色卡', `${cName}(Creator Notes)`, c.creator_notes, 'CHAR');
-                add('角色卡', `${cName}(System Prompt)`, c.system_prompt, 'CHAR');
-                add('角色卡', `${cName}(Post History)`, c.post_history_instructions, 'CHAR');
-            });
-        } catch(e) {}
-
-        // 2. 格式化設定
-        try {
-            if (window.settings) {
-                add('格式化', '主系統提示詞(Main)', window.settings.main_prompt, 'FMT');
-                add('格式化', 'NSFW提示詞', window.settings.nsfw_prompt, 'FMT');
-                add('格式化', '越獄提示詞(Jailbreak)', window.settings.jailbreak_prompt, 'FMT');
-                add('格式化', '全局後綴(Post-History)', window.settings.post_history_instructions, 'FMT');
-                add('格式化', '作者筆記(Author Note)', window.settings.authors_note, 'FMT');
-                add('格式化', '用戶設定(Persona)', window.settings.persona_description, 'FMT');
-            }
-        } catch(e) {}
-
-        // 3. 世界書
-        try {
-            const scanWI = (wiObj) => {
-                if (!wiObj) return;
-                for (let key in wiObj) {
-                    let book = wiObj[key];
-                    let entries = book.entries || book;
-                    if (typeof entries === 'object') {
-                        for (let eKey in entries) {
-                            let entry = entries[eKey];
-                            if (entry && (entry.content || entry.text)) {
-                                let title = entry.comment || entry.name || (Array.isArray(entry.key) ? entry.key.join(',') : '未命名');
-                                add('世界書', `世界書(${key} - ${title})`, entry.content || entry.text, 'WI');
-                            }
-                        }
-                    }
-                }
-            };
-            scanWI(window.world_info_data);
-            if (typeof extension_settings !== 'undefined') scanWI(extension_settings?.world_info?.entries);
-        } catch(e) {}
-
-        // 4. Omni-Scraper: 遞迴深層掃描所有擴展與提示詞管理器
-        try {
-            const scanExtensions = (obj, depth = 0) => {
-                if (depth > 6 || !obj || typeof obj !== 'object') return;
-                if (Array.isArray(obj)) {
-                    obj.forEach((item, idx) => {
-                        if (item && typeof item === 'object') {
-                            if (item.content || item.text || item.value || item.replacement) {
-                                let name = item.name || item.identifier || item.scriptName || item.id || `未命名項目`;
-                                let text = item.content || item.text || item.value || item.replacement;
-                                add('擴展/預設', `擴展提示詞(${name})`, text, 'EXT');
-                            } else {
-                                scanExtensions(item, depth + 1);
-                            }
-                        }
-                    });
-                } else {
-                    for (let key in obj) {
-                        // 避開龐大的無關數據庫，防止卡頓
-                        if (['chats', 'chat', 'characters', 'groups', 'user_avatars', 'backgrounds', 'thumbnails', 'themes'].includes(key)) continue;
-                        scanExtensions(obj[key], depth + 1);
-                    }
-                }
-            };
-            if (typeof extension_settings !== 'undefined') scanExtensions(extension_settings);
-            if (window.power_user) scanExtensions(window.power_user);
-            if (window.prompt_manager) scanExtensions(window.prompt_manager);
-            if (window.SillyTavern && window.SillyTavern.Extensions) scanExtensions(window.SillyTavern.Extensions);
-        } catch(e) {}
-    },
-
-    identify: (msgContent) => {
-        if (!msgContent) return null;
-        const msgGrams = GlobalPromptRegistry.getGrams(msgContent);
-        if (msgGrams.size === 0) return null;
-
-        let matches = [];
-
-        for (let entry of GlobalPromptRegistry.registry) {
-            let matchCount = 0;
-            for (let g of entry._grams) {
-                if (msgGrams.has(g)) matchCount++;
-            }
-
-            if (matchCount === 0) continue;
-
-            let ratio1 = matchCount / entry._grams.size; // 最終訊息包含了多少比例的原始提示詞 (處理拼接)
-            let ratio2 = matchCount / msgGrams.size;     // 原始提示詞包含了多少比例的最終訊息 (處理碎片化)
-
-            // 雙向指紋共振判定
-            if (ratio1 > 0.65 || ratio2 > 0.8) {
-                // 過濾掉極短的通用詞彙誤判
-                if (ratio1 <= 0.65 && msgGrams.size < 3 && matchCount < 2) continue; 
-                matches.push({ entry, ratio1, ratio2, matchCount });
-            }
-        }
-
-        if (matches.length > 0) {
-            // 依照匹配的指紋數量排序，找出最核心的來源
-            matches.sort((a, b) => b.matchCount - a.matchCount);
-            
-            // 如果是多個提示詞拼接而成，提取前兩名的名稱組合
-            let topMatches = [matches[0]];
-            if (matches.length > 1 && matches[1].matchCount > matches[0].matchCount * 0.5) {
-                topMatches.push(matches[1]);
-            }
-
-            let combinedSource = topMatches.map(m => m.entry.name).join(' + ');
-            let primary = topMatches[0].entry;
-
-            let creatorMap = { 'CHAR': '角色卡', 'FMT': '格式化設定', 'WI': '世界書系統', 'EXT': '擴展/提示詞管理器' };
-            
-            return {
-                cat: primary.cat,
-                source: combinedSource,
-                creator: creatorMap[primary.type] || 'ST核心',
-                type: primary.type
-            };
-        }
-        return null;
-    }
-};
-
-// ==========================================
-// 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
+// 🛡️ 核心引擎：編譯器劫持與全域名稱透視
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
+    promptNameMap: new Map(), // 🌟 新增：全域名稱透視字典
 
     normalize: (text) => {
         if (!text) return '';
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
+    },
+
+    // 🌟 新增：掃描 ST 底層記憶體，建立提示詞名稱字典
+    buildPromptNameMap: () => {
+        CoreEngine.promptNameMap.clear();
+        
+        // 1. 掃描提示詞管理器 (Prompt Manager - 對應你的截圖)
+        if (typeof window.system_prompts !== 'undefined' && Array.isArray(window.system_prompts)) {
+            window.system_prompts.forEach(p => {
+                if (p.content && p.name) {
+                    CoreEngine.promptNameMap.set(CoreEngine.normalize(p.content), p.name);
+                }
+            });
+        }
+
+        // 2. 掃描進階格式化設定 (Main, NSFW, Jailbreak)
+        if (typeof window.power_user !== 'undefined' && window.power_user.context) {
+            const ctx = window.power_user.context;
+            if (ctx.main_prompt) CoreEngine.promptNameMap.set(CoreEngine.normalize(ctx.main_prompt), "Main Prompt");
+            if (ctx.nsfw_prompt) CoreEngine.promptNameMap.set(CoreEngine.normalize(ctx.nsfw_prompt), "NSFW Prompt");
+            if (ctx.jailbreak_prompt) CoreEngine.promptNameMap.set(CoreEngine.normalize(ctx.jailbreak_prompt), "Jailbreak Prompt");
+        }
     },
 
     patchSTEngine: () => {
@@ -346,9 +180,55 @@ const CoreEngine = {
                 window._ds_orig_substituteParams = window.substituteParams;
                 window.substituteParams = hook(window._ds_orig_substituteParams);
             }
+            if (typeof window.substituteParamsExtended === 'function' && !window._ds_orig_substituteParamsExtended) {
+                window._ds_orig_substituteParamsExtended = window.substituteParamsExtended;
+                window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
+            }
         } catch (e) {
             console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
         }
+    },
+
+    // 🌟 更新：接收 exactName 進行精準分類與命名
+    classify: (msg, structuralTag, isDynamic, exactName) => {
+        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
+
+        if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
+        if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
+        if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI上一次回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
+        if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
+        if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
+
+        if (isDynamic) {
+            return { cat: '動態', source: exactName ? `動態提示詞(${exactName})` : '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
+        }
+
+        let name = exactName ? exactName.toLowerCase() : (msg.name ? msg.name.toLowerCase() : '');
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
+        
+        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
+            const match = (exactName || msg.name).match(/\((.*?)\)/);
+            const entryName = match ? match[1] : (exactName || msg.name);
+            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+        }
+        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
+            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
+        }
+
+        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
+        if (name && !defaultNames.includes(name) && !exactName) {
+            return { cat: '其他插件', source: `其他插件提示詞(${name})`, creator: name, type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('author') || name.includes('note')) {
+            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
+            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
+        }
+
+        // 🌟 完美顯示截圖中的自定義名稱
+        let finalSourceName = exactName ? exactName : (msg.name ? msg.name : '無名');
+        return { cat: '預設', source: `預設提示詞(${finalSourceName})`, creator: 'ST核心', type: 'DEFAULT' };
     },
 
     getSimilarity: (str1, str2) => {
@@ -368,50 +248,6 @@ const CoreEngine = {
         for (let g of g1) { if (g2.has(g)) intersect++; }
         let union = g1.size + g2.size - intersect;
         return union === 0 ? 0 : intersect / union;
-    },
-
-    classify: (msg, structuralTag, isDynamic) => {
-        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
-
-        if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
-        if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
-        if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI上一次回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
-        if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
-        if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
-
-        if (isDynamic) {
-            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
-        }
-
-        // 🌟 啟動 V43 終極全域 N-Gram 碎片共振溯源
-        const trackedSource = GlobalPromptRegistry.identify(msg.content);
-        if (trackedSource) return trackedSource;
-
-        // 傳統特徵回退判斷 (Fallback)
-        let name = msg.name ? msg.name.toLowerCase() : '';
-        let contentLower = msg.content ? msg.content.toLowerCase() : '';
-        
-        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-            const match = msg.name.match(/\((.*?)\)/);
-            const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
-        }
-        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
-        }
-
-        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
-        if (msg.name && !defaultNames.includes(name)) {
-            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('author') || name.includes('note')) {
-            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
-        }
-
-        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
@@ -422,8 +258,8 @@ async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
     try {
-        // 🌟 V43：在處理前，即時構建全域提示詞註冊表 (確保抓到最新修改)
-        GlobalPromptRegistry.build();
+        // 🌟 每次生成前，刷新全域名稱透視字典
+        CoreEngine.buildPromptNameMap();
 
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
@@ -481,12 +317,15 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 🌟 2. 源碼溯源、分類與「全域結構 UID」生成
+        // 🌟 2. 源碼溯源、精準命名與「具名結構 UID」生成
         let catCounters = {};
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             msg._norm = CoreEngine.normalize(msg.content);
             msg._origTemplate = CoreEngine.macroMap.get(msg._norm) || msg._norm;
+
+            // 🌟 透過字典透視真實 UI 名稱
+            msg._exactName = CoreEngine.promptNameMap.get(msg._origTemplate) || msg.name || '';
 
             let isDynamic = false;
             if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && msg.content.includes(userCurrentText)) {
@@ -504,10 +343,12 @@ async function interceptAndRestructurePrompt(data) {
             }
 
             msg._isDynamic = isDynamic;
-            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
+            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic, msg._exactName);
             
+            // 🌟 終極進化：基於「真實 UI 名稱」生成絕對結構 UID
             if (!uidMap[i]) {
-                let key = `${msg._attr.cat}_${msg.role}`;
+                let safeName = msg._exactName ? msg._exactName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_') : msg.role;
+                let key = `${msg._attr.cat}_${safeName}`;
                 catCounters[key] = (catCounters[key] || 0) + 1;
                 uidMap[i] = `struct_${key}_${catCounters[key]}`;
             }
@@ -547,7 +388,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第二重：完美文本匹配
+        // 第二重：完美文本匹配 (針對未修改的靜態提示詞)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -560,7 +401,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第三重：Jaccard 語義感知
+        // 第三重：Jaccard 語義感知 (捕捉小幅/中幅修改)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -581,7 +422,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第四重：終極結構感知
+        // 第四重：終極結構感知 (具名 UID 絕對鎖定)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -589,6 +430,7 @@ async function interceptAndRestructurePrompt(data) {
             
             for (let j = 0; j < incomingPool.length; j++) {
                 if (matchedIncomingIndices.has(j)) continue;
+                // 🌟 只要 UI 名稱和順序一致，即使文本面目全非也能瞬間認出！
                 if (incomingPool[j]._uid === frozen._uid && incomingPool[j]._attr.cat === frozen._attr.cat) {
                     matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
                 }
@@ -617,29 +459,33 @@ async function interceptAndRestructurePrompt(data) {
             if (matchIdx !== -1) {
                 let matched = incomingPool[matchIdx];
                 if (frozen._norm === matched._norm) {
+                    // 完美繼承
                     nextFrozen.push(frozen);
                     if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 } else {
+                    // 成功捕捉到修改！(無論是語義還是結構)
                     if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
-                    
                     syncMessages.push(`[修改] ${matched._attr.source}`);
                     
                     frozen.content = matched.content; 
                     frozen._norm = matched._norm; 
                     frozen._origTemplate = matched._origTemplate;
                     frozen._uid = matched._uid;
-                    frozen._attr = matched._attr; 
+                    frozen._exactName = matched._exactName;
+                    frozen._attr = matched._attr; // 更新屬性以反映最新的名稱
                     
                     nextFrozen.push(frozen);
                     let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                 }
             } else if (frozen._isDynamic) {
+                // 動態幽靈協議
                 nextFrozen.push(frozen);
                 if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
             } else {
+                // 真正被刪除
                 if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                 syncMessages.push(`[刪除] ${frozen._attr.source}`);
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
@@ -873,9 +719,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v43-opt-drawer">
+    <div class="inline-drawer" id="ds-v37-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v43.0 終極全域 N-Gram 溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v37.0 全域名稱透視版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -949,7 +795,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V43 終極全域 N-Gram 溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V37 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
