@@ -121,7 +121,7 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：深網內存探測與指紋庫
+// 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
@@ -129,130 +129,169 @@ const CoreEngine = {
 
     normalize: (text) => {
         if (!text) return '';
-        // 嚴格消除所有的空格、換行、甚至零寬字符 (Zero-width spaces)，這是 ST 防宏替換的常用手段
-        return text.replace(/[\s\n\r\t\u200B-\u200D\uFEFF]/g, '').replace(/\\n/g, '').trim();
+        return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 全新升級：強行穿越所有物件層級的深網探測演算法
+    // 🌟 全方位深度內存指紋抓取 (完美穿透 Folder 與角色卡)
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
-
-        const addToIndex = (norm, cat, source, creator, type) => {
-            if (norm.length < 5 || seenNorms.has(norm)) return;
+        
+        const addToIndex = (text, cat, source, creator, type) => {
+            if (!text || typeof text !== 'string') return;
+            let norm = CoreEngine.normalize(text);
+            if (norm.length < 3 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
-        // 1. 泛用型遞迴探測器：可以完美抓取世界書(包含動態字典結構)和提示詞管理器
-        const deepSearchMemory = (rootObj, isWorldInfo = false, defaultPrefix = "全域", visited = new Set(), depth = 0) => {
-            if (depth > 12 || !rootObj || typeof rootObj !== 'object' || visited.has(rootObj)) return;
-            visited.add(rootObj);
+        // 0. ST 核心常見包裝格式兜底
+        addToIndex("--- [World Loading ...] <Lore>", '世界書', '世界書包裝(前綴)', 'ST核心', 'LOREBOOK');
+        addToIndex("</Lore> [SYSTEM: Loading completed.] ---", '世界書', '世界書包裝(後綴)', 'ST核心', 'LOREBOOK');
+        addToIndex("<context> <!-- 历史对话文本开始(包含创作要求) -->", '歷史區塊', '歷史對話包裝(前綴)', 'ST核心', 'DEFAULT');
+        addToIndex("<!-- 历史对话文本结束 --> </context>", '歷史區塊', '歷史對話包裝(後綴)', 'ST核心', 'DEFAULT');
 
-            // 判斷當前物件是否為一個「條目/提示詞」實體
-            if (rootObj.content && typeof rootObj.content === 'string') {
-                let name = rootObj.comment || rootObj.name || rootObj.title || rootObj.identifier || rootObj.id;
-                if (!name && Array.isArray(rootObj.key)) name = rootObj.key.join(', ');
-                if (!name) name = '無名條目';
-
-                let norm = CoreEngine.normalize(rootObj.content);
-                if (norm.length > 5) {
-                    // 自動推斷是世界書還是預設提示詞
-                    let looksLikeWi = isWorldInfo || rootObj.key !== undefined || rootObj.uid !== undefined || rootObj.selective !== undefined;
-                    let cat = looksLikeWi ? '世界書' : '預設';
-                    let type = looksLikeWi ? 'LOREBOOK' : 'DEFAULT';
-                    let srcName = looksLikeWi ? `世界書[${defaultPrefix}] - ${name}` : `預設提示詞(${name})`;
-                    addToIndex(norm, cat, srcName, looksLikeWi ? '世界書系統' : 'ST核心', type);
+        // 1. 角色卡與用戶設定 (Characters & User Persona)
+        try {
+            const context = getContext() || {};
+            if (context.characters && context.characterId !== undefined) {
+                let char = context.characters[context.characterId];
+                if (char) {
+                    let cName = char.name || '角色';
+                    addToIndex(char.description, '角色卡', `角色描述(${cName})`, '角色卡', 'CHARACTER');
+                    addToIndex(char.personality, '角色卡', `角色性格(${cName})`, '角色卡', 'CHARACTER');
+                    addToIndex(char.scenario, '角色卡', `場景設定(${cName})`, '角色卡', 'CHARACTER');
+                    addToIndex(char.mes_example, '角色卡', `對話範例(${cName})`, '角色卡', 'CHARACTER');
+                    addToIndex(char.first_mes, '角色卡', `初次見面(${cName})`, '角色卡', 'CHARACTER');
                 }
             }
+            if (context.user_persona) addToIndex(context.user_persona, '用戶', '用戶設定(Persona)', context.name1 || '用戶', 'USER_PERSONA');
+        } catch(e) {}
 
-            // 繼續往下鑽取 (穿越陣列與字典)
-            for (let k in rootObj) {
-                try {
-                    let val = rootObj[k];
-                    if (val && typeof val === 'object' && !(val instanceof Element)) {
-                        let nextPrefix = defaultPrefix;
-                        let nextIsWi = isWorldInfo;
-                        
-                        if (k === 'entries' || k === 'world_info' || k === 'character_book') nextIsWi = true;
-                        // ST的世界書結構：entries["書名"]["條目ID"]。如果我們在走訪字典，且 Key 不是數字，它通常是書名！
-                        if (nextIsWi && isNaN(k) && k !== 'entries' && k !== 'world_info' && k !== 'character_book' && depth < 6) {
-                            nextPrefix = k;
+        // 2. ST 核心與設定
+        try {
+            if (window.settings) {
+                const s = window.settings;
+                addToIndex(s.story_string, '預設', '系統核心(Story String)', 'ST核心', 'DEFAULT');
+                addToIndex(s.nsfw_toggle_string, '預設', '系統核心(NSFW Prompt)', 'ST核心', 'DEFAULT');
+                addToIndex(s.jailbreak_system, '預設', '系統核心(Jailbreak)', 'ST核心', 'DEFAULT');
+                addToIndex(s.main_prompt, '預設', '系統核心(Main Prompt)', 'ST核心', 'DEFAULT');
+                addToIndex(s.char_prompt, '預設', '系統核心(Char Prompt)', 'ST核心', 'DEFAULT');
+                addToIndex(s.post_history_instructions, '預設', '系統核心(Post-History)', 'ST核心', 'DEFAULT');
+                addToIndex(s.pre_history_instructions, '預設', '系統核心(Pre-History)', 'ST核心', 'DEFAULT');
+                addToIndex(s.system_prompt, '預設', '系統核心(System Prompt)', 'ST核心', 'DEFAULT');
+                
+                if (s.user_personas && s.current_user_persona !== undefined) {
+                    addToIndex(s.user_personas[s.current_user_persona], '用戶', '用戶設定(Persona)', '用戶', 'USER_PERSONA');
+                }
+            }
+        } catch(e) {}
+
+        // 3. 提示詞管理器 (支援穿透無限層級的 Folder 資料夾！)
+        const extractPrompts = (arr) => {
+            if (!Array.isArray(arr)) return;
+            arr.forEach(p => {
+                if (!p) return;
+                // 如果是資料夾，遞迴深入提取
+                if (p.type === 'folder' && Array.isArray(p.children)) {
+                    extractPrompts(p.children);
+                } else if (p.content && typeof p.content === 'string') {
+                    let name = p.name || p.title || p.identifier || '未命名提示詞';
+                    addToIndex(p.content, '預設', `預設提示詞(${name})`, '提示詞管理器', 'DEFAULT');
+                }
+            });
+        };
+        try {
+            if (window.extension_settings?.prompt_manager?.prompts) extractPrompts(window.extension_settings.prompt_manager.prompts);
+            if (window.prompt_manager?.prompts) extractPrompts(window.prompt_manager.prompts);
+        } catch(e) {}
+
+        // 4. 世界書 (Lorebooks) 萃取
+        const extractLorebooks = (wiObj) => {
+            if (!wiObj || typeof wiObj !== 'object') return;
+            for (let bookName in wiObj) {
+                let book = wiObj[bookName];
+                // 確保這是一本有效的世界書，擁有 entries 屬性
+                if (book && typeof book === 'object' && book.entries) {
+                    let entries = Array.isArray(book.entries) ? book.entries : Object.values(book.entries);
+                    entries.forEach(entry => {
+                        if (entry && entry.content && typeof entry.content === 'string') {
+                            let entryName = entry.comment || (entry.key ? entry.key.join(',') : '') || entry.name || '未命名條目';
+                            if (entryName.length > 25) entryName = entryName.substring(0, 25) + '...';
+                            addToIndex(entry.content, '世界書', `世界書[${bookName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
                         }
-                        deepSearchMemory(val, nextIsWi, nextPrefix, visited, depth + 1);
-                    }
-                } catch (e) {}
+                    });
+                }
             }
         };
+        try {
+            if (window.world_info) extractLorebooks(window.world_info);
+            if (window.world_names && window.world_info_data) extractLorebooks(window.world_info_data); 
+            if (window.power_user?.world_info) extractLorebooks(window.power_user.world_info);
+        } catch(e) {}
 
-        // 2. 靜態單一字串抓取 (針對那些沒有被包裝在 {content: ...} 裡的 ST 核心提示詞)
-        if (window.settings) {
-            const standardKeys = {
-                'storyString': 'Main Prompt (故事字串)',
-                'systemPrompt': 'System Prompt',
-                'nsfw_prompt': 'NSFW Prompt',
-                'jailbreak_prompt': 'Jailbreak',
-                'main_prompt': 'Main Prompt',
-                'scenarioFormat': 'Scenario Format',
-                'characterNoteFormat': 'Character Note Format',
-                'chat_start_format': 'Chat Start',
-                'postHistoryInstructions': 'Post-History'
-            };
-            for (let k in standardKeys) {
-                if (typeof window.settings[k] === 'string') {
-                    addToIndex(CoreEngine.normalize(window.settings[k]), '預設', `系統設置(${standardKeys[k]})`, 'ST核心', 'DEFAULT');
+        // 5. 擴充插件 (Author's Note, Summarize 等)
+        try {
+            if (window.extension_settings) {
+                if (window.extension_settings.authors_note?.note) addToIndex(window.extension_settings.authors_note.note, '其他插件', "Author's Note", '用戶', 'OTHER_PLUGIN');
+                if (window.extension_settings.summarize?.summary) addToIndex(window.extension_settings.summarize.summary, '其他插件', "記憶總結(Summary)", '總結插件', 'OTHER_PLUGIN');
+                
+                // 世界書包裝格式設定
+                let wiSets = window.extension_settings.world_info;
+                if (wiSets) {
+                    addToIndex(wiSets.global_prefix, '世界書', '世界書格式(前綴)', '世界書系統', 'LOREBOOK');
+                    addToIndex(wiSets.global_suffix, '世界書', '世界書格式(後綴)', '世界書系統', 'LOREBOOK');
                 }
             }
-        }
+        } catch(e) {}
 
-        // 3. 角色卡專屬屬性抓取 (解決 Scenario、First Message 無法識別的問題)
-        const context = getContext() || {};
-        const charId = context.characterId;
-        if (charId && context.characters && context.characters[charId]) {
-            const char = context.characters[charId];
-            const charProps = {
-                'description': '角色卡(Description)',
-                'personality': '角色卡(Personality)',
-                'scenario': '角色卡(Scenario)',
-                'first_mes': '角色卡(First Message)',
-                'mes_example': '角色卡(Message Example)',
-                'creator_notes': '角色卡(Creator Notes)',
-                'system_prompt': '角色卡(System Prompt)',
-                'post_history_instructions': '角色卡(Post-History)'
-            };
-            for (let k in charProps) {
-                if (typeof char[k] === 'string') {
-                    addToIndex(CoreEngine.normalize(char[k]), '預設', charProps[k], '角色設定', 'DEFAULT');
-                }
+        // 6. 終極遞迴降級探測 (防禦未知的動態內存結構)
+        const visited = new Set();
+        const sweep = (obj, depth) => {
+            if (depth > 5 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
+            visited.add(obj);
+            for (let k in obj) {
+                try {
+                    let val = obj[k];
+                    if (val && typeof val === 'object' && !Array.isArray(val) && !(val instanceof Element)) {
+                        if (val.content && typeof val.content === 'string' && (val.name || val.comment || val.key)) {
+                            let n = val.name || val.comment || (val.key ? val.key.join(',') : k);
+                            if (typeof n === 'string' && n.length > 25) n = n.substring(0, 25) + '...';
+                            addToIndex(val.content, '探測', `深層探測(${n})`, 'ST內存探測', 'DYNAMIC');
+                        }
+                        sweep(val, depth + 1);
+                    } else if (Array.isArray(val)) {
+                        if (val.length > 0 && val[0] && typeof val[0] === 'object' && val[0].content && typeof val[0].content === 'string') {
+                            val.forEach(item => {
+                                if (item && item.content && typeof item.content === 'string') {
+                                    let n = item.name || item.comment || item.uid || '陣列項目';
+                                    addToIndex(item.content, '探測', `深層探測(${n})`, 'ST內存探測', 'DYNAMIC');
+                                }
+                            });
+                        }
+                    }
+                } catch(e) {}
             }
-        }
-
-        // 🚀 發動深網探測
-        let visitedNodes = new Set();
-        deepSearchMemory(window.settings, false, "全域", visitedNodes);
-        deepSearchMemory(window.extension_settings, false, "擴充", visitedNodes);
-        deepSearchMemory(window.world_info, true, "全局", visitedNodes);
-        deepSearchMemory(getContext()?.worldInfo, true, "當前", visitedNodes);
-        deepSearchMemory(window.prompt_manager, false, "全局", visitedNodes);
-        
-        // 抓取可能嵌入在角色卡內的世界書
-        if (charId && context.characters && context.characters[charId]?.data?.character_book) {
-            deepSearchMemory(context.characters[charId].data.character_book, true, `角色專屬[${context.characters[charId].name}]`, visitedNodes);
-        }
+        };
+        try {
+            sweep(window.extension_settings, 0);
+            sweep(window.settings, 0);
+        } catch(e) {}
     },
 
+    // 🌟 量子指紋比對 (包含防呆與 Jaccard)
     findInIndex: (normContent) => {
-        if (!normContent || normContent.length < 5) return null;
+        if (!normContent || normContent.length < 3) return null;
         
         // 1. 完美比對
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 2. 包含比對 (ST 經常在發送前把世界書跟前後綴合併成一串發送，或者剝離巨集，包含比對能完美破除這層偽裝！)
+        // 2. 包含比對 (極低閾值防禦 ST 的 XML 包裝/換行注入)
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length > 15 && normContent.length > 15) {
+            if (idxContent.length > 5 && normContent.length > 5) {
                 if (normContent.includes(idxContent) || idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
@@ -314,14 +353,10 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
-        // 🌟 使用深網內存指紋進行絕對匹配
+        // 🌟 核心升級：經由全域指紋庫精準攔截
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
-        let matchedIndex = CoreEngine.findInIndex(normContent);
-        
-        // 若找不到原生模板，再退一步用處理過後的文本進行二次匹配保障
-        if (!matchedIndex && msg._origTemplate !== msg._norm) {
-             matchedIndex = CoreEngine.findInIndex(msg._norm);
-        }
+        // 雙重驗證：如果 _origTemplate 無法命中，降級使用已替換變數的 _norm 來查！
+        let matchedIndex = CoreEngine.findInIndex(normContent) || CoreEngine.findInIndex(msg._norm);
         
         if (matchedIndex) {
             if (isDynamic) {
@@ -357,7 +392,7 @@ const CoreEngine = {
             return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
         }
 
-        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '未識別提示詞', creator: 'ST核心', type: 'DEFAULT' };
     },
 
     getSimilarity: (str1, str2) => {
@@ -386,7 +421,7 @@ const CoreEngine = {
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
-    // 🌟 在攔截數據流的當下，即時構建/刷新全局內存指紋字典
+    // 🌟 在攔截數據流的當下，即時構建/刷新全局內存指紋字典 (耗時極低，無損體驗)
     CoreEngine.buildIndex();
 
     try {
@@ -500,7 +535,6 @@ async function interceptAndRestructurePrompt(data) {
         
         // 🌟 3. 四重極限對齊算法 (The 4-Pass Quantum Entanglement)
 
-        // 第一重：歷史紀錄絕對 UID 鎖定
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
             if (frozen._uid && frozen._uid.startsWith('chat_')) {
@@ -513,7 +547,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第二重：完美文本匹配 (針對未修改的靜態提示詞)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -526,7 +559,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第三重：Jaccard 語義感知 (捕捉小幅/中幅修改)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -547,7 +579,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第四重：終極結構感知 (捕捉被完全重寫的預設提示詞/世界書)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -594,7 +625,7 @@ async function interceptAndRestructurePrompt(data) {
                     frozen._norm = matched._norm; 
                     frozen._origTemplate = matched._origTemplate;
                     frozen._uid = matched._uid;
-                    frozen._attr = matched._attr; // 同步新的屬性，包含新的名字
+                    frozen._attr = matched._attr;
                     
                     nextFrozen.push(frozen);
                     let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
@@ -629,7 +660,7 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
-        // 🌟 5. 處理剩餘的、需要被追加的新提示詞 (完美實現絕對排序邏輯)
+        // 🌟 5. 處理剩餘的、需要被追加的新提示詞
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
         let isChat1 = state.frozenSequence.length === 0;
@@ -840,7 +871,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (V36.6 終極深網溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.6 全知溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -914,7 +945,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V36.6 終極深網溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.6 全知溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
