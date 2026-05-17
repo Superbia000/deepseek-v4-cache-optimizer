@@ -125,10 +125,101 @@ function resetCurrentChatCache() {
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
+    promptIndex: [], // 🌟 新增：全域即時索引庫
 
     normalize: (text) => {
         if (!text) return '';
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
+    },
+
+    // 🌟 新增：深度探測 ST 核心內存，實時構建提示詞指紋庫
+    buildIndex: () => {
+        CoreEngine.promptIndex = [];
+        
+        // 1. 抓取 Prompt Manager (提示詞管理器) 的預設提示詞
+        let prompts = [];
+        if (window.settings?.prompt_manager?.prompts) prompts = window.settings.prompt_manager.prompts;
+        else if (window.extension_settings?.prompt_manager?.prompts) prompts = window.extension_settings.prompt_manager.prompts;
+        else if (window.power_user?.prompt_manager?.prompts) prompts = window.power_user.prompt_manager.prompts;
+        else if (window.prompt_manager?.prompts) prompts = window.prompt_manager.prompts;
+        
+        if (Array.isArray(prompts)) {
+            prompts.forEach(p => {
+                if (p.content && p.name) {
+                    CoreEngine.promptIndex.push({
+                        contentNorm: CoreEngine.normalize(p.content),
+                        cat: '預設',
+                        source: `預設提示詞(${p.name})`,
+                        creator: '提示詞管理器',
+                        type: 'DEFAULT'
+                    });
+                }
+            });
+        }
+        
+        // 2. 抓取世界書 (Lorebook / World Info) 的名稱與條目
+        let wiEntries = null;
+        if (window.world_info?.entries) wiEntries = window.world_info.entries;
+        else if (window.power_user?.world_info?.entries) wiEntries = window.power_user.world_info.entries;
+        else {
+            for (let key in window) {
+                try {
+                    if (typeof key === 'string' && key.toLowerCase().includes('world') && window[key] && typeof window[key] === 'object' && window[key].entries) {
+                        wiEntries = window[key].entries;
+                        break;
+                    }
+                } catch (e) {}
+            }
+        }
+        
+        if (wiEntries && typeof wiEntries === 'object') {
+            for (let bookName in wiEntries) {
+                const entries = wiEntries[bookName];
+                let entryList = Array.isArray(entries) ? entries : Object.values(entries);
+                entryList.forEach(entry => {
+                    if (entry.content) {
+                        // 精準提取「標題/備註」或關聯詞作為條目名稱
+                        let entryName = entry.comment;
+                        if (!entryName && entry.key && Array.isArray(entry.key)) entryName = entry.key.join(', ');
+                        if (!entryName) entryName = '未命名條目';
+                        
+                        CoreEngine.promptIndex.push({
+                            contentNorm: CoreEngine.normalize(entry.content),
+                            cat: '世界書',
+                            source: `世界書[${bookName}] - ${entryName}`,
+                            creator: '世界書系統',
+                            type: 'LOREBOOK'
+                        });
+                    }
+                });
+            }
+        }
+    },
+
+    // 🌟 新增：量子糾纏級別指紋比對，相容巨集替換
+    findInIndex: (normContent) => {
+        if (!normContent) return null;
+        for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
+            const idxContent = CoreEngine.promptIndex[i].contentNorm;
+            if (idxContent === normContent) return CoreEngine.promptIndex[i];
+            
+            // 包含檢查：防禦因 ST 巨集展開導致的前後綴多餘字元
+            if (idxContent.length > 20 && normContent.length > 20) {
+                if (normContent.includes(idxContent) || idxContent.includes(normContent)) {
+                    return CoreEngine.promptIndex[i];
+                }
+            }
+        }
+        
+        // 降級語義檢查 (應對高濃度動態變數替換)
+        for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
+            const idxContent = CoreEngine.promptIndex[i].contentNorm;
+            if (idxContent.length > 20 && normContent.length > 20) {
+                let sim = CoreEngine.getSimilarity(idxContent, normContent);
+                if (sim > 0.85) return CoreEngine.promptIndex[i];
+            }
+        }
+        return null;
     },
 
     patchSTEngine: () => {
@@ -175,12 +266,26 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
+        // 🌟 核心升級：經由全域指紋庫精準命名
+        let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
+        let matchedIndex = CoreEngine.findInIndex(normContent);
+        
+        if (matchedIndex) {
+            if (isDynamic) {
+                // 如果是帶有即時變數的動態提示詞/世界書，標記為動態但保留真實原名！
+                return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
+            }
+            return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
+        }
+
+        // 原版兜底與插件標註...
         if (isDynamic) {
             return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
+        
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
@@ -229,6 +334,9 @@ const CoreEngine = {
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
+
+    // 🌟 在每次送出請求前，即時構建最新的提示詞與世界書指紋字典
+    CoreEngine.buildIndex();
 
     try {
         const state = getChatState(getChatKey());
