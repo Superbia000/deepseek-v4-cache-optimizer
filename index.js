@@ -121,6 +121,101 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
+// 🌟 終極溯源引擎：宏免疫區塊匹配 (V40 核心突破)
+// ==========================================
+const SourceTracker = {
+    // 將源碼按宏 {{...}} 切割，並淨化為純淨骨架
+    getChunks: (str) => {
+        if (!str || typeof str !== 'string') return [];
+        const parts = str.split(/\{\{.*?\}\}/);
+        return parts.map(p => p.replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '').toLowerCase()).filter(p => p.length > 5);
+    },
+    
+    // 淨化最終訊息 (移除所有標點和空白)
+    cleanMsg: (str) => {
+        if (!str || typeof str !== 'string') return '';
+        return str.replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '').toLowerCase();
+    },
+
+    identify: (msgContent) => {
+        if (!msgContent) return null;
+        const msgClean = SourceTracker.cleanMsg(msgContent);
+        if (msgClean.length < 5) return null;
+
+        // 1. 掃描世界書 (World Info)
+        try {
+            const wiData = window.world_info_data || window.world_info?.entries || extension_settings?.world_info?.entries || {};
+            let bestWiMatch = null;
+            let bestWiScore = 0;
+            
+            for (const bookName of Object.keys(wiData)) {
+                const book = wiData[bookName];
+                const entries = book.entries || book;
+                for (const entryKey of Object.keys(entries)) {
+                    const entry = entries[entryKey];
+                    const text = entry.content || entry.text || '';
+                    const chunks = SourceTracker.getChunks(text);
+                    
+                    if (chunks.length > 0) {
+                        let matchedLen = 0;
+                        let allMatched = true;
+                        for (const chunk of chunks) {
+                            if (msgClean.includes(chunk)) matchedLen += chunk.length;
+                            else allMatched = false;
+                        }
+                        const totalChunkLen = chunks.reduce((acc, c) => acc + c.length, 0);
+                        // 只要 70% 以上的骨架吻合，即視為精準命中
+                        if ((allMatched || matchedLen / totalChunkLen > 0.7) && matchedLen > bestWiScore) {
+                            bestWiScore = matchedLen;
+                            let entryTitle = entry.comment || entry.name || '';
+                            if (!entryTitle && entry.key && Array.isArray(entry.key)) entryTitle = entry.key.join(', ');
+                            if (!entryTitle) entryTitle = '未命名條目';
+                            bestWiMatch = { cat: '世界書', source: `世界書(${bookName} - ${entryTitle})`, creator: '世界書系統', type: 'LOREBOOK' };
+                        }
+                    }
+                }
+            }
+            if (bestWiMatch) return bestWiMatch;
+        } catch (e) {}
+
+        // 2. 掃描提示詞管理器 (Prompt Manager)
+        try {
+            let pmPrompts = [];
+            if (extension_settings?.prompt_manager?.prompts) pmPrompts.push(...extension_settings.prompt_manager.prompts);
+            if (window.power_user?.prompt_manager?.prompts) pmPrompts.push(...window.power_user.prompt_manager.prompts);
+            if (window.power_user?.context) pmPrompts.push(...window.power_user.context);
+            if (extension_settings?.context) pmPrompts.push(...extension_settings.context);
+            
+            let bestPMatch = null;
+            let bestPScore = 0;
+            
+            for (const p of pmPrompts) {
+                const text = p.content || p.text || p.value || '';
+                const chunks = SourceTracker.getChunks(text);
+                
+                if (chunks.length > 0) {
+                    let matchedLen = 0;
+                    let allMatched = true;
+                    for (const chunk of chunks) {
+                        if (msgClean.includes(chunk)) matchedLen += chunk.length;
+                        else allMatched = false;
+                    }
+                    const totalChunkLen = chunks.reduce((acc, c) => acc + c.length, 0);
+                    if ((allMatched || matchedLen / totalChunkLen > 0.7) && matchedLen > bestPScore) {
+                        bestPScore = matchedLen;
+                        const name = p.name || p.identifier || '未命名提示詞';
+                        bestPMatch = { cat: '預設', source: `預設提示詞(${name})`, creator: '提示詞管理器', type: 'DEFAULT' };
+                    }
+                }
+            }
+            if (bestPMatch) return bestPMatch;
+        } catch (e) {}
+
+        return null;
+    }
+};
+
+// ==========================================
 // 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
 // ==========================================
 const CoreEngine = {
@@ -183,156 +278,51 @@ const CoreEngine = {
         for (let g of g1) { if (g2.has(g)) intersect++; }
         let union = g1.size + g2.size - intersect;
         return union === 0 ? 0 : intersect / union;
-    }
-};
-
-// ==========================================
-// 🧠 全域知識庫 (Universal Knowledge Base)
-// 專治 ST 隱藏數據與宏替換導致的識別失效
-// ==========================================
-const KnowledgeBase = {
-    prompts: [],
-    worldInfo: [],
-    lastUpdate: 0,
-
-    update: () => {
-        const now = Date.now();
-        if (now - KnowledgeBase.lastUpdate < 2000) return; // 防抖，2秒內只更新一次
-        KnowledgeBase.lastUpdate = now;
-        
-        KnowledgeBase.prompts = [];
-        KnowledgeBase.worldInfo = [];
-
-        // 1. 地毯式掃描提示詞管理器 (穿透所有可能的擴展命名)
-        try {
-            for (const [key, val] of Object.entries(extension_settings)) {
-                if (val && Array.isArray(val.prompts)) {
-                    for (const p of val.prompts) {
-                        const text = p.content || p.text || p.value;
-                        if (text) {
-                            KnowledgeBase.prompts.push({
-                                name: p.name || p.identifier || '未命名',
-                                content: text
-                            });
-                        }
-                    }
-                }
-            }
-        } catch(e) {}
-
-        // 2. 深度掃描世界書系統
-        try {
-            const wi = window.world_info || {};
-            const worlds = wi.entries || wi.worlds || window.world_info_data || {};
-            for (const [worldName, worldObj] of Object.entries(worlds)) {
-                const entries = worldObj.entries || worldObj;
-                for (const [uid, entry] of Object.entries(entries)) {
-                    const text = entry.content || entry.text;
-                    if (text) {
-                        KnowledgeBase.worldInfo.push({
-                            book: worldName,
-                            entry: entry.comment || (entry.key ? entry.key.join(',') : '未命名'),
-                            content: text
-                        });
-                    }
-                }
-            }
-        } catch(e) {}
     },
 
-    identify: (msgNorm, msgOrigTemplate) => {
-        KnowledgeBase.update();
+    classify: (msg, structuralTag, isDynamic) => {
+        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
 
-        // 🌟 宏穿透碎片匹配算法 (Macro-Penetration Chunk Matching)
-        const isMatch = (dictContent) => {
-            const dictNorm = CoreEngine.normalize(dictContent);
-            // 1. 完美匹配
-            if (dictNorm === msgOrigTemplate || dictNorm === msgNorm) return true;
-            // 2. 包含匹配 (針對 ST 的格式化包裝)
-            if (dictNorm.length > 20 && msgNorm.includes(dictNorm)) return true;
-            
-            // 3. 宏穿透碎片匹配 (剔除 {{...}} 後比對靜態文本)
-            const chunks = dictContent.split(/\{\{.*?\}\}/)
-                .map(c => CoreEngine.normalize(c))
-                .filter(c => c.length > 15); // 只取長度大於15的有效靜態碎片
-            
-            if (chunks.length > 0) {
-                let matchCount = 0;
-                for (const chunk of chunks) {
-                    if (msgNorm.includes(chunk)) matchCount++;
-                }
-                // 如果超過 50% 的靜態碎片都在最終提示詞中，絕對是同一個提示詞！
-                if ((matchCount / chunks.length) >= 0.5) return true;
-            } else {
-                // 4. 傳統相似度兜底
-                if (CoreEngine.getSimilarity(dictNorm, msgNorm) > 0.75) return true;
-            }
-            return false;
-        };
+        if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
+        if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
+        if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI上一次回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
+        if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
+        if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
-        // 優先比對世界書 (因為世界書通常更具體)
-        for (const wi of KnowledgeBase.worldInfo) {
-            if (isMatch(wi.content)) {
-                return { cat: '世界書', source: `世界書(${wi.book} - ${wi.entry})`, creator: '世界書系統', type: 'LOREBOOK' };
-            }
+        if (isDynamic) {
+            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
-        // 其次比對提示詞管理器
-        for (const p of KnowledgeBase.prompts) {
-            if (isMatch(p.content)) {
-                return { cat: '預設', source: `預設提示詞(${p.name})`, creator: '提示詞管理器', type: 'DEFAULT' };
-            }
+        // 🌟 啟動 V40 宏免疫穿透掃描
+        const trackedSource = SourceTracker.identify(msg.content);
+        if (trackedSource) return trackedSource;
+
+        // 傳統特徵回退判斷 (Fallback)
+        let name = msg.name ? msg.name.toLowerCase() : '';
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
+        
+        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
+            const match = msg.name.match(/\((.*?)\)/);
+            const entryName = match ? match[1] : msg.name;
+            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+        }
+        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
+            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
-        return null;
-    }
-};
+        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
+        if (msg.name && !defaultNames.includes(name)) {
+            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('author') || name.includes('note')) {
+            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
+            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
+        }
 
-// ==========================================
-// 🛡️ 核心分類引擎
-// ==========================================
-CoreEngine.classify = (msg, structuralTag, isDynamic) => {
-    if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
-
-    if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
-    if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
-    if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI上一次回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
-    if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
-    if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
-
-    if (isDynamic) {
-        return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
-
-    // 🌟 啟動全域知識庫識別 (V40 終極修復)
-    const ukbMatch = KnowledgeBase.identify(msg._norm, msg._origTemplate);
-    if (ukbMatch) return ukbMatch;
-
-    // 傳統特徵回退判斷 (Fallback)
-    let name = msg.name ? msg.name.toLowerCase() : '';
-    let contentLower = msg.content ? msg.content.toLowerCase() : '';
-    
-    if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-        const match = msg.name.match(/\((.*?)\)/);
-        const entryName = match ? match[1] : msg.name;
-        return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
-    }
-    if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-        return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
-    }
-
-    const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
-    if (msg.name && !defaultNames.includes(name)) {
-        return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
-    }
-    if (name.includes('author') || name.includes('note')) {
-        return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-    }
-    if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-        return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
-    }
-
-    return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
 };
 
 // ==========================================
