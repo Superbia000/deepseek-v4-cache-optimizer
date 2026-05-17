@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v19_absolute) {
-        extension_settings.ds_cache_v19_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v21_absolute) {
+        extension_settings.ds_cache_v21_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v19_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v21_absolute);
 }
 
 function safeSave() {
@@ -36,12 +36,14 @@ const Logger = {
     
     getTime: () => {
         const now = new Date();
+        // 獲取瀏覽器本地時區時間
         return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     },
     
     truncate: (text) => {
         if (!text) return '';
         const clean = text.replace(/[\n\r]/g, ' ');
+        // 嚴格限制在 30 個字元以內
         return clean.length > 30 ? clean.substring(0, 30) + '...' : clean;
     },
     
@@ -164,53 +166,61 @@ const CoreEngine = {
                    .trim();
     },
 
-    getAttribution: (msg, isCurrentUserMsg, isPrefill) => {
+    getBaseAttribution: (msg) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
         
-        if (msg.role === 'user') {
-            return isCurrentUserMsg ? { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' } 
-                                    : { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
-        }
-        if (msg.role === 'assistant') {
-            return isPrefill ? { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' } 
-                             : { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
-        }
-        
         let name = msg.name ? msg.name.toLowerCase() : '';
-        let content = msg.content ? msg.content.toLowerCase() : '';
+        let content = msg.content ? msg.content.trim() : '';
+        let contentLower = content.toLowerCase();
 
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
             return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
         }
-        if (content.includes('world info:') || content.includes('lorebook:')) {
+        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
             return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
-        if (name) {
-            const defaultPrompts = ['system', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'scenario', 'post-history', 'pre-history', 'example', 'greeting', 'summary', 'summarization'];
-            if (defaultPrompts.some(k => name.includes(k))) {
-                return { cat: '預設', source: `預設提示詞(${msg.name})`, creator: 'ST核心', type: 'DEFAULT' };
-            }
+        const defaultPrompts = ['system', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'scenario', 'post-history', 'pre-history', 'example', 'greeting', 'summary', 'summarization'];
+        if (name && defaultPrompts.some(k => name.includes(k))) {
+            return { cat: '預設', source: `預設提示詞(${msg.name})`, creator: 'ST核心', type: 'DEFAULT' };
         }
 
         if (name.includes('author') || name.includes('note')) {
             return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
         }
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || content.includes('retrieved context')) {
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
             return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
         }
 
-        if (name) {
+        if (
+            content.startsWith('Human: 为了避免') || 
+            content.includes('[Current Model Mode]') || 
+            content.startsWith('你需根据') || 
+            content.includes('[Played by Human]') ||
+            content.startsWith('## 使用以下文风') ||
+            content.startsWith('以下 `[Gameplay Mechanics]`')
+        ) {
+            return { cat: '預設', source: '預設提示詞(特徵探測)', creator: 'ST核心', type: 'DEFAULT' };
+        }
+
+        if (name && name !== 'user' && name !== 'character' && name !== 'you') {
             return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
         }
-        
-        return { cat: '預設', source: '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
+
+        if (msg.role === 'system') {
+            return { cat: '預設', source: '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
+        }
+
+        if (msg.role === 'user') return { cat: '用戶', source: '用戶聊天', creator: '用戶', type: 'USER_CHAT' };
+        if (msg.role === 'assistant') return { cat: 'AI', source: 'AI聊天', creator: '大模型', type: 'AI_CHAT' };
+
+        return { cat: '預設', source: '預設提示詞(未知)', creator: 'ST核心', type: 'DEFAULT' };
     },
 
-    isDynamic: (msg, currentTurnUserMsgs) => {
-        if (msg.role !== 'system') return false; 
+    isDynamic: (msg, currentUserMsg) => {
+        if (msg.role !== 'system' && msg._attr && msg._attr.type !== 'DEFAULT' && msg._attr.type !== 'OTHER_PLUGIN') return false; 
         const text = msg.content;
         if (!text) return false;
         
@@ -220,10 +230,8 @@ const CoreEngine = {
         const dateRegex = /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/;
         if (timeRegex.test(text) || dateRegex.test(text)) return true;
         
-        for (let uMsg of currentTurnUserMsgs) {
-            if (uMsg.content && uMsg.content.trim().length >= 3) {
-                if (text.includes(uMsg.content.trim())) return true;
-            }
+        if (currentUserMsg && currentUserMsg.content && currentUserMsg.content.trim().length >= 3) {
+            if (text.includes(currentUserMsg.content.trim())) return true;
         }
         
         const lower = text.toLowerCase();
@@ -249,54 +257,100 @@ const CoreEngine = {
 // 🌌 絕對防禦矩陣 (The Absolute Engine)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
-    if (!Settings.enabled || data.dryRun || !data?.chat?.length) return;
+    if (data.dryRun || !data?.chat?.length) return;
 
     try {
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
-        
-        let lastAssistantIdx = -1;
-        let prefillIdxs = [];
+        let incomingPool = [];
+        let chatMessages = [];
         let otherPluginActions = [];
         let ledger = []; 
-        
-        for (let i = incomingStream.length - 1; i >= 0; i--) {
-            if (incomingStream[i].role === 'assistant') {
-                let hasUserAfter = false;
-                for(let j = i + 1; j < incomingStream.length; j++) {
-                    if(incomingStream[j].role === 'user') { hasUserAfter = true; break; }
-                }
-                if (!hasUserAfter) prefillIdxs.push(i);
-                else if (lastAssistantIdx === -1) lastAssistantIdx = i;
-            }
-        }
+        const processTime = Logger.getTime();
 
-        let currentTurnUserMsgs = [];
-        for (let i = 0; i < incomingStream.length; i++) {
-            if (incomingStream[i].role === 'user' && (lastAssistantIdx === -1 || i > lastAssistantIdx)) {
-                currentTurnUserMsgs.push(incomingStream[i]);
-            }
-        }
-
-        let incomingPool = [];
-
+        // 🌟 雙階段歸屬感知 - 階段一：剝離偽裝
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
-            const isPrefill = prefillIdxs.includes(i);
-            const isCurrentUserMsg = msg.role === 'user' && (lastAssistantIdx === -1 || i > lastAssistantIdx);
-            
-            msg._attr = CoreEngine.getAttribution(msg, isCurrentUserMsg, isPrefill);
-            msg._norm = CoreEngine.normalize(msg.content);
-            msg._isDynamic = CoreEngine.isDynamic(msg, currentTurnUserMsgs);
-            msg._origIdx = i + 1; 
-
-            if (msg._attr.type === 'OTHER_PLUGIN') {
-                otherPluginActions.push(`- 偵測到其他插件 (**${msg._attr.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
+            msg._tempAttr = CoreEngine.getBaseAttribution(msg);
+            msg._origIdx = i + 1;
+            if (msg._tempAttr.type === 'USER_CHAT' || msg._tempAttr.type === 'AI_CHAT') {
+                chatMessages.push(msg);
             }
-
             incomingPool.push(msg);
         }
 
+        // 🌟 雙階段歸屬感知 - 階段二：精準鎖定真實對話
+        let lastUserChatIdx = -1;
+        for (let i = chatMessages.length - 1; i >= 0; i--) {
+            if (chatMessages[i]._tempAttr.type === 'USER_CHAT') {
+                lastUserChatIdx = i;
+                break;
+            }
+        }
+
+        let currentUserMsg = null;
+        chatMessages.forEach((msg, idx) => {
+            if (msg._tempAttr.type === 'USER_CHAT') {
+                if (idx === lastUserChatIdx) {
+                    msg._attr = { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
+                    currentUserMsg = msg;
+                } else {
+                    msg._attr = { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
+                }
+            } else if (msg._tempAttr.type === 'AI_CHAT') {
+                if (lastUserChatIdx !== -1 && idx > lastUserChatIdx) {
+                    msg._attr = { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
+                } else {
+                    msg._attr = { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
+                }
+            }
+        });
+
+        incomingPool.forEach(msg => {
+            if (!msg._attr) msg._attr = msg._tempAttr;
+            msg._norm = CoreEngine.normalize(msg.content);
+            msg._isDynamic = CoreEngine.isDynamic(msg, currentUserMsg);
+            
+            if (msg._attr.type === 'OTHER_PLUGIN') {
+                otherPluginActions.push(`- 偵測到其他插件 (**${msg._attr.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
+            }
+        });
+
+        // 🌟 插件停用時的處理邏輯：只記錄，不修改
+        if (!Settings.enabled) {
+            incomingPool.forEach((msg, idx) => {
+                ledger.push({
+                    time: processTime,
+                    ref: msg,
+                    origIdx: msg._origIdx,
+                    finalIdx: idx + 1,
+                    role: msg.role.charAt(0).toUpperCase() + msg.role.slice(1),
+                    attr: msg._attr,
+                    gen: '原始載入',
+                    action: '未處理',
+                    func: '插件已停用',
+                    status: '未凍結'
+                });
+            });
+
+            if (Settings.logLevel >= LogLevels.DETAILED) {
+                let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (插件已停用)\n\n`;
+                if (otherPluginActions.length > 0) mdLog += `**🔌 其他插件動態：**\n${otherPluginActions.join('\n')}\n\n`;
+                mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+                mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
+                ledger.forEach(l => {
+                    mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.attr.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                });
+                Logger.write(mdLog, LogLevels.DETAILED);
+            } else if (Settings.logLevel >= LogLevels.STANDARD) {
+                Logger.write(`✅ 處理完成 (插件已停用)。共 ${incomingPool.length} 節點`, LogLevels.STANDARD);
+            }
+            return; // 停用狀態下直接返回，不修改 data.chat
+        }
+
+        // ==========================================
+        // 以下為插件啟用時的量子糾纏與絕對凍結邏輯
+        // ==========================================
         let nextFrozen = [];
         let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
         let cacheDrop = 0;
@@ -304,7 +358,6 @@ async function interceptAndRestructurePrompt(data) {
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
-            
             let bestMatchIdx = -1;
             let bestSim = 0;
             let isMergedPrefill = false;
@@ -325,10 +378,12 @@ async function interceptAndRestructurePrompt(data) {
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
 
+            const roleStr = frozen.role.charAt(0).toUpperCase() + frozen.role.slice(1);
+
             if (bestSim === 1) {
                 let matched = incomingPool.splice(bestMatchIdx, 1)[0];
                 nextFrozen.push(frozen);
-                ledger.push({ ref: frozen, origIdx: matched._origIdx, attr: frozen._attr, gen: '繼承', action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
+                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 
                 if (isMergedPrefill && mergedRemainder.trim().length > 0) {
                     let newAiMsg = {
@@ -346,7 +401,7 @@ async function interceptAndRestructurePrompt(data) {
                 let matched = incomingPool[bestMatchIdx];
                 if (frozen._isDynamic || matched._isDynamic) {
                     nextFrozen.push(frozen);
-                    ledger.push({ ref: frozen, origIdx: '-', attr: frozen._attr, gen: '繼承', action: '保留舊動態', func: '動態探測', status: '已凍結' });
+                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', action: '保留舊動態', func: '動態探測', status: '已凍結' });
                 } else {
                     incomingPool.splice(bestMatchIdx, 1);
                     let drop = (matched.content.length / totalFrozenLen) * 100;
@@ -356,17 +411,17 @@ async function interceptAndRestructurePrompt(data) {
                     frozen.content = matched.content;
                     frozen._norm = matched._norm;
                     nextFrozen.push(frozen);
-                    ledger.push({ ref: frozen, origIdx: matched._origIdx, attr: frozen._attr, gen: '修改', action: '鏡像同步', func: '量子糾纏(修改感知)', status: '已凍結' });
+                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', action: '鏡像同步', func: '量子糾纏(修改感知)', status: '已凍結' });
                 }
             } else {
                 if (frozen._isDynamic) {
                     nextFrozen.push(frozen);
-                    ledger.push({ ref: frozen, origIdx: '-', attr: frozen._attr, gen: '繼承', action: '保留舊動態', func: '動態探測', status: '已凍結' });
+                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', action: '保留舊動態', func: '動態探測', status: '已凍結' });
                 } else {
                     let drop = (frozen.content.length / totalFrozenLen) * 100;
                     cacheDrop += drop;
                     syncMessages.push(`[刪除] ${frozen._attr.source} (-${drop.toFixed(1)}%)`);
-                    ledger.push({ ref: frozen, origIdx: '-', attr: frozen._attr, gen: '消失', action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
+                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
                 }
             }
         }
@@ -397,7 +452,8 @@ async function interceptAndRestructurePrompt(data) {
         const appendToFrozen = (arr, actionName, funcName) => {
             arr.forEach(msg => {
                 nextFrozen.push(msg);
-                ledger.push({ ref: msg, origIdx: msg._origIdx, attr: msg._attr, gen: '新增', action: actionName, func: funcName, status: '已凍結' });
+                const roleStr = msg.role.charAt(0).toUpperCase() + msg.role.slice(1);
+                ledger.push({ time: processTime, ref: msg, origIdx: msg._origIdx, role: roleStr, attr: msg._attr, gen: '新增', action: actionName, func: funcName, status: '已凍結' });
             });
         };
 
@@ -432,8 +488,8 @@ async function interceptAndRestructurePrompt(data) {
         if (Settings.logLevel >= LogLevels.DETAILED) {
             let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (量子糾纏)\n\n`;
             if (otherPluginActions.length > 0) mdLog += `**🔌 其他插件動態：**\n${otherPluginActions.join('\n')}\n\n`;
-            mdLog += `| 最終排序 | 原始排序 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-            mdLog += `|---|---|---|---|---|---|---|---|---|---|\n`;
+            mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
             
             ledger.forEach(entry => {
                 if (entry.status === '已刪除') entry.finalIdx = '-';
@@ -451,7 +507,7 @@ async function interceptAndRestructurePrompt(data) {
             });
 
             ledger.forEach(l => {
-                mdLog += `| ${l.finalIdx} | ${l.origIdx} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.attr.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.attr.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
             });
 
             Logger.write(mdLog, LogLevels.DETAILED);
@@ -500,7 +556,6 @@ function renderChatsUI() {
         return;
     }
 
-    // 🌟 深度重構：按角色卡分組 (Group by Character)
     const groupedChats = {};
     keys.forEach(k => {
         const chat = Settings.chats[k];
@@ -532,7 +587,6 @@ function renderChatsUI() {
     
     container.append(html);
 
-    // 綁定獨立刪除按鈕事件
     $('.ds-delete-chat-btn').on('click', function() {
         const key = $(this).data('key');
         if (confirm('確定要清除此存檔的凍結池嗎？\n(這不會刪除你的聊天記錄，只會重置緩存排序)')) {
@@ -559,20 +613,18 @@ async function setupUI() {
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
-                /* 日誌表格樣式 */
+                /* 🌟 嚴格橫向排列與表格優化 */
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
                 .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; margin-bottom: 15px; } 
-                .ds-log-table th, .ds-log-table td { white-space: nowrap; } 
+                .ds-log-table th, .ds-log-table td { white-space: nowrap; } /* 絕對橫向排列 */
                 .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
                 .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
                 .ds-log-table tr:hover { background: rgba(0, 229, 255, 0.15); }
                 
-                /* 圖示按鈕樣式 */
                 .ds-icon-btn { background: transparent; border: none; color: #aaa; cursor: pointer; font-size: 14px; padding: 4px 8px; transition: 0.2s; border-radius: 4px; }
                 .ds-icon-btn:hover { color: #00e5ff; background: rgba(0, 229, 255, 0.1); }
                 
-                /* 🌟 重構後的多存檔列表樣式 */
                 .ds-char-group { margin-bottom: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05); }
                 .ds-char-header { background: rgba(0, 229, 255, 0.1); padding: 6px 10px; font-size: 13px; font-weight: bold; color: #00e5ff; border-bottom: 1px solid rgba(255,255,255,0.05); }
                 .ds-chat-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.02); transition: 0.2s; }
@@ -589,9 +641,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v19-opt-drawer">
+    <div class="inline-drawer" id="ds-v21-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v19.0 存檔重構版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v21.0 全景日誌重構版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -626,7 +678,7 @@ async function setupUI() {
                     <button id="ds-log-clear" class="ds-icon-btn" title="清空日誌"><i class="fa-solid fa-trash"></i></button>
                 </div>
             </div>
-            <div id="ds-cache-log-viewer" style="width: 100%; height: 350px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1);"></div>
+            <div id="ds-cache-log-viewer" style="width: 100%; height: 350px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1); white-space: nowrap;"></div>
         </div>
     </div>`;
     
@@ -654,7 +706,7 @@ jQuery(async () => {
     try {
         initSettings(); 
         await setupUI();
-        addMenuEntry(); // 🌟 注入擴展菜單按鈕
+        addMenuEntry();
         
         if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
             eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
@@ -663,7 +715,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V19 存檔重構版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V21 全景日誌重構版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
