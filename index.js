@@ -5,24 +5,41 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 // 狀態與設定 (Settings & State)
 // ==========================================
 let Settings = {};
+let RawChatShadow = new Set(); // 🌟 影子預讀字典：儲存絕對真實的聊天紀錄
 
 function initSettings() {
     const defaultSettings = {
         enabled: true,
         instantNotify: true,
-        logLevel: 3, // 預設為 3: 全景 Markdown 表格
+        logLevel: 3,
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v21_absolute) {
-        extension_settings.ds_cache_v21_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v23_absolute) {
+        extension_settings.ds_cache_v23_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v21_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v23_absolute);
 }
 
 function safeSave() {
     try { if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); } 
     catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
+}
+
+// ==========================================
+// 🌟 影子預讀引擎 (Shadow Pre-Analyzer)
+// 在用戶發送前，實時分析並更新真實的聊天資料
+// ==========================================
+function updateRawChatShadow() {
+    const context = getContext();
+    RawChatShadow.clear();
+    if (context && context.chat && Array.isArray(context.chat)) {
+        context.chat.forEach(msg => {
+            if (msg.mes) {
+                RawChatShadow.add(CoreEngine.normalize(msg.mes));
+            }
+        });
+    }
 }
 
 // ==========================================
@@ -33,20 +50,15 @@ let rawMarkdownLogs = [];
 
 const Logger = {
     _uiViewer: null,
-    
     getTime: () => {
         const now = new Date();
-        // 獲取瀏覽器本地時區時間
         return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
     },
-    
     truncate: (text) => {
         if (!text) return '';
         const clean = text.replace(/[\n\r]/g, ' ');
-        // 嚴格限制在 30 個字元以內
         return clean.length > 30 ? clean.substring(0, 30) + '...' : clean;
     },
-    
     write: (markdownText, level = LogLevels.STANDARD) => {
         if (Settings.logLevel < level) return;
         const time = Logger.getTime();
@@ -55,33 +67,20 @@ const Logger = {
         Logger.updateUI(entry);
         if (level === LogLevels.EXTREME) console.log(`[DS Cache EXTREME]`, markdownText);
     },
-    
     updateUI: (newEntry) => {
         if (!Logger._uiViewer) return;
-        
-        let html = newEntry
-            .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')
-            .replace(/^- (.*)/gm, '<li>$1</li>');
-            
+        let html = newEntry.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/^- (.*)/gm, '<li>$1</li>');
         if (html.includes('|')) {
             const lines = html.split('\n');
             let tableHtml = '<div class="ds-log-container"><table class="ds-log-table">';
-            let inTable = false;
-            let isFirstRow = true;
-            
+            let inTable = false, isFirstRow = true;
             for (let line of lines) {
                 if (line.trim().startsWith('|')) {
                     if (!inTable) inTable = true;
                     const cells = line.split('|').filter(c => c.trim() !== '');
-                    const isSeparator = line.includes('---');
-                    if (isSeparator) continue;
-                    
-                    if (isFirstRow) {
-                        tableHtml += '<tr>' + cells.map(c => `<th>${c.trim()}</th>`).join('') + '</tr>';
-                        isFirstRow = false;
-                    } else {
-                        tableHtml += '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
-                    }
+                    if (line.includes('---')) continue;
+                    if (isFirstRow) { tableHtml += '<tr>' + cells.map(c => `<th>${c.trim()}</th>`).join('') + '</tr>'; isFirstRow = false; } 
+                    else { tableHtml += '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>'; }
                 } else {
                     if (inTable) { tableHtml += '</table></div>'; inTable = false; isFirstRow = true; }
                     tableHtml += line + '<br>';
@@ -90,37 +89,20 @@ const Logger = {
             if (inTable) tableHtml += '</table></div>';
             html = tableHtml;
         }
-
         const div = document.createElement('div');
         div.innerHTML = html;
         div.style.marginBottom = '12px';
         div.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
         div.style.paddingBottom = '12px';
-        
         Logger._uiViewer.appendChild(div);
         Logger._uiViewer.scrollTop = Logger._uiViewer.scrollHeight;
     },
-
-    clear: () => {
-        rawMarkdownLogs = [];
-        if (Logger._uiViewer) Logger._uiViewer.innerHTML = '';
-        if (typeof toastr !== 'undefined') toastr.success("日誌已清空");
-    },
-
-    copy: () => {
-        navigator.clipboard.writeText(rawMarkdownLogs.join('\n')).then(() => {
-            if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿");
-        });
-    },
-
+    clear: () => { rawMarkdownLogs = []; if (Logger._uiViewer) Logger._uiViewer.innerHTML = ''; if (typeof toastr !== 'undefined') toastr.success("日誌已清空"); },
+    copy: () => { navigator.clipboard.writeText(rawMarkdownLogs.join('\n')).then(() => { if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿"); }); },
     export: () => {
         const blob = new Blob([rawMarkdownLogs.join('\n')], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `DSCache_Log_${new Date().toISOString().replace(/[:.]/g, '-')}.md`;
-        a.click();
-        URL.revokeObjectURL(url);
+        const a = document.createElement('a'); a.href = url; a.download = `DSCache_Log_${new Date().toISOString().replace(/[:.]/g, '-')}.md`; a.click(); URL.revokeObjectURL(url);
         if (typeof toastr !== 'undefined') toastr.success("日誌已導出");
     }
 };
@@ -147,8 +129,7 @@ function resetCurrentChatCache() {
     const chatInfo = getChatKey();
     if (Settings.chats[chatInfo.key]) {
         Settings.chats[chatInfo.key].frozenSequence = [];
-        safeSave();
-        renderChatsUI();
+        safeSave(); renderChatsUI();
         if (typeof toastr !== 'undefined') toastr.success(`已重置當前聊天 (${chatInfo.character}) 的凍結池`);
         Logger.write(`🔄 用戶手動重置了當前聊天 (${chatInfo.character}) 的凍結池`, LogLevels.BASIC);
     }
@@ -160,59 +141,47 @@ function resetCurrentChatCache() {
 const CoreEngine = {
     normalize: (text) => {
         if (!text) return '';
-        return text.replace(/[\s\n\r\t]/g, '')
-                   .replace(/\\n/g, '')
-                   .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()""''“”‘’]/g, '')
-                   .trim();
+        return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').replace(/[.,\/#!$%\^&\*;:{}=\-_`~()""''“”‘’]/g, '').trim();
     },
 
-    getBaseAttribution: (msg) => {
+    getBaseAttribution: (msg, normContent) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
         
-        let name = msg.name ? msg.name.toLowerCase() : '';
-        let content = msg.content ? msg.content.trim() : '';
-        let contentLower = content.toLowerCase();
+        // 🌟 核心修復：使用影子字典進行絕對真偽判定
+        // 如果這段文字不在真實的聊天紀錄中，它就絕對是系統/插件提示詞！
+        let isRealChat = RawChatShadow.has(normContent);
 
-        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-            const match = msg.name.match(/\((.*?)\)/);
-            const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
-        }
-        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
-        }
+        if (!isRealChat) {
+            let name = msg.name ? msg.name.toLowerCase() : '';
+            let contentLower = msg.content ? msg.content.toLowerCase() : '';
 
-        const defaultPrompts = ['system', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'scenario', 'post-history', 'pre-history', 'example', 'greeting', 'summary', 'summarization'];
-        if (name && defaultPrompts.some(k => name.includes(k))) {
-            return { cat: '預設', source: `預設提示詞(${msg.name})`, creator: 'ST核心', type: 'DEFAULT' };
-        }
+            if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
+                const match = msg.name.match(/\((.*?)\)/);
+                return { cat: '世界書', source: `世界書提示詞(${match ? match[1] : msg.name})`, creator: '世界書系統', type: 'LOREBOOK' };
+            }
+            if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
+                return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
+            }
+            if (name.includes('author') || name.includes('note')) {
+                return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+            }
+            if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
+                return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
+            }
+            
+            const defaultPrompts = ['system', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'scenario', 'post-history', 'pre-history', 'example', 'greeting', 'summary', 'summarization'];
+            if (name && defaultPrompts.some(k => name.includes(k))) {
+                return { cat: '預設', source: `預設提示詞(${msg.name})`, creator: 'ST核心', type: 'DEFAULT' };
+            }
 
-        if (name.includes('author') || name.includes('note')) {
-            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
-        }
+            if (msg.content && (msg.content.startsWith('Human: 为了避免') || msg.content.includes('[Current Model Mode]') || msg.content.startsWith('你需根据') || msg.content.includes('[Played by Human]'))) {
+                return { cat: '預設', source: '預設提示詞(特徵探測)', creator: 'ST核心', type: 'DEFAULT' };
+            }
 
-        if (
-            content.startsWith('Human: 为了避免') || 
-            content.includes('[Current Model Mode]') || 
-            content.startsWith('你需根据') || 
-            content.includes('[Played by Human]') ||
-            content.startsWith('## 使用以下文风') ||
-            content.startsWith('以下 `[Gameplay Mechanics]`')
-        ) {
-            return { cat: '預設', source: '預設提示詞(特徵探測)', creator: 'ST核心', type: 'DEFAULT' };
+            return { cat: '預設', source: name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
         }
 
-        if (name && name !== 'user' && name !== 'character' && name !== 'you') {
-            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
-        }
-
-        if (msg.role === 'system') {
-            return { cat: '預設', source: '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
-        }
-
+        // 如果在影子字典中，才是真正的聊天紀錄
         if (msg.role === 'user') return { cat: '用戶', source: '用戶聊天', creator: '用戶', type: 'USER_CHAT' };
         if (msg.role === 'assistant') return { cat: 'AI', source: 'AI聊天', creator: '大模型', type: 'AI_CHAT' };
 
@@ -220,20 +189,29 @@ const CoreEngine = {
     },
 
     isDynamic: (msg, currentUserMsg) => {
-        if (msg.role !== 'system' && msg._attr && msg._attr.type !== 'DEFAULT' && msg._attr.type !== 'OTHER_PLUGIN') return false; 
+        // 真正的聊天紀錄絕對不是動態提示詞
+        if (msg._attr && (msg._attr.type === 'USER_CHAT' || msg._attr.type === 'AI_CHAT' || msg._attr.type === 'USER_CURRENT' || msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY' || msg._attr.type === 'PREFILL')) {
+            return false;
+        }
+
         const text = msg.content;
         if (!text) return false;
         
+        // 1. 檢測未解析的原始宏
         if (/\{\{(time|date|weekday|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|idle_duration|total_messages|if|var|pipe)(::|:|}|\s)/i.test(text)) return true;
         
-        const timeRegex = /\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b/;
-        const dateRegex = /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/;
-        if (timeRegex.test(text) || dateRegex.test(text)) return true;
+        // 2. 檢測已解析的時間/日期
+        if (/\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b/.test(text) || /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/.test(text)) return true;
         
+        // 3. 🌟 終極修復：深度學習檢測已解析的隨機變數 (精準命中你的代號/資源索引)
+        if (/(任务编号|游戏进程|代号|编码|阶段标识|关卡信息|事件ID|资源索引|进度|状态|序列|标识|ID|Index|Code)[:：]\s*[a-zA-Z0-9_]+/i.test(text)) return true;
+        
+        // 4. 檢測包含當前用戶輸入的動態反射
         if (currentUserMsg && currentUserMsg.content && currentUserMsg.content.trim().length >= 3) {
             if (text.includes(currentUserMsg.content.trim())) return true;
         }
         
+        // 5. 檢測 RAG / 總結等動態注入
         const lower = text.toLowerCase();
         if (['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容', 'summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k))) return true;
         
@@ -260,6 +238,9 @@ async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
     try {
+        // 確保在處理前，影子字典是最新的
+        updateRawChatShadow();
+        
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
         let incomingPool = [];
@@ -268,11 +249,13 @@ async function interceptAndRestructurePrompt(data) {
         let ledger = []; 
         const processTime = Logger.getTime();
 
-        // 🌟 雙階段歸屬感知 - 階段一：剝離偽裝
+        // 🌟 雙階段歸屬感知 - 階段一：利用影子字典剝離偽裝
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
-            msg._tempAttr = CoreEngine.getBaseAttribution(msg);
+            msg._norm = CoreEngine.normalize(msg.content);
+            msg._tempAttr = CoreEngine.getBaseAttribution(msg, msg._norm);
             msg._origIdx = i + 1;
+            
             if (msg._tempAttr.type === 'USER_CHAT' || msg._tempAttr.type === 'AI_CHAT') {
                 chatMessages.push(msg);
             }
@@ -308,7 +291,6 @@ async function interceptAndRestructurePrompt(data) {
 
         incomingPool.forEach(msg => {
             if (!msg._attr) msg._attr = msg._tempAttr;
-            msg._norm = CoreEngine.normalize(msg.content);
             msg._isDynamic = CoreEngine.isDynamic(msg, currentUserMsg);
             
             if (msg._attr.type === 'OTHER_PLUGIN') {
@@ -316,20 +298,13 @@ async function interceptAndRestructurePrompt(data) {
             }
         });
 
-        // 🌟 插件停用時的處理邏輯：只記錄，不修改
+        // 🌟 插件停用時的處理邏輯
         if (!Settings.enabled) {
             incomingPool.forEach((msg, idx) => {
                 ledger.push({
-                    time: processTime,
-                    ref: msg,
-                    origIdx: msg._origIdx,
-                    finalIdx: idx + 1,
+                    time: processTime, ref: msg, origIdx: msg._origIdx, finalIdx: idx + 1,
                     role: msg.role.charAt(0).toUpperCase() + msg.role.slice(1),
-                    attr: msg._attr,
-                    gen: '原始載入',
-                    action: '未處理',
-                    func: '插件已停用',
-                    status: '未凍結'
+                    attr: msg._attr, gen: '原始載入', action: '未處理', func: '插件已停用', status: '未凍結'
                 });
             });
 
@@ -345,7 +320,7 @@ async function interceptAndRestructurePrompt(data) {
             } else if (Settings.logLevel >= LogLevels.STANDARD) {
                 Logger.write(`✅ 處理完成 (插件已停用)。共 ${incomingPool.length} 節點`, LogLevels.STANDARD);
             }
-            return; // 停用狀態下直接返回，不修改 data.chat
+            return; 
         }
 
         // ==========================================
@@ -367,9 +342,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j].role !== frozen.role) continue;
                 
                 if (frozen.role === 'assistant' && incomingPool[j].content.startsWith(frozen.content) && incomingPool[j].content.length > frozen.content.length) {
-                    bestSim = 1;
-                    bestMatchIdx = j;
-                    isMergedPrefill = true;
+                    bestSim = 1; bestMatchIdx = j; isMergedPrefill = true;
                     mergedRemainder = incomingPool[j].content.substring(frozen.content.length);
                     break;
                 }
@@ -387,13 +360,9 @@ async function interceptAndRestructurePrompt(data) {
                 
                 if (isMergedPrefill && mergedRemainder.trim().length > 0) {
                     let newAiMsg = {
-                        role: 'assistant',
-                        content: mergedRemainder,
-                        name: matched.name,
+                        role: 'assistant', content: mergedRemainder, name: matched.name,
                         _attr: { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' },
-                        _norm: CoreEngine.normalize(mergedRemainder),
-                        _isDynamic: false,
-                        _origIdx: matched._origIdx
+                        _norm: CoreEngine.normalize(mergedRemainder), _isDynamic: false, _origIdx: matched._origIdx
                     };
                     incomingPool.push(newAiMsg);
                 }
@@ -408,8 +377,7 @@ async function interceptAndRestructurePrompt(data) {
                     cacheDrop += drop;
                     syncMessages.push(`[修改] ${matched._attr.source} (-${drop.toFixed(1)}%)`);
                     
-                    frozen.content = matched.content;
-                    frozen._norm = matched._norm;
+                    frozen.content = matched.content; frozen._norm = matched._norm;
                     nextFrozen.push(frozen);
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', action: '鏡像同步', func: '量子糾纏(修改感知)', status: '已凍結' });
                 }
@@ -428,11 +396,8 @@ async function interceptAndRestructurePrompt(data) {
 
         if (cacheDrop > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
             toastr.warning(
-                `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>
-                ${syncMessages.join('<br>')}<br><br>
-                預估緩存命中率下降: <b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b>`, 
-                'DeepSeek 緩存優化器', 
-                {timeOut: 8000, escapeHtml: false}
+                `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>${syncMessages.join('<br>')}<br><br>預估緩存命中率下降: <b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b>`, 
+                'DeepSeek 緩存優化器', {timeOut: 8000, escapeHtml: false}
             );
         }
 
@@ -440,10 +405,11 @@ async function interceptAndRestructurePrompt(data) {
         let isChat1 = state.frozenSequence.length === 0;
 
         incomingPool.forEach(msg => {
+            // 🌟 終極修復：動態提示詞的優先級強制提升！
             if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
             else if (msg._attr.type === 'PREFILL') newPrefill.push(msg);
-            else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
             else if (!isChat1 && msg._isDynamic) newDynamic.push(msg); 
+            else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
             else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
             else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
             else newOther.push(msg);
@@ -613,10 +579,9 @@ async function setupUI() {
     if (!$('#ds-log-style').length) {
         $('head').append(`
             <style id="ds-log-style">
-                /* 🌟 嚴格橫向排列與表格優化 */
                 .ds-log-container { width: 100%; overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; background: #111; margin-top: 8px; }
                 .ds-log-table { width: 100%; border-collapse: collapse; font-size: 12px; color: #ddd; margin-bottom: 15px; } 
-                .ds-log-table th, .ds-log-table td { white-space: nowrap; } /* 絕對橫向排列 */
+                .ds-log-table th, .ds-log-table td { white-space: nowrap; } 
                 .ds-log-table th { position: sticky; top: 0; background: #222; color: #00e5ff; padding: 8px 10px; border-bottom: 2px solid #00e5ff; z-index: 10; font-weight: bold; text-align: left; }
                 .ds-log-table td { border-bottom: 1px solid rgba(255,255,255,0.05); padding: 6px 10px; text-align: left; max-width: 250px; overflow: hidden; text-overflow: ellipsis; }
                 .ds-log-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
@@ -641,9 +606,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v21-opt-drawer">
+    <div class="inline-drawer" id="ds-v23-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v21.0 全景日誌重構版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v23.0 影子預讀引擎版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -708,14 +673,19 @@ jQuery(async () => {
         await setupUI();
         addMenuEntry();
         
-        if (eventSource && event_types?.CHAT_COMPLETION_PROMPT_READY) {
-            eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
-        }
-        if (eventSource && event_types?.CHAT_CHANGED) {
-            eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
+        // 🌟 註冊全天候背景監聽事件，實時更新影子字典
+        if (eventSource) {
+            if (event_types?.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, () => { renderChatsUI(); updateRawChatShadow(); });
+            if (event_types?.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, updateRawChatShadow);
+            if (event_types?.MESSAGE_SENT) eventSource.on(event_types.MESSAGE_SENT, updateRawChatShadow);
+            if (event_types?.USER_MESSAGE_RENDERED) eventSource.on(event_types.USER_MESSAGE_RENDERED, updateRawChatShadow);
+            
+            if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
+                eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
+            }
         }
 
-        Logger.write('══════ 🛡️ V21 全景日誌重構版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V23 影子預讀引擎版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
