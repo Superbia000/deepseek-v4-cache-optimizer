@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v38_absolute) {
-        extension_settings.ds_cache_v38_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v39_absolute) {
+        extension_settings.ds_cache_v39_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v38_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v39_absolute);
 }
 
 function safeSave() {
@@ -185,31 +185,36 @@ const CoreEngine = {
         return union === 0 ? 0 : intersect / union;
     },
 
-    // 🌟 逆向映射引擎 1：從 ST 世界書系統中找回真實名稱與條目
+    // 🌟 逆向映射引擎 1：從 ST 世界書系統中找回真實名稱與條目 (V39 致命修復)
     getWorldInfoName: (msgNorm, msgOrigTemplate) => {
         try {
-            if (typeof window === 'undefined' || !window.world_info || !window.world_info.entries) return null;
             let bestMatch = null;
             let bestSim = 0;
 
-            for (const bookName of Object.keys(window.world_info.entries)) {
-                const bookData = window.world_info.entries[bookName];
-                if (!bookData || !bookData.entries) continue;
+            // 致命修復：ST 的世界書全域變數是 world_info_data
+            const wiData = window.world_info_data || (window.world_info && window.world_info.entries) || {};
+            
+            for (const bookName of Object.keys(wiData)) {
+                const book = wiData[bookName];
+                const entries = book.entries || book; 
                 
-                const entries = Object.values(bookData.entries);
-                for (const entry of entries) {
-                    if (!entry || !entry.content) continue;
-                    const entryNorm = CoreEngine.normalize(entry.content);
+                for (const entryKey of Object.keys(entries)) {
+                    const entry = entries[entryKey];
+                    // 提取文本
+                    const text = entry.content || entry.text || '';
+                    if (!text) continue;
                     
-                    // 提取條目標題 (優先使用 comment 備註，其次使用 key 關鍵字)
-                    let entryTitle = '未命名條目';
-                    if (entry.comment && entry.comment.trim() !== '') {
-                        entryTitle = entry.comment.trim();
-                    } else if (entry.key && Array.isArray(entry.key) && entry.key.length > 0) {
+                    const entryNorm = CoreEngine.normalize(text);
+                    
+                    // 提取標題
+                    let entryTitle = entry.comment || entry.name || '';
+                    if (!entryTitle && entry.key && Array.isArray(entry.key)) {
                         entryTitle = entry.key.join(', ');
                     }
+                    if (!entryTitle) entryTitle = '未命名條目';
 
-                    if (entryNorm === msgOrigTemplate || entryNorm === msgNorm) {
+                    // 完美匹配或穿透掃描 (處理 ST 的格式化包裝)
+                    if (entryNorm === msgOrigTemplate || entryNorm === msgNorm || (entryNorm.length > 20 && msgNorm.includes(entryNorm))) {
                         return { book: bookName, entry: entryTitle };
                     }
 
@@ -220,27 +225,47 @@ const CoreEngine = {
                     }
                 }
             }
-            return bestSim > 0.75 ? bestMatch : null;
+            return bestSim > 0.5 ? bestMatch : null;
         } catch (e) {
-            console.warn("[DS Cache] 世界書逆向映射失敗:", e);
             return null;
         }
     },
 
-    // 🌟 逆向映射引擎 2：從 ST 提示詞管理器中找回真實名稱
+    // 🌟 逆向映射引擎 2：從 ST 提示詞管理器中找回真實名稱 (V39 致命修復)
     getPromptManagerName: (msgNorm, msgOrigTemplate) => {
-        if (!extension_settings?.prompt_manager?.prompts) return null;
-        let bestMatch = null;
-        let bestSim = 0;
-        
-        for (const p of extension_settings.prompt_manager.prompts) {
-            if (p.disabled || !p.content) continue;
-            const pNorm = CoreEngine.normalize(p.content);
-            if (pNorm === msgOrigTemplate || pNorm === msgNorm) return p.name;
-            const sim = CoreEngine.getSimilarity(pNorm, msgNorm);
-            if (sim > bestSim) { bestSim = sim; bestMatch = p.name; }
+        try {
+            let pmPrompts = [];
+            if (extension_settings?.prompt_manager?.prompts) {
+                pmPrompts = extension_settings.prompt_manager.prompts;
+            } else if (window.extension_prompt_manager?.prompts) {
+                pmPrompts = window.extension_prompt_manager.prompts;
+            }
+            
+            let bestMatch = null;
+            let bestSim = 0;
+            
+            for (const p of pmPrompts) {
+                // 致命修復：ST 提示詞管理器的文本屬性是 text，不是 content！
+                const text = p.text || p.content || p.value || '';
+                if (!text) continue;
+                
+                const pNorm = CoreEngine.normalize(text);
+                
+                // 完美匹配或穿透掃描
+                if (pNorm === msgOrigTemplate || pNorm === msgNorm || (pNorm.length > 20 && msgNorm.includes(pNorm))) {
+                    return p.name || '未命名提示詞';
+                }
+                
+                const sim = CoreEngine.getSimilarity(pNorm, msgNorm);
+                if (sim > bestSim) { 
+                    bestSim = sim; 
+                    bestMatch = p.name || '未命名提示詞'; 
+                }
+            }
+            return bestSim > 0.5 ? bestMatch : null;
+        } catch (e) {
+            return null;
         }
-        return bestSim > 0.75 ? bestMatch : null;
     },
 
     classify: (msg, structuralTag, isDynamic) => {
@@ -256,7 +281,7 @@ const CoreEngine = {
             return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
-        // 🌟 1. 世界書逆向映射 (最高優先級，精準提取書名與條目名)
+        // 🌟 1. 世界書逆向映射 (最高優先級)
         let wiMatch = CoreEngine.getWorldInfoName(msg._norm, msg._origTemplate);
         if (wiMatch) {
             return { cat: '世界書', source: `世界書(${wiMatch.book} - ${wiMatch.entry})`, creator: '世界書系統', type: 'LOREBOOK' };
@@ -501,7 +526,6 @@ async function interceptAndRestructurePrompt(data) {
                 } else {
                     if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                     
-                    // 🌟 這裡會顯示世界書的真實名稱與條目！
                     syncMessages.push(`[修改] ${matched._attr.source}`);
                     
                     frozen.content = matched.content; 
@@ -752,9 +776,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v38-opt-drawer">
+    <div class="inline-drawer" id="ds-v39-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v38.0 終極完美溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v39.0 終極完美溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -828,7 +852,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V38 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V39 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
