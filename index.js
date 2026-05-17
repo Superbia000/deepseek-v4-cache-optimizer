@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v34_absolute) {
-        extension_settings.ds_cache_v34_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v36_absolute) {
+        extension_settings.ds_cache_v36_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v34_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v36_absolute);
 }
 
 function safeSave() {
@@ -166,7 +166,6 @@ const CoreEngine = {
         }
     },
 
-    // 🌟 接收純結構標籤進行分類，完全不依賴文本比對！
     classify: (msg, structuralTag, isDynamic) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
 
@@ -208,13 +207,20 @@ const CoreEngine = {
     getSimilarity: (str1, str2) => {
         if (str1 === str2) return 1;
         if (!str1 || !str2) return 0;
-        const s1 = str1.length < str2.length ? str1 : str2;
-        const s2 = str1.length < str2.length ? str2 : str1;
-        let matchCount = 0;
-        for (let i = 0; i < s1.length - 1; i++) {
-            if (s2.includes(s1.substring(i, i+2))) matchCount++;
-        }
-        return matchCount / Math.max(1, s1.length - 1);
+        const getGrams = (str) => {
+            let grams = new Set();
+            let len = str.length;
+            if (len < 3) { grams.add(str); return grams; }
+            for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
+            return grams;
+        };
+        const g1 = getGrams(str1);
+        const g2 = getGrams(str2);
+        if (g1.size === 0 || g2.size === 0) return 0;
+        let intersect = 0;
+        for (let g of g1) { if (g2.has(g)) intersect++; }
+        let union = g1.size + g2.size - intersect;
+        return union === 0 ? 0 : intersect / union;
     }
 };
 
@@ -231,22 +237,22 @@ async function interceptAndRestructurePrompt(data) {
         let ledger = []; 
         const processTime = Logger.getTime();
 
-        // 🌟 1. 純結構時序映射 (Structural Chrono-Mapping) - 徹底放棄文本比對！
+        // 🌟 1. 純結構時序映射 & 歷史紀錄 UID 綁定
         const contextChat = getContext().chat || [];
         let structuralMap = new Array(incomingStream.length).fill(null);
+        let uidMap = new Array(incomingStream.length).fill(null);
         
-        // 尋找預填充 (Prefill)
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             if (incomingStream[i].role === 'system') continue;
             if (incomingStream[i].role === 'assistant') {
                 if (contextChat.length > 0 && contextChat[contextChat.length - 1].is_user) {
                     structuralMap[i] = 'PREFILL';
+                    uidMap[i] = 'chat_prefill';
                 }
             }
             break;
         }
 
-        // 倒推映射歷史紀錄
         let cIdx = contextChat.length - 1;
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             if (structuralMap[i]) continue;
@@ -259,6 +265,7 @@ async function interceptAndRestructurePrompt(data) {
             if (cIdx >= 0) {
                 let expectedRole = contextChat[cIdx].is_user ? 'user' : 'assistant';
                 if (msg.role === expectedRole) {
+                    uidMap[i] = `chat_msg_${cIdx}`; 
                     if (cIdx === contextChat.length - 1) structuralMap[i] = 'USER_CURRENT';
                     else if (cIdx === contextChat.length - 2) structuralMap[i] = 'AI_LAST_REPLY';
                     else structuralMap[i] = expectedRole === 'user' ? 'USER_HISTORY' : 'AI_HISTORY';
@@ -267,11 +274,11 @@ async function interceptAndRestructurePrompt(data) {
             } else if (cIdx === -1 && contextChat.length === 0) {
                 if (msg.role === 'user' && !structuralMap.includes('USER_CURRENT')) {
                     structuralMap[i] = 'USER_CURRENT';
+                    uidMap[i] = `chat_msg_0`;
                 }
             }
         }
 
-        // 獲取當前用戶輸入的文本，用於輔助動態判斷
         let userCurrentText = "";
         for (let i = 0; i < incomingStream.length; i++) {
             if (structuralMap[i] === 'USER_CURRENT') {
@@ -280,14 +287,14 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 🌟 2. 源碼溯源與分類
+        // 🌟 2. 源碼溯源、分類與「全域結構 UID」生成
+        let catCounters = {};
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             msg._norm = CoreEngine.normalize(msg.content);
             msg._origTemplate = CoreEngine.macroMap.get(msg._norm) || msg._norm;
 
             let isDynamic = false;
-
             if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && msg.content.includes(userCurrentText)) {
                 isDynamic = true;
             } else if (msg._origTemplate.includes('{{') && msg._origTemplate.includes('}}')) {
@@ -304,6 +311,14 @@ async function interceptAndRestructurePrompt(data) {
 
             msg._isDynamic = isDynamic;
             msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
+            
+            // 🌟 天才構想實現：為所有非歷史提示詞生成基於「分類+角色+順序」的絕對結構 UID
+            if (!uidMap[i]) {
+                let key = `${msg._attr.cat}_${msg.role}`;
+                catCounters[key] = (catCounters[key] || 0) + 1;
+                uidMap[i] = `struct_${key}_${catCounters[key]}`;
+            }
+            msg._uid = uidMap[i];
             msg._origIdx = i + 1;
             incomingPool.push(msg);
         }
@@ -316,23 +331,79 @@ async function interceptAndRestructurePrompt(data) {
                     attr: msg._attr, gen: '原始載入', creator: msg._attr.creator, action: '未處理', func: '插件已停用', status: '未凍結'
                 });
             });
-
-            if (Settings.logLevel >= LogLevels.DETAILED) {
-                let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (插件已停用)\n\n`;
-                mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-                mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
-                ledger.forEach(l => {
-                    mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
-                });
-                Logger.write(mdLog, LogLevels.DETAILED);
-            }
             return; 
         }
 
         let nextFrozen = [];
+        let matchResults = new Array(state.frozenSequence.length).fill(-1);
         let matchedIncomingIndices = new Set();
+        let matchedFrozenIndices = new Set();
         
-        // 🌟 3. 真實前綴緩存斷點算法 (Prefix Breakpoint Algorithm)
+        // 🌟 3. 四重極限對齊算法 (The 4-Pass Quantum Entanglement)
+
+        // 第一重：歷史紀錄絕對 UID 鎖定
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            let frozen = state.frozenSequence[i];
+            if (frozen._uid && frozen._uid.startsWith('chat_')) {
+                for (let j = 0; j < incomingPool.length; j++) {
+                    if (matchedIncomingIndices.has(j)) continue;
+                    if (incomingPool[j]._uid === frozen._uid) {
+                        matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+                    }
+                }
+            }
+        }
+
+        // 第二重：完美文本匹配 (針對未修改的靜態提示詞)
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            if (matchedFrozenIndices.has(i)) continue;
+            let frozen = state.frozenSequence[i];
+            for (let j = 0; j < incomingPool.length; j++) {
+                if (matchedIncomingIndices.has(j)) continue;
+                if (incomingPool[j].role !== frozen.role) continue;
+                if (incomingPool[j]._norm === frozen._norm) {
+                    matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+                }
+            }
+        }
+
+        // 第三重：Jaccard 語義感知 (捕捉小幅/中幅修改)
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            if (matchedFrozenIndices.has(i)) continue;
+            let frozen = state.frozenSequence[i];
+            if (frozen._isDynamic) continue;
+            
+            let bestMatchIdx = -1; let bestSim = 0;
+            for (let j = 0; j < incomingPool.length; j++) {
+                if (matchedIncomingIndices.has(j)) continue;
+                if (incomingPool[j].role !== frozen.role) continue;
+                if (incomingPool[j]._isDynamic) continue;
+                if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
+                
+                let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
+                if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
+            }
+            if (bestSim > 0.5 && bestMatchIdx !== -1) {
+                matchResults[i] = bestMatchIdx; matchedIncomingIndices.add(bestMatchIdx); matchedFrozenIndices.add(i);
+            }
+        }
+
+        // 第四重：終極結構感知 (捕捉被完全重寫的預設提示詞/世界書)
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            if (matchedFrozenIndices.has(i)) continue;
+            let frozen = state.frozenSequence[i];
+            if (frozen._isDynamic) continue;
+            
+            for (let j = 0; j < incomingPool.length; j++) {
+                if (matchedIncomingIndices.has(j)) continue;
+                // 如果它們的結構 UID 完全一致，說明它是同一個位置的提示詞被徹底重寫了！
+                if (incomingPool[j]._uid === frozen._uid && incomingPool[j]._attr.cat === frozen._attr.cat) {
+                    matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+                }
+            }
+        }
+
+        // 🌟 4. 處理對齊結果與前綴緩存斷點計算
         let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
         let currentValidLength = 0;
         let firstBreakIndex = -1; 
@@ -341,68 +412,45 @@ async function interceptAndRestructurePrompt(data) {
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
-            let bestMatchIdx = -1;
-            let bestSim = 0;
+            let matchIdx = matchResults[i];
+            const roleStr = frozen.role.charAt(0).toUpperCase() + frozen.role.slice(1);
 
             if (frozen._origTemplate && state.promptTracker[frozen._origTemplate]?.isDynamic) {
                 frozen._isDynamic = true;
                 if (frozen._attr.type !== 'DYNAMIC') {
-                    frozen._attr.cat = '動態';
-                    frozen._attr.source = '動態提示詞(舊版保留)';
-                    frozen._attr.type = 'DYNAMIC';
+                    frozen._attr.cat = '動態'; frozen._attr.source = '動態提示詞(舊版保留)'; frozen._attr.type = 'DYNAMIC';
                 }
             }
 
-            for (let j = 0; j < incomingPool.length; j++) {
-                if (matchedIncomingIndices.has(j)) continue;
-                if (incomingPool[j].role !== frozen.role) continue;
-                if (incomingPool[j]._norm === frozen._norm) {
-                    bestMatchIdx = j; bestSim = 1; break;
+            if (matchIdx !== -1) {
+                let matched = incomingPool[matchIdx];
+                if (frozen._norm === matched._norm) {
+                    // 完美繼承
+                    nextFrozen.push(frozen);
+                    if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
+                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
+                } else {
+                    // 成功捕捉到修改！(無論是語義還是結構)
+                    if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
+                    syncMessages.push(`[修改] ${matched._attr.source}`);
+                    
+                    frozen.content = matched.content; 
+                    frozen._norm = matched._norm; 
+                    frozen._origTemplate = matched._origTemplate;
+                    frozen._uid = matched._uid;
+                    
+                    nextFrozen.push(frozen);
+                    let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
+                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                 }
-            }
-
-            if (bestMatchIdx === -1 && !frozen._isDynamic) {
-                for (let j = 0; j < incomingPool.length; j++) {
-                    if (matchedIncomingIndices.has(j)) continue;
-                    if (incomingPool[j].role !== frozen.role) continue;
-                    if (incomingPool[j]._isDynamic) continue; 
-                    let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
-                    if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
-                }
-            }
-
-            const roleStr = frozen.role.charAt(0).toUpperCase() + frozen.role.slice(1);
-
-            if (bestSim === 1 && bestMatchIdx !== -1) {
-                let matched = incomingPool[bestMatchIdx];
-                matchedIncomingIndices.add(bestMatchIdx);
-                nextFrozen.push(frozen);
-                if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
             } else if (frozen._isDynamic) {
+                // 動態幽靈協議
                 nextFrozen.push(frozen);
                 if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
-            } else if (bestSim > 0.6 && bestMatchIdx !== -1) {
-                let matched = incomingPool[bestMatchIdx];
-                matchedIncomingIndices.add(bestMatchIdx);
-                
-                if (firstBreakIndex === -1) {
-                    firstBreakIndex = currentValidLength;
-                    breakNodeName = frozen._attr.source;
-                }
-                syncMessages.push(`[修改] ${matched._attr.source}`);
-                
-                frozen.content = matched.content; 
-                frozen._norm = matched._norm; 
-                frozen._origTemplate = matched._origTemplate;
-                nextFrozen.push(frozen);
-                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: '量子糾纏(修改感知)', status: '已凍結' });
             } else {
-                if (firstBreakIndex === -1) {
-                    firstBreakIndex = currentValidLength;
-                    breakNodeName = frozen._attr.source;
-                }
+                // 真正被刪除
+                if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                 syncMessages.push(`[刪除] ${frozen._attr.source}`);
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
             }
@@ -413,19 +461,20 @@ async function interceptAndRestructurePrompt(data) {
             cacheDrop = ((totalFrozenLen - firstBreakIndex) / totalFrozenLen) * 100;
         }
 
-        if (cacheDrop > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
+        if (syncMessages.length > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
+            let dropText = cacheDrop > 0 ? `預估緩存流失率：<b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b><br><span style="font-size:11px; color:#aaa;">(斷點後的所有提示詞緩存已失效)</span>` : `<span style="color:#00e5ff;">(修改位於末端，緩存無損)</span>`;
+            
             toastr.warning(
                 `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>
                 ${syncMessages.join('<br>')}<br><br>
                 <b style="color:#ff4444;">前綴緩存已斷裂！</b><br>
-                斷點位置：${breakNodeName}<br>
-                預估緩存流失率：<b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b><br>
-                <span style="font-size:11px; color:#aaa;">(斷點後的所有提示詞緩存已失效)</span>`, 
+                斷點位置：${breakNodeName || '末端'}<br>
+                ${dropText}`, 
                 'DeepSeek 緩存優化器', {timeOut: 10000, escapeHtml: false}
             );
         }
 
-        // 🌟 4. 處理剩餘的、需要被追加的新提示詞 (完美實現絕對排序邏輯)
+        // 🌟 5. 處理剩餘的、需要被追加的新提示詞 (完美實現絕對排序邏輯)
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
         let isChat1 = state.frozenSequence.length === 0;
@@ -459,7 +508,6 @@ async function interceptAndRestructurePrompt(data) {
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話1)');
         } else {
-            // 🌟 完美排序：AI 的上一次回覆永遠優先追加！
             appendToFrozen(newHistory, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(aiLastReply, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '新增', '追加凍結', '絕對凍結(對話2+)');
@@ -635,9 +683,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v34-opt-drawer">
+    <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v34.0 終極完美溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.0 終極完美溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -711,7 +759,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V34 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
