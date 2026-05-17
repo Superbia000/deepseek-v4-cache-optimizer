@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v42_absolute) {
-        extension_settings.ds_cache_v42_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v43_absolute) {
+        extension_settings.ds_cache_v43_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v42_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v43_absolute);
 }
 
 function safeSave() {
@@ -121,32 +121,76 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🌟 終極溯源引擎：全域宏解析與碎片共振 (V42 核心突破)
+// 🌟 終極溯源引擎：全域 N-Gram 雙向指紋共振 (V43 核心突破)
 // ==========================================
 const GlobalPromptRegistry = {
     registry: [],
 
+    // 提取文本的 DNA 指紋 (3-Gram)
+    getGrams: (text) => {
+        // 剝離宏變數與所有標點，只保留純文字骨架
+        const clean = String(text).replace(/\{\{.*?\}\}/g, '').replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '').toLowerCase();
+        const grams = new Set();
+        if (clean.length < 3) {
+            if (clean.length > 0) grams.add(clean);
+            return grams;
+        }
+        for (let i = 0; i <= clean.length - 3; i++) {
+            grams.add(clean.substring(i, i + 3));
+        }
+        return grams;
+    },
+
     build: () => {
         GlobalPromptRegistry.registry = [];
+        const addedTexts = new Set();
+
         const add = (cat, name, text, type) => {
-            if (!text || typeof text !== 'string' || text.trim().length < 2) return;
-            GlobalPromptRegistry.registry.push({ cat, name, text, type });
+            if (!text || typeof text !== 'string') return;
+            const cleanText = text.trim();
+            if (cleanText.length < 2) return;
+            if (addedTexts.has(cleanText)) return;
+            addedTexts.add(cleanText);
+            
+            const grams = GlobalPromptRegistry.getGrams(cleanText);
+            if (grams.size > 0) {
+                GlobalPromptRegistry.registry.push({ cat, name, text: cleanText, type, _grams: grams });
+            }
         };
 
-        // 1. 角色卡數據
+        // 1. 角色卡數據 (精準定位當前角色)
         try {
-            if (window.this_character !== undefined && window.characters && window.characters[window.this_character]) {
-                let c = window.characters[window.this_character];
-                add('角色卡', '角色設定(Description)', c.description, 'CHAR');
-                add('角色卡', '角色性格(Personality)', c.personality, 'CHAR');
-                add('角色卡', '場景設定(Scenario)', c.scenario, 'CHAR');
-                add('角色卡', '首條訊息(First Mes)', c.first_mes, 'CHAR');
-                add('角色卡', '對話範例(Mes Example)', c.mes_example, 'CHAR');
-                add('角色卡', '創作者筆記(Creator Notes)', c.creator_notes, 'CHAR');
-                add('角色卡', '專屬系統提示詞', c.system_prompt, 'CHAR');
-                add('角色卡', '專屬後綴', c.post_history_instructions, 'CHAR');
+            const context = typeof getContext === 'function' ? getContext() : {};
+            let charsToScan = [];
+            
+            if (context.characterId !== undefined && window.characters && window.characters[context.characterId]) {
+                charsToScan.push(window.characters[context.characterId]);
+            } else if (window.this_character !== undefined && window.characters && window.characters[window.this_character]) {
+                charsToScan.push(window.characters[window.this_character]);
             }
-        } catch(e){}
+
+            if (context.groupId && window.groups) {
+                const group = window.groups.find(g => g.id === context.groupId);
+                if (group && group.members) {
+                    group.members.forEach(m => {
+                        const c = window.characters?.find(char => char.avatar === m || char.name === m);
+                        if (c) charsToScan.push(c);
+                    });
+                }
+            }
+
+            charsToScan.forEach(c => {
+                let cName = c.name || '角色';
+                add('角色卡', `${cName}(Description)`, c.description, 'CHAR');
+                add('角色卡', `${cName}(Personality)`, c.personality, 'CHAR');
+                add('角色卡', `${cName}(Scenario)`, c.scenario, 'CHAR');
+                add('角色卡', `${cName}(First Mes)`, c.first_mes, 'CHAR');
+                add('角色卡', `${cName}(Mes Example)`, c.mes_example, 'CHAR');
+                add('角色卡', `${cName}(Creator Notes)`, c.creator_notes, 'CHAR');
+                add('角色卡', `${cName}(System Prompt)`, c.system_prompt, 'CHAR');
+                add('角色卡', `${cName}(Post History)`, c.post_history_instructions, 'CHAR');
+            });
+        } catch(e) {}
 
         // 2. 格式化設定
         try {
@@ -158,92 +202,107 @@ const GlobalPromptRegistry = {
                 add('格式化', '作者筆記(Author Note)', window.settings.authors_note, 'FMT');
                 add('格式化', '用戶設定(Persona)', window.settings.persona_description, 'FMT');
             }
-        } catch(e){}
+        } catch(e) {}
 
-        // 3. 世界書 (Lorebooks)
+        // 3. 世界書
         try {
-            let wiData = window.world_info_data || window.world_info?.entries || extension_settings?.world_info?.entries || {};
-            for (let bookName in wiData) {
-                let book = wiData[bookName];
-                let entries = book.entries || book;
-                for (let key in entries) {
-                    let entry = entries[key];
-                    let title = entry.comment || entry.name || (Array.isArray(entry.key) ? entry.key.join(',') : '未命名');
-                    add('世界書', `世界書(${bookName} - ${title})`, entry.content || entry.text, 'WI');
+            const scanWI = (wiObj) => {
+                if (!wiObj) return;
+                for (let key in wiObj) {
+                    let book = wiObj[key];
+                    let entries = book.entries || book;
+                    if (typeof entries === 'object') {
+                        for (let eKey in entries) {
+                            let entry = entries[eKey];
+                            if (entry && (entry.content || entry.text)) {
+                                let title = entry.comment || entry.name || (Array.isArray(entry.key) ? entry.key.join(',') : '未命名');
+                                add('世界書', `世界書(${key} - ${title})`, entry.content || entry.text, 'WI');
+                            }
+                        }
+                    }
                 }
-            }
-        } catch(e){}
+            };
+            scanWI(window.world_info_data);
+            if (typeof extension_settings !== 'undefined') scanWI(extension_settings?.world_info?.entries);
+        } catch(e) {}
 
-        // 4. 提示詞管理器 (Prompt Manager)
+        // 4. Omni-Scraper: 遞迴深層掃描所有擴展與提示詞管理器
         try {
-            let pmPrompts = [];
-            if (extension_settings?.prompt_manager?.prompts) pmPrompts.push(...extension_settings.prompt_manager.prompts);
-            if (window.extension_prompt_manager?.prompts) pmPrompts.push(...window.extension_prompt_manager.prompts);
-            if (window.power_user?.prompt_manager?.prompts) pmPrompts.push(...window.power_user.prompt_manager.prompts);
-            pmPrompts.forEach(p => {
-                add('預設', `預設提示詞(${p.name || p.identifier || '無名'})`, p.content || p.text || p.value, 'PM');
-            });
-        } catch(e){}
-
-        // 5. 正則擴展 (Regex)
-        try {
-            if (extension_settings?.regex) {
-                extension_settings.regex.forEach(r => {
-                    add('正則', `正則注入(${r.scriptName || '無名'})`, r.replacement, 'REGEX');
-                });
-            }
-        } catch(e){}
-    },
-
-    getPure: (text) => {
-        if (!text) return '';
-        // 剝離所有標點符號、空白、特殊字元，只保留純粹的文字骨架
-        return String(text).replace(/[^\w\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, '').toLowerCase();
+            const scanExtensions = (obj, depth = 0) => {
+                if (depth > 6 || !obj || typeof obj !== 'object') return;
+                if (Array.isArray(obj)) {
+                    obj.forEach((item, idx) => {
+                        if (item && typeof item === 'object') {
+                            if (item.content || item.text || item.value || item.replacement) {
+                                let name = item.name || item.identifier || item.scriptName || item.id || `未命名項目`;
+                                let text = item.content || item.text || item.value || item.replacement;
+                                add('擴展/預設', `擴展提示詞(${name})`, text, 'EXT');
+                            } else {
+                                scanExtensions(item, depth + 1);
+                            }
+                        }
+                    });
+                } else {
+                    for (let key in obj) {
+                        // 避開龐大的無關數據庫，防止卡頓
+                        if (['chats', 'chat', 'characters', 'groups', 'user_avatars', 'backgrounds', 'thumbnails', 'themes'].includes(key)) continue;
+                        scanExtensions(obj[key], depth + 1);
+                    }
+                }
+            };
+            if (typeof extension_settings !== 'undefined') scanExtensions(extension_settings);
+            if (window.power_user) scanExtensions(window.power_user);
+            if (window.prompt_manager) scanExtensions(window.prompt_manager);
+            if (window.SillyTavern && window.SillyTavern.Extensions) scanExtensions(window.SillyTavern.Extensions);
+        } catch(e) {}
     },
 
     identify: (msgContent) => {
         if (!msgContent) return null;
-        let mPure = GlobalPromptRegistry.getPure(msgContent);
-        if (mPure.length < 2) return null;
+        const msgGrams = GlobalPromptRegistry.getGrams(msgContent);
+        if (msgGrams.size === 0) return null;
 
-        let bestMatch = null;
-        let bestScore = 0;
+        let matches = [];
 
         for (let entry of GlobalPromptRegistry.registry) {
-            // 🌟 核心突破：主動調用 ST 函數，提前解析宏變數 (解決小明注入問題)
-            let resolvedText = entry.text;
-            if (typeof window.substituteParams === 'function') {
-                try { resolvedText = window.substituteParams(entry.text); } catch(e){}
-            }
-            
-            let sPure = GlobalPromptRegistry.getPure(resolvedText);
-            if (sPure.length < 2) continue;
-
-            // 完美匹配
-            if (sPure === mPure) {
-                let creatorMap = { 'CHAR': '角色卡', 'FMT': '格式化設定', 'WI': '世界書系統', 'PM': '提示詞管理器', 'REGEX': '正則擴展' };
-                return { cat: entry.cat, source: entry.name, creator: creatorMap[entry.type] || 'ST核心', type: entry.type };
+            let matchCount = 0;
+            for (let g of entry._grams) {
+                if (msgGrams.has(g)) matchCount++;
             }
 
-            // 🌟 核心突破：雙向碎片共振 (解決 ST 切割提示詞問題)
-            if (sPure.includes(mPure)) {
-                // 最終訊息是原始提示詞的碎片
-                let score = 1.0 + (mPure.length / sPure.length);
-                if (score > bestScore) { bestScore = score; bestMatch = entry; }
-            } else if (mPure.includes(sPure)) {
-                // 原始提示詞是最終訊息的碎片
-                let score = 1.0 + (sPure.length / mPure.length);
-                if (score > bestScore) { bestScore = score; bestMatch = entry; }
+            if (matchCount === 0) continue;
+
+            let ratio1 = matchCount / entry._grams.size; // 最終訊息包含了多少比例的原始提示詞 (處理拼接)
+            let ratio2 = matchCount / msgGrams.size;     // 原始提示詞包含了多少比例的最終訊息 (處理碎片化)
+
+            // 雙向指紋共振判定
+            if (ratio1 > 0.65 || ratio2 > 0.8) {
+                // 過濾掉極短的通用詞彙誤判
+                if (ratio1 <= 0.65 && msgGrams.size < 3 && matchCount < 2) continue; 
+                matches.push({ entry, ratio1, ratio2, matchCount });
             }
         }
 
-        if (bestMatch) {
-            let creatorMap = { 'CHAR': '角色卡', 'FMT': '格式化設定', 'WI': '世界書系統', 'PM': '提示詞管理器', 'REGEX': '正則擴展' };
+        if (matches.length > 0) {
+            // 依照匹配的指紋數量排序，找出最核心的來源
+            matches.sort((a, b) => b.matchCount - a.matchCount);
+            
+            // 如果是多個提示詞拼接而成，提取前兩名的名稱組合
+            let topMatches = [matches[0]];
+            if (matches.length > 1 && matches[1].matchCount > matches[0].matchCount * 0.5) {
+                topMatches.push(matches[1]);
+            }
+
+            let combinedSource = topMatches.map(m => m.entry.name).join(' + ');
+            let primary = topMatches[0].entry;
+
+            let creatorMap = { 'CHAR': '角色卡', 'FMT': '格式化設定', 'WI': '世界書系統', 'EXT': '擴展/提示詞管理器' };
+            
             return {
-                cat: bestMatch.cat,
-                source: bestMatch.name,
-                creator: creatorMap[bestMatch.type] || 'ST核心',
-                type: bestMatch.type
+                cat: primary.cat,
+                source: combinedSource,
+                creator: creatorMap[primary.type] || 'ST核心',
+                type: primary.type
             };
         }
         return null;
@@ -324,7 +383,7 @@ const CoreEngine = {
             return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
-        // 🌟 啟動 V42 終極碎片共振溯源
+        // 🌟 啟動 V43 終極全域 N-Gram 碎片共振溯源
         const trackedSource = GlobalPromptRegistry.identify(msg.content);
         if (trackedSource) return trackedSource;
 
@@ -363,7 +422,7 @@ async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
     try {
-        // 🌟 V42：在處理前，即時構建全域提示詞註冊表
+        // 🌟 V43：在處理前，即時構建全域提示詞註冊表 (確保抓到最新修改)
         GlobalPromptRegistry.build();
 
         const state = getChatState(getChatKey());
@@ -814,9 +873,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v42-opt-drawer">
+    <div class="inline-drawer" id="ds-v43-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v42.0 終極完美溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v43.0 終極全域 N-Gram 溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -890,7 +949,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V42 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V43 終極全域 N-Gram 溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
