@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v16_absolute) {
-        extension_settings.ds_cache_v16_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v17_absolute) {
+        extension_settings.ds_cache_v17_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v16_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v17_absolute);
 }
 
 function safeSave() {
@@ -145,7 +145,6 @@ function getChatState(chatKeyInfo) {
 // 🛡️ 核心引擎：浮光排除、歸屬感知、動態探測
 // ==========================================
 const CoreEngine = {
-    // 浮光排除：徹底抹除空格、換行、所有標點符號與簡單代碼
     normalize: (text) => {
         if (!text) return '';
         return text.replace(/[\s\n\r\t]/g, '')
@@ -154,7 +153,6 @@ const CoreEngine = {
                    .trim();
     },
 
-    // 🌟 深度歸屬感知：精準剝離 ST 的偽裝，還原最初來源
     getAttribution: (msg, isLastUser, isPrefill) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
         
@@ -170,19 +168,15 @@ const CoreEngine = {
         let name = msg.name ? msg.name.toLowerCase() : '';
         let content = msg.content ? msg.content.toLowerCase() : '';
 
-        // 1. 深度識別：世界書提示詞 (準確提取世界書的全名)
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-            // ST 通常格式為 "World Info (條目名稱)"，利用正則精準提取
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
             return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
         }
-        // 內容特徵探測：即使 ST 隱藏了 name，只要內容包含世界書特徵即識破
         if (content.includes('world info:') || content.includes('lorebook:')) {
             return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
-        // 2. 深度識別：預設提示詞 (ST Core Prompts)
         if (name) {
             const defaultPrompts = ['system', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'scenario', 'post-history', 'pre-history', 'example', 'greeting', 'summary', 'summarization'];
             if (defaultPrompts.some(k => name.includes(k))) {
@@ -190,7 +184,6 @@ const CoreEngine = {
             }
         }
 
-        // 3. 深度識別：其他插件提示詞 (包含插件名)
         if (name.includes('author') || name.includes('note')) {
             return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
         }
@@ -198,33 +191,26 @@ const CoreEngine = {
             return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
         }
 
-        // 4. 兜底識別：任何帶有未知 name 的系統訊息，皆視為其他插件
         if (name) {
             return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
         }
         
-        // 5. 終極兜底：無名稱的系統訊息
         return { cat: '預設', source: '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     },
 
-    // 動態探測：基於 ST 宏解析後的特徵進行逆向探測
     isDynamic: (msg, lastUserMsg) => {
         if (msg.role !== 'system') return false; 
         const text = msg.content;
         if (!text) return false;
         
-        // 1. 探測未解析的 ST 動態變數 (涵蓋所有會頻繁改變的 ST 宏)
         if (/\{\{(time|date|weekday|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|idle_duration|total_messages|if|var|pipe)(::|:|}|\s)/i.test(text)) return true;
         
-        // 2. 探測已解析的時間與日期變數
         const timeRegex = /\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b/;
         const dateRegex = /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/;
         if (timeRegex.test(text) || dateRegex.test(text)) return true;
         
-        // 3. 探測是否包含最後一次用戶輸入 ({{lastusermessage}} 解析結果)
         if (lastUserMsg && lastUserMsg.content && lastUserMsg.content.length > 10 && text.includes(lastUserMsg.content)) return true;
         
-        // 4. 探測 RAG 向量檢索與自動摘要
         const lower = text.toLowerCase();
         if (['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容', 'summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k))) return true;
         
@@ -302,7 +288,6 @@ async function interceptAndRestructurePrompt(data) {
             for (let j = 0; j < incomingPool.length; j++) {
                 if (incomingPool[j].role !== frozen.role) continue;
                 
-                // 智能切割引擎
                 if (frozen.role === 'assistant' && incomingPool[j].content.startsWith(frozen.content) && incomingPool[j].content.length > frozen.content.length) {
                     bestSim = 1;
                     bestMatchIdx = j;
@@ -360,7 +345,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 即時提醒
         if (cacheDrop > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
             toastr.warning(
                 `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>
@@ -371,13 +355,16 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
-        // 階段 3：分類新生代提示詞
+        // 🌟 階段 3：分類新生代提示詞 (修復排序錯亂的核心)
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], newDynamic = [], newCurrent = [], newPrefill = [];
+        let isChat1 = state.frozenSequence.length === 0;
+
         incomingPool.forEach(msg => {
             if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
             else if (msg._attr.type === 'PREFILL') newPrefill.push(msg);
-            else if (msg._isDynamic) newDynamic.push(msg);
             else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
+            // 🌟 首輪動態靜默機制：對話1時絕對不抽離動態提示詞，完美保留預設提示詞的原始順序
+            else if (!isChat1 && msg._isDynamic) newDynamic.push(msg); 
             else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
             else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
             else newOther.push(msg);
@@ -391,15 +378,16 @@ async function interceptAndRestructurePrompt(data) {
         };
 
         // 階段 4：絕對凍結排序邏輯 (嚴格遵守只追加不移位)
-        if (state.frozenSequence.length === 0) {
+        if (isChat1) {
+            // 對話 1：動態提示詞已靜默保留在 Default/Lorebook/Other 中，確保順序 100% 完美
             appendToFrozen(newDefault, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newLorebook, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newOther, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newHistory, '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(newDynamic, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newCurrent, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newPrefill, '即時凍結', '絕對凍結(對話1)');
         } else {
+            // 對話 2+：更新的動態提示詞會被抽離並鏡像追加到最底部
             appendToFrozen(newHistory, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newLorebook, '追加凍結', '絕對凍結(對話2+)');
@@ -520,9 +508,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v16-opt-drawer">
+    <div class="inline-drawer" id="ds-v17-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v16.1 歸屬感知優化版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v17.0 排序修復版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -591,7 +579,7 @@ jQuery(async () => {
             eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
         }
 
-        Logger.write('══════ 🛡️ V16.1 歸屬感知優化版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V17 排序修復版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
