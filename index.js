@@ -5,7 +5,7 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 // 狀態與設定 (Settings & State)
 // ==========================================
 let Settings = {};
-let RawChatShadow = new Set(); // 🌟 影子預讀字典：儲存絕對真實的聊天紀錄
+let RawChatShadow = new Set(); // 影子預讀字典：儲存絕對真實的聊天紀錄
 
 function initSettings() {
     const defaultSettings = {
@@ -15,10 +15,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v23_absolute) {
-        extension_settings.ds_cache_v23_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v25_absolute) {
+        extension_settings.ds_cache_v25_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v23_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v25_absolute);
 }
 
 function safeSave() {
@@ -28,16 +28,13 @@ function safeSave() {
 
 // ==========================================
 // 🌟 影子預讀引擎 (Shadow Pre-Analyzer)
-// 在用戶發送前，實時分析並更新真實的聊天資料
 // ==========================================
 function updateRawChatShadow() {
     const context = getContext();
     RawChatShadow.clear();
     if (context && context.chat && Array.isArray(context.chat)) {
         context.chat.forEach(msg => {
-            if (msg.mes) {
-                RawChatShadow.add(CoreEngine.normalize(msg.mes));
-            }
+            if (msg.mes) RawChatShadow.add(CoreEngine.normalize(msg.mes));
         });
     }
 }
@@ -103,7 +100,7 @@ const Logger = {
         const blob = new Blob([rawMarkdownLogs.join('\n')], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `DSCache_Log_${new Date().toISOString().replace(/[:.]/g, '-')}.md`; a.click(); URL.revokeObjectURL(url);
-        if (typeof toastr !== 'undefined') toastr.success("日誌已導出");
+        if (typeof toastr !== 'undefined') toastr.success("日誌導出成功");
     }
 };
 
@@ -136,19 +133,50 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：浮光排除、歸屬感知、動態探測
+// 🛡️ 核心引擎：ST底層劫持、歸屬感知、動態探測
 // ==========================================
 const CoreEngine = {
+    macroCache: new Map(), // 儲存 ST 宏編譯的「最終結果 -> 原始藍圖」
+
     normalize: (text) => {
         if (!text) return '';
-        return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').replace(/[.,\/#!$%\^&\*;:{}=\-_`~()""''“”‘’]/g, '').trim();
+        return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').replace(/[.,\/#!$%\^&\*;{}=\-_`~()""''“”‘’<>\[\]]/g, '').trim();
+    },
+
+    // 🌟 終極接管：劫持 ST 的宏編譯引擎 (Monkey Patching)
+    patchSTEngine: () => {
+        try {
+            if (typeof window.substituteParams === 'function' && !window._ds_orig_substituteParams) {
+                window._ds_orig_substituteParams = window.substituteParams;
+                window.substituteParams = function(...args) {
+                    const orig = args[0];
+                    const res = window._ds_orig_substituteParams.apply(this, args);
+                    if (orig && typeof orig === 'string' && res && typeof res === 'string' && orig !== res) {
+                        CoreEngine.macroCache.set(CoreEngine.normalize(res), orig);
+                    }
+                    return res;
+                };
+            }
+            if (typeof window.substituteParamsExtended === 'function' && !window._ds_orig_substituteParamsExtended) {
+                window._ds_orig_substituteParamsExtended = window.substituteParamsExtended;
+                window.substituteParamsExtended = function(...args) {
+                    const orig = args[0];
+                    const res = window._ds_orig_substituteParamsExtended.apply(this, args);
+                    if (orig && typeof orig === 'string' && res && typeof res === 'string' && orig !== res) {
+                        CoreEngine.macroCache.set(CoreEngine.normalize(res), orig);
+                    }
+                    return res;
+                };
+            }
+        } catch (e) {
+            console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
+        }
     },
 
     getBaseAttribution: (msg, normContent) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
         
-        // 🌟 核心修復：使用影子字典進行絕對真偽判定
-        // 如果這段文字不在真實的聊天紀錄中，它就絕對是系統/插件提示詞！
+        // 使用影子字典進行絕對真偽判定
         let isRealChat = RawChatShadow.has(normContent);
 
         if (!isRealChat) {
@@ -181,7 +209,6 @@ const CoreEngine = {
             return { cat: '預設', source: name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
         }
 
-        // 如果在影子字典中，才是真正的聊天紀錄
         if (msg.role === 'user') return { cat: '用戶', source: '用戶聊天', creator: '用戶', type: 'USER_CHAT' };
         if (msg.role === 'assistant') return { cat: 'AI', source: 'AI聊天', creator: '大模型', type: 'AI_CHAT' };
 
@@ -194,24 +221,28 @@ const CoreEngine = {
             return false;
         }
 
+        const normText = msg._norm || CoreEngine.normalize(msg.content);
+        
+        // 1. 🌟 終極降維打擊：直接查閱 ST 宏引擎的原始藍圖
+        // 完全不需要正則猜測，只要原始代碼裡有動態宏，它就絕對是動態的！
+        const originalBlueprint = CoreEngine.macroCache.get(normText);
+        if (originalBlueprint) {
+            if (/\{\{(time|date|weekday|isotime|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|idle_duration|total_messages|if|var|pipe)(::|:|}|\s)/i.test(originalBlueprint)) {
+                return true;
+            }
+        }
+
+        // 2. 兜底檢測未解析的原始宏 (防禦性)
         const text = msg.content;
         if (!text) return false;
-        
-        // 1. 檢測未解析的原始宏
         if (/\{\{(time|date|weekday|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|idle_duration|total_messages|if|var|pipe)(::|:|}|\s)/i.test(text)) return true;
         
-        // 2. 檢測已解析的時間/日期
-        if (/\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b/.test(text) || /\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b/.test(text)) return true;
-        
-        // 3. 🌟 終極修復：深度學習檢測已解析的隨機變數 (精準命中你的代號/資源索引)
-        if (/(任务编号|游戏进程|代号|编码|阶段标识|关卡信息|事件ID|资源索引|进度|状态|序列|标识|ID|Index|Code)[:：]\s*[a-zA-Z0-9_]+/i.test(text)) return true;
-        
-        // 4. 檢測包含當前用戶輸入的動態反射
+        // 3. 兜底檢測包含當前用戶輸入的動態反射
         if (currentUserMsg && currentUserMsg.content && currentUserMsg.content.trim().length >= 3) {
             if (text.includes(currentUserMsg.content.trim())) return true;
         }
         
-        // 5. 檢測 RAG / 總結等動態注入
+        // 4. 兜底檢測 RAG / 總結等動態注入
         const lower = text.toLowerCase();
         if (['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容', 'summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k))) return true;
         
@@ -238,7 +269,7 @@ async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
     try {
-        // 確保在處理前，影子字典是最新的
+        // 確保影子字典是最新的
         updateRawChatShadow();
         
         const state = getChatState(getChatKey());
@@ -249,7 +280,6 @@ async function interceptAndRestructurePrompt(data) {
         let ledger = []; 
         const processTime = Logger.getTime();
 
-        // 🌟 雙階段歸屬感知 - 階段一：利用影子字典剝離偽裝
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             msg._norm = CoreEngine.normalize(msg.content);
@@ -262,12 +292,10 @@ async function interceptAndRestructurePrompt(data) {
             incomingPool.push(msg);
         }
 
-        // 🌟 雙階段歸屬感知 - 階段二：精準鎖定真實對話
         let lastUserChatIdx = -1;
         for (let i = chatMessages.length - 1; i >= 0; i--) {
             if (chatMessages[i]._tempAttr.type === 'USER_CHAT') {
-                lastUserChatIdx = i;
-                break;
+                lastUserChatIdx = i; break;
             }
         }
 
@@ -298,7 +326,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         });
 
-        // 🌟 插件停用時的處理邏輯
         if (!Settings.enabled) {
             incomingPool.forEach((msg, idx) => {
                 ledger.push({
@@ -323,9 +350,6 @@ async function interceptAndRestructurePrompt(data) {
             return; 
         }
 
-        // ==========================================
-        // 以下為插件啟用時的量子糾纏與絕對凍結邏輯
-        // ==========================================
         let nextFrozen = [];
         let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
         let cacheDrop = 0;
@@ -405,7 +429,6 @@ async function interceptAndRestructurePrompt(data) {
         let isChat1 = state.frozenSequence.length === 0;
 
         incomingPool.forEach(msg => {
-            // 🌟 終極修復：動態提示詞的優先級強制提升！
             if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
             else if (msg._attr.type === 'PREFILL') newPrefill.push(msg);
             else if (!isChat1 && msg._isDynamic) newDynamic.push(msg); 
@@ -606,9 +629,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v23-opt-drawer">
+    <div class="inline-drawer" id="ds-v25-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v23.0 影子預讀引擎版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v25.0 核心引擎劫持版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -673,11 +696,17 @@ jQuery(async () => {
         await setupUI();
         addMenuEntry();
         
-        // 🌟 註冊全天候背景監聽事件，實時更新影子字典
+        // 🌟 啟動時立即劫持 ST 核心宏引擎
+        CoreEngine.patchSTEngine();
+        
+        // 註冊全天候背景監聽事件，實時更新影子字典
         if (eventSource) {
             if (event_types?.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, () => { renderChatsUI(); updateRawChatShadow(); });
             if (event_types?.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, updateRawChatShadow);
             if (event_types?.MESSAGE_SENT) eventSource.on(event_types.MESSAGE_SENT, updateRawChatShadow);
+            if (event_types?.MESSAGE_UPDATED) eventSource.on(event_types.MESSAGE_UPDATED, updateRawChatShadow);
+            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, updateRawChatShadow);
+            if (event_types?.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, updateRawChatShadow);
             if (event_types?.USER_MESSAGE_RENDERED) eventSource.on(event_types.USER_MESSAGE_RENDERED, updateRawChatShadow);
             
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
@@ -685,7 +714,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V23 影子預讀引擎版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V25 核心引擎劫持版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
