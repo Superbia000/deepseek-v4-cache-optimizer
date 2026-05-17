@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v31_absolute) {
-        extension_settings.ds_cache_v31_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v32_absolute) {
+        extension_settings.ds_cache_v32_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v31_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v32_absolute);
 }
 
 function safeSave() {
@@ -124,7 +124,7 @@ function resetCurrentChatCache() {
 // 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
 // ==========================================
 const CoreEngine = {
-    macroCache: new Set(), // 儲存由宏生成的最終純文字
+    macroMap: new Map(), // 儲存: 解析後的純文字 -> 包含 {{}} 的原始代碼
     chatHistoryCache: new Map(), // 儲存真實聊天紀錄
 
     normalize: (text) => {
@@ -132,7 +132,7 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 攔截 ST 的宏編譯器，作為動態特徵的輔助判斷
+    // 🌟 攔截 ST 的宏編譯器，建立「結果 -> 原始代碼」的絕對映射
     patchSTEngine: () => {
         try {
             const hook = (origFunc) => {
@@ -142,10 +142,11 @@ const CoreEngine = {
                     if (typeof orig === 'string' && typeof res === 'string' && orig !== res) {
                         if (orig.includes('{{') && orig.includes('}}')) {
                             let cleanRes = CoreEngine.normalize(res);
+                            let cleanOrig = CoreEngine.normalize(orig);
                             if (cleanRes.length > 0) {
-                                CoreEngine.macroCache.add(cleanRes);
-                                if (CoreEngine.macroCache.size > 500) {
-                                    CoreEngine.macroCache.delete(CoreEngine.macroCache.keys().next().value);
+                                CoreEngine.macroMap.set(cleanRes, cleanOrig);
+                                if (CoreEngine.macroMap.size > 1000) {
+                                    CoreEngine.macroMap.delete(CoreEngine.macroMap.keys().next().value);
                                 }
                             }
                         }
@@ -296,52 +297,33 @@ async function interceptAndRestructurePrompt(data) {
 
         let userCurrentText = userCurrentIdx !== -1 ? incomingStream[userCurrentIdx].content.trim() : "";
 
-        // 🌟 1. 分配絕對穩定的 Track ID
-        let nameCounters = {};
-        for (let i = 0; i < incomingStream.length; i++) {
-            let msg = incomingStream[i];
-            let baseName = msg.name ? `name_${msg.name}` : `role_${msg.role}`;
-            if (!nameCounters[baseName]) nameCounters[baseName] = 0;
-            msg._trackId = `${baseName}_${nameCounters[baseName]++}`;
-            msg._norm = CoreEngine.normalize(msg.content);
-        }
-
-        // 🌟 2. 跨回合動態變數覺醒判定 (極限捕捉 + 顛覆性改變保險)
+        // 🌟 1. 廢除 Index 追蹤，啟用「源碼溯源 (Source Code Tracking)」
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
-            let isDynamic = false;
+            msg._norm = CoreEngine.normalize(msg.content);
             
-            // 判斷是否具備動態特徵 (包含 {{}}、包含宏引擎結果、或包含用戶最新輸入)
-            let hasMacro = false;
-            if (msg.content.includes('{{') && msg.content.includes('}}')) hasMacro = true;
-            if (!hasMacro) {
-                for (let macroRes of CoreEngine.macroCache) {
-                    if (macroRes.length > 0 && msg._norm.includes(macroRes)) {
-                        hasMacro = true;
-                        break;
-                    }
-                }
+            // 嘗試獲取原始代碼 (如果沒有被宏引擎攔截過，就等於它自己)
+            msg._origTemplate = CoreEngine.macroMap.get(msg._norm) || msg._norm;
+
+            let isDynamic = false;
+
+            // 條件 A：如果提示詞包含了用戶剛剛發送的文字，強制覺醒為動態
+            if (userCurrentText.length > 3 && i !== userCurrentIdx && msg.content.includes(userCurrentText)) {
+                isDynamic = true;
             }
-            if (userCurrentText.length > 3 && i !== userCurrentIdx && msg.content.includes(userCurrentText)) hasMacro = true;
-
-            if (!state.promptTracker[msg._trackId]) {
-                // 第一次見到，記錄下來，暫時視為靜態
-                state.promptTracker[msg._trackId] = { lastContent: msg._norm, isDynamic: false, hasMacro: hasMacro };
-            } else {
-                // 更新動態特徵標記
-                if (hasMacro) state.promptTracker[msg._trackId].hasMacro = true;
-
-                // 🌟 核心邏輯：如果內容發生了改變...
-                if (state.promptTracker[msg._trackId].lastContent !== msg._norm) {
-                    let sim = CoreEngine.getSimilarity(state.promptTracker[msg._trackId].lastContent, msg._norm);
-                    
-                    // 只要具備動態特徵，或者發生了「顛覆性改變」(相似度 < 0.5)，就強制覺醒為動態提示詞！
-                    if (state.promptTracker[msg._trackId].hasMacro || hasMacro || sim < 0.5) {
-                        state.promptTracker[msg._trackId].isDynamic = true;
+            // 條件 B：如果原始代碼包含 {{}}，則進行跨回合比對
+            else if (msg._origTemplate.includes('{{') && msg._origTemplate.includes('}}')) {
+                if (!state.promptTracker[msg._origTemplate]) {
+                    // 第一次見到這個原始代碼，記錄下來，暫時視為靜態
+                    state.promptTracker[msg._origTemplate] = { lastRes: msg._norm, isDynamic: false };
+                } else {
+                    // 🌟 核心邏輯：如果同一個原始代碼，解析出來的結果變了，正式覺醒為動態！
+                    if (state.promptTracker[msg._origTemplate].lastRes !== msg._norm) {
+                        state.promptTracker[msg._origTemplate].isDynamic = true;
+                        state.promptTracker[msg._origTemplate].lastRes = msg._norm;
                     }
-                    state.promptTracker[msg._trackId].lastContent = msg._norm;
+                    isDynamic = state.promptTracker[msg._origTemplate].isDynamic;
                 }
-                isDynamic = state.promptTracker[msg._trackId].isDynamic;
             }
 
             msg._isDynamic = isDynamic;
@@ -373,18 +355,20 @@ async function interceptAndRestructurePrompt(data) {
 
         let nextFrozen = [];
         let matchedIncomingIndices = new Set();
+        
+        // 🌟 2. 真實前綴緩存失效算法 (Prefix Breakpoint Algorithm)
         let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
-        let cacheDrop = 0;
+        let currentValidLength = 0;
+        let firstBreakIndex = -1; // 記錄第一個發生斷裂的字元位置
         let syncMessages = [];
 
-        // 🌟 3. 核心匹配邏輯：完美保留舊動態提示詞 (幽靈協議)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
             let bestMatchIdx = -1;
             let bestSim = 0;
 
             // 同步凍結池中舊提示詞的動態覺醒狀態
-            if (frozen._trackId && state.promptTracker[frozen._trackId]?.isDynamic) {
+            if (frozen._origTemplate && state.promptTracker[frozen._origTemplate]?.isDynamic) {
                 frozen._isDynamic = true;
                 if (frozen._attr.type !== 'DYNAMIC') {
                     frozen._attr.cat = '動態';
@@ -402,7 +386,7 @@ async function interceptAndRestructurePrompt(data) {
                 }
             }
 
-            // 嘗試相似度匹配 (僅限靜態提示詞，動態提示詞不允許相似度匹配，必須觸發幽靈協議)
+            // 嘗試相似度匹配 (僅限靜態提示詞)
             if (bestMatchIdx === -1 && !frozen._isDynamic) {
                 for (let j = 0; j < incomingPool.length; j++) {
                     if (matchedIncomingIndices.has(j)) continue;
@@ -416,45 +400,53 @@ async function interceptAndRestructurePrompt(data) {
             const roleStr = frozen.role.charAt(0).toUpperCase() + frozen.role.slice(1);
 
             if (bestSim === 1 && bestMatchIdx !== -1) {
-                // 完美匹配：原位凍結
+                // 完美匹配：原位凍結 (緩存連續)
                 let matched = incomingPool[bestMatchIdx];
                 matchedIncomingIndices.add(bestMatchIdx);
                 nextFrozen.push(frozen);
+                currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
             } else if (frozen._isDynamic) {
-                // 🌟 幽靈協議觸發：動態提示詞發生了改變，舊版本完美保留在原地！
+                // 🌟 幽靈協議觸發：舊版動態提示詞完美保留在原地 (緩存連續)
                 nextFrozen.push(frozen);
+                currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
             } else if (bestSim > 0.6 && bestMatchIdx !== -1) {
-                // 用戶手動修改了靜態提示詞：鏡像同步
+                // 靜態提示詞被修改 (緩存斷裂！)
                 let matched = incomingPool[bestMatchIdx];
                 matchedIncomingIndices.add(bestMatchIdx);
-                let drop = (matched.content.length / totalFrozenLen) * 100;
-                cacheDrop += drop;
-                syncMessages.push(`[修改] ${matched._attr.source} (-${drop.toFixed(1)}%)`);
+                
+                if (firstBreakIndex === -1) firstBreakIndex = currentValidLength;
+                syncMessages.push(`[修改] ${matched._attr.source}`);
                 
                 frozen.content = matched.content; 
                 frozen._norm = matched._norm; 
-                frozen._trackId = matched._trackId;
+                frozen._origTemplate = matched._origTemplate;
                 nextFrozen.push(frozen);
+                currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: '量子糾纏(修改感知)', status: '已凍結' });
             } else {
-                // 靜態提示詞被刪除
-                let drop = (frozen.content.length / totalFrozenLen) * 100;
-                cacheDrop += drop;
-                syncMessages.push(`[刪除] ${frozen._attr.source} (-${drop.toFixed(1)}%)`);
+                // 靜態提示詞被刪除 (緩存斷裂！)
+                if (firstBreakIndex === -1) firstBreakIndex = currentValidLength;
+                syncMessages.push(`[刪除] ${frozen._attr.source}`);
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
             }
         }
 
+        // 🌟 根據斷點計算真實的緩存損失率
+        let cacheDrop = 0;
+        if (firstBreakIndex !== -1) {
+            cacheDrop = ((totalFrozenLen - firstBreakIndex) / totalFrozenLen) * 100;
+        }
+
         if (cacheDrop > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
             toastr.warning(
-                `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>${syncMessages.join('<br>')}<br><br>預估緩存命中率下降: <b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b>`, 
+                `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>${syncMessages.join('<br>')}<br><br>預估緩存命中率下降: <b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b><br><span style="font-size:11px; color:#aaa;">(基於前綴緩存斷點算法)</span>`, 
                 'DeepSeek 緩存優化器', {timeOut: 8000, escapeHtml: false}
             );
         }
 
-        // 🌟 4. 處理剩餘的、需要被追加的新提示詞 (包含更新後的新動態提示詞)
+        // 🌟 3. 處理剩餘的、需要被追加的新提示詞
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [];
         let isChat1 = state.frozenSequence.length === 0;
@@ -663,9 +655,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v31-opt-drawer">
+    <div class="inline-drawer" id="ds-v32-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v31.0 終極完美溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v32.0 終極完美溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -739,7 +731,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V31 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V32 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
