@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v30_absolute) {
-        extension_settings.ds_cache_v30_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v31_absolute) {
+        extension_settings.ds_cache_v31_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v30_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v31_absolute);
 }
 
 function safeSave() {
@@ -141,9 +141,12 @@ const CoreEngine = {
                     const res = origFunc.apply(this, args);
                     if (typeof orig === 'string' && typeof res === 'string' && orig !== res) {
                         if (orig.includes('{{') && orig.includes('}}')) {
-                            CoreEngine.macroCache.add(CoreEngine.normalize(res));
-                            if (CoreEngine.macroCache.size > 500) {
-                                CoreEngine.macroCache.delete(CoreEngine.macroCache.keys().next().value);
+                            let cleanRes = CoreEngine.normalize(res);
+                            if (cleanRes.length > 0) {
+                                CoreEngine.macroCache.add(cleanRes);
+                                if (CoreEngine.macroCache.size > 500) {
+                                    CoreEngine.macroCache.delete(CoreEngine.macroCache.keys().next().value);
+                                }
                             }
                         }
                     }
@@ -303,15 +306,22 @@ async function interceptAndRestructurePrompt(data) {
             msg._norm = CoreEngine.normalize(msg.content);
         }
 
-        // 🌟 2. 跨回合動態變數覺醒判定 (嚴格遵守：有改變才是動態)
+        // 🌟 2. 跨回合動態變數覺醒判定 (極限捕捉 + 顛覆性改變保險)
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             let isDynamic = false;
             
-            // 判斷是否具備動態特徵 (包含 {{}}、被宏引擎攔截、或包含用戶最新輸入)
+            // 判斷是否具備動態特徵 (包含 {{}}、包含宏引擎結果、或包含用戶最新輸入)
             let hasMacro = false;
             if (msg.content.includes('{{') && msg.content.includes('}}')) hasMacro = true;
-            if (CoreEngine.macroCache.has(msg._norm)) hasMacro = true;
+            if (!hasMacro) {
+                for (let macroRes of CoreEngine.macroCache) {
+                    if (macroRes.length > 0 && msg._norm.includes(macroRes)) {
+                        hasMacro = true;
+                        break;
+                    }
+                }
+            }
             if (userCurrentText.length > 3 && i !== userCurrentIdx && msg.content.includes(userCurrentText)) hasMacro = true;
 
             if (!state.promptTracker[msg._trackId]) {
@@ -321,9 +331,12 @@ async function interceptAndRestructurePrompt(data) {
                 // 更新動態特徵標記
                 if (hasMacro) state.promptTracker[msg._trackId].hasMacro = true;
 
-                // 🌟 核心邏輯：如果內容發生了改變，且具備動態特徵，則正式覺醒為動態提示詞！
+                // 🌟 核心邏輯：如果內容發生了改變...
                 if (state.promptTracker[msg._trackId].lastContent !== msg._norm) {
-                    if (state.promptTracker[msg._trackId].hasMacro) {
+                    let sim = CoreEngine.getSimilarity(state.promptTracker[msg._trackId].lastContent, msg._norm);
+                    
+                    // 只要具備動態特徵，或者發生了「顛覆性改變」(相似度 < 0.5)，就強制覺醒為動態提示詞！
+                    if (state.promptTracker[msg._trackId].hasMacro || hasMacro || sim < 0.5) {
                         state.promptTracker[msg._trackId].isDynamic = true;
                     }
                     state.promptTracker[msg._trackId].lastContent = msg._norm;
@@ -650,9 +663,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v30-opt-drawer">
+    <div class="inline-drawer" id="ds-v31-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v30.0 終極完美溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v31.0 終極完美溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -726,7 +739,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V30 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V31 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
