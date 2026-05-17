@@ -5,7 +5,6 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 // 狀態與設定 (Settings & State)
 // ==========================================
 let Settings = {};
-let RawChatShadow = new Set(); // 影子預讀字典：儲存絕對真實的聊天紀錄
 
 function initSettings() {
     const defaultSettings = {
@@ -15,28 +14,15 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v26_absolute) {
-        extension_settings.ds_cache_v26_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v27_absolute) {
+        extension_settings.ds_cache_v27_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v26_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v27_absolute);
 }
 
 function safeSave() {
     try { if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); } 
     catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
-}
-
-// ==========================================
-// 🌟 影子預讀引擎 (Shadow Pre-Analyzer)
-// ==========================================
-function updateRawChatShadow() {
-    const context = getContext();
-    RawChatShadow.clear();
-    if (context && context.chat && Array.isArray(context.chat)) {
-        context.chat.forEach(msg => {
-            if (msg.mes) RawChatShadow.add(CoreEngine.normalize(msg.mes));
-        });
-    }
 }
 
 // ==========================================
@@ -133,166 +119,106 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：發送前深度掃描、極端淨化、歸屬感知
+// 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
 // ==========================================
 const CoreEngine = {
-    dynamicSkeletons: [], 
+    macroCache: new Map(), // 儲存: 解析後的純文字 -> 包含 {{}} 的原始代碼
+    chatHistoryCache: new Map(), // 儲存: 真實聊天紀錄
 
-    // 🌟 極端淨化：摧毀所有標點符號、空格，只保留字母、數字與底線
     normalize: (text) => {
         if (!text) return '';
-        return text.replace(/[^\p{L}\p{N}_]/gu, '');
+        return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 終極接管：發送前深度掃描 ST 記憶體
-    updatePreFlightAnalysis: () => {
-        CoreEngine.dynamicSkeletons = [];
-        const seenObjects = new WeakSet();
-        
-        const buildSkeleton = (rawText) => {
-            if (!rawText || typeof rawText !== 'string') return null;
-            
-            const dynamicMacros = ['time', 'date', 'weekday', 'isotime', 'lastusermessage', 'lastcharreply', 'random', 'pick', 'roll', 'getvar', 'setvar', 'addvar', 'incvar', 'decvar', 'var', 'if', 'pipe', 'idle_duration', 'total_messages'];
-            
-            let hasDynamic = false;
-            for (let m of dynamicMacros) {
-                if (new RegExp('\\{\\{' + m + '.*?\\}\\}', 'i').test(rawText)) {
-                    hasDynamic = true; break;
-                }
-            }
-            if (!hasDynamic) return null;
-
-            let skeletonStr = rawText;
-            let allChoices = [];
-
-            // 智能學習：提取所有 {{random}} 裡面的選項
-            let randomRegex = /\{\{(?:random|pick)::(.*?)\}\}/gi;
-            let match;
-            while ((match = randomRegex.exec(rawText)) !== null) {
-                let choices = match[1].split(',').map(c => CoreEngine.normalize(c)).filter(c => c.length > 0);
-                allChoices.push(...choices);
-            }
-            
-            let choicesRegexStr = null;
-            if (allChoices.length > 0) {
-                choicesRegexStr = '(' + allChoices.join('|') + ')';
-                skeletonStr = skeletonStr.replace(/\{\{(?:random|pick)::.*?\}\}/gi, '___RANDOM_CHOICES___');
-            }
-
-            skeletonStr = skeletonStr.replace(/\{\{(time|date|weekday|isotime|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|var|if|pipe|idle_duration|total_messages).*?\}\}/gi, '___DYNAMIC___');
-            skeletonStr = skeletonStr.replace(/\{\{.*?\}\}/g, '___STATIC___');
-            
-            let normSkeleton = CoreEngine.normalize(skeletonStr);
-            let anchorText = normSkeleton.replace(/___DYNAMIC___/g, '').replace(/___STATIC___/g, '').replace(/___RANDOM_CHOICES___/g, '');
-            
-            // 如果沒有選項且靜態特徵太短，放棄以防誤判
-            if (!choicesRegexStr && anchorText.length < 2) return null;
-
-            let regexStr = normSkeleton
-                .replace(/___RANDOM_CHOICES___/g, choicesRegexStr || '')
-                .replace(/___DYNAMIC___/g, '(.*?)')
-                .replace(/___STATIC___/g, '(.*?)');
-                
-            return new RegExp('^' + regexStr + '$', 'i');
-        };
-
-        const scan = (obj, depth = 0) => {
-            if (depth > 10 || !obj || typeof obj !== 'object') return;
-            if (seenObjects.has(obj)) return;
-            seenObjects.add(obj);
-
-            for (let key in obj) {
-                try {
-                    let val = obj[key];
-                    if (typeof val === 'string') {
-                        if (val.includes('{{')) {
-                            const skel = buildSkeleton(val);
-                            if (skel) CoreEngine.dynamicSkeletons.push(skel);
-                        }
-                    } else if (typeof val === 'object') {
-                        scan(val, depth + 1);
+    // 🌟 終極劫持：攔截 ST 的宏編譯器，獲取最原始的代碼
+    patchSTEngine: () => {
+        try {
+            if (typeof window.substituteParams === 'function' && !window._ds_orig_substituteParams) {
+                window._ds_orig_substituteParams = window.substituteParams;
+                window.substituteParams = function(...args) {
+                    const orig = args[0];
+                    const res = window._ds_orig_substituteParams.apply(this, args);
+                    if (typeof orig === 'string' && typeof res === 'string' && orig !== res) {
+                        CoreEngine.macroCache.set(CoreEngine.normalize(res), orig);
                     }
-                } catch(e) {}
+                    return res;
+                };
             }
-        };
+            if (typeof window.substituteParamsExtended === 'function' && !window._ds_orig_substituteParamsExtended) {
+                window._ds_orig_substituteParamsExtended = window.substituteParamsExtended;
+                window.substituteParamsExtended = function(...args) {
+                    const orig = args[0];
+                    const res = window._ds_orig_substituteParamsExtended.apply(this, args);
+                    if (typeof orig === 'string' && typeof res === 'string' && orig !== res) {
+                        CoreEngine.macroCache.set(CoreEngine.normalize(res), orig);
+                    }
+                    return res;
+                };
+            }
+        } catch (e) {
+            console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
+        }
+    },
 
-        // 深度掃描 ST 核心記憶體
+    // 🌟 實時更新真實聊天紀錄字典
+    updateChatHistory: () => {
+        CoreEngine.chatHistoryCache.clear();
         const context = getContext();
-        if (context && context.characters && context.characterId) scan(context.characters[context.characterId]);
-        if (window.world_info) scan(window.world_info);
-        if (typeof extension_settings !== 'undefined') scan(extension_settings);
-        if (window.power_user) scan(window.power_user);
+        if (context && context.chat && Array.isArray(context.chat)) {
+            context.chat.forEach((msg) => {
+                if (msg.mes) {
+                    CoreEngine.chatHistoryCache.set(CoreEngine.normalize(msg.mes), msg);
+                }
+            });
+        }
     },
 
-    getBaseAttribution: (msg, normContent) => {
-        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
-        
-        let isRealChat = RawChatShadow.has(normContent);
+    // 🌟 100% 完美的十維度分類引擎
+    classify: (msg, isUserCurrent, isPrefill) => {
+        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', type: 'PLUGIN' };
 
-        if (!isRealChat) {
-            let name = msg.name ? msg.name.toLowerCase() : '';
-            let contentLower = msg.content ? msg.content.toLowerCase() : '';
+        const norm = CoreEngine.normalize(msg.content);
+        // 透過映射找回原始代碼 (如果沒有被宏替換過，則等於原內容)
+        const orig = CoreEngine.macroCache.get(norm) || msg.content;
 
-            if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-                const match = msg.name.match(/\((.*?)\)/);
-                return { cat: '世界書', source: `世界書提示詞(${match ? match[1] : msg.name})`, creator: '世界書系統', type: 'LOREBOOK' };
+        // 1. 絕對真理：比對真實聊天紀錄
+        if (CoreEngine.chatHistoryCache.has(norm) || CoreEngine.chatHistoryCache.has(CoreEngine.normalize(orig))) {
+            if (msg.role === 'user') {
+                if (isUserCurrent) return { cat: '用戶', source: '用戶當前輸入', type: 'USER_CURRENT' };
+                return { cat: '用戶', source: '用戶歷史輸入', type: 'USER_HISTORY' };
+            } else if (msg.role === 'assistant') {
+                if (isPrefill) return { cat: 'AI', source: '預填充', type: 'PREFILL' };
+                return { cat: 'AI', source: 'AI歷史回覆', type: 'AI_HISTORY' };
             }
-            if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-                return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
-            }
-            if (name.includes('author') || name.includes('note')) {
-                return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-            }
-            if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-                return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
-            }
-            
-            const defaultPrompts = ['system', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'scenario', 'post-history', 'pre-history', 'example', 'greeting', 'summary', 'summarization'];
-            if (name && defaultPrompts.some(k => name.includes(k))) {
-                return { cat: '預設', source: `預設提示詞(${msg.name})`, creator: 'ST核心', type: 'DEFAULT' };
-            }
-
-            if (msg.content && (msg.content.startsWith('Human: 为了避免') || msg.content.includes('[Current Model Mode]') || msg.content.startsWith('你需根据') || msg.content.includes('[Played by Human]'))) {
-                return { cat: '預設', source: '預設提示詞(特徵探測)', creator: 'ST核心', type: 'DEFAULT' };
-            }
-
-            return { cat: '預設', source: name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
         }
 
-        if (msg.role === 'user') return { cat: '用戶', source: '用戶聊天', creator: '用戶', type: 'USER_CHAT' };
-        if (msg.role === 'assistant') return { cat: 'AI', source: 'AI聊天', creator: '大模型', type: 'AI_CHAT' };
-
-        return { cat: '預設', source: '預設提示詞(未知)', creator: 'ST核心', type: 'DEFAULT' };
-    },
-
-    isDynamic: (msg, currentUserMsg) => {
-        // 真實聊天紀錄絕對不是動態提示詞
-        if (msg._attr && (msg._attr.type === 'USER_CHAT' || msg._attr.type === 'AI_CHAT' || msg._attr.type === 'USER_CURRENT' || msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY' || msg._attr.type === 'PREFILL')) {
-            return false;
+        // 2. 預填充 (在用戶當前輸入之後的 AI 訊息)
+        if (isPrefill && msg.role === 'assistant') {
+            return { cat: 'AI', source: '預填充', type: 'PREFILL' };
         }
 
-        const text = msg.content;
-        if (!text) return false;
-        const normText = msg._norm || CoreEngine.normalize(text);
+        // 3. 🌟 終極動態判斷：直接掃描原始代碼中的 ST 動態變數！絕不瞎猜！
+        const dynamicRegex = /\{\{(time|date|weekday|isotime|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|var|if|pipe|idle_duration|total_messages|macro)(::|:|}|\s)/i;
+        if (dynamicRegex.test(orig)) {
+            return { cat: '動態', source: '動態提示詞', type: 'DYNAMIC' };
+        }
 
-        // 1. 🌟 降維打擊：使用極端淨化後的骨架進行匹配
-        for (let skelRegex of CoreEngine.dynamicSkeletons) {
-            if (skelRegex.test(normText)) return true;
+        // 4. 世界書提示詞 (精準提取全名)
+        let name = msg.name ? msg.name.toLowerCase() : '';
+        if (name.startsWith('world info') || name.startsWith('lorebook') || name.startsWith('wi-')) {
+            const match = msg.name.match(/\((.*?)\)/);
+            const entryName = match ? match[1] : msg.name;
+            return { cat: '世界書', source: `世界書提示詞(${entryName})`, type: 'LOREBOOK' };
         }
-        
-        // 2. 兜底檢測未解析的原始宏
-        if (/\{\{(time|date|weekday|lastusermessage|lastcharreply|random|pick|roll|getvar|setvar|addvar|incvar|decvar|idle_duration|total_messages|if|var|pipe)(::|:|}|\s)/i.test(text)) return true;
-        
-        // 3. 兜底檢測包含當前用戶輸入的動態反射
-        if (currentUserMsg && currentUserMsg.content && currentUserMsg.content.trim().length >= 3) {
-            if (text.includes(currentUserMsg.content.trim())) return true;
+
+        // 5. 其他插件提示詞 (精準提取插件名)
+        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization'];
+        if (msg.name && !defaultNames.includes(name)) {
+            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, type: 'OTHER_PLUGIN' };
         }
-        
-        // 4. 兜底檢測 RAG / 總結等動態注入
-        const lower = text.toLowerCase();
-        if (['retrieved context', 'search results', 'vector database', '相关记忆', '检索到的内容', 'summary', 'previously on', '前情提要', '总结', '回顾'].some(k => lower.includes(k))) return true;
-        
-        return false;
+
+        // 6. 預設提示詞
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', type: 'DEFAULT' };
     },
 
     getSimilarity: (str1, str2) => {
@@ -315,63 +241,37 @@ async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
     try {
-        // 🌟 在處理前，強制更新影子字典與掃描 ST 記憶體
-        updateRawChatShadow();
-        CoreEngine.updatePreFlightAnalysis();
+        // 發送前：更新真實聊天紀錄字典
+        CoreEngine.updateChatHistory();
         
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
         let incomingPool = [];
-        let chatMessages = [];
-        let otherPluginActions = [];
         let ledger = []; 
         const processTime = Logger.getTime();
 
+        // 🌟 精準定位「用戶當前輸入」的索引
+        let lastUserIdx = -1;
+        for (let i = incomingStream.length - 1; i >= 0; i--) {
+            if (incomingStream[i].role === 'user') {
+                lastUserIdx = i; break;
+            }
+        }
+
+        // 🌟 執行 100% 完美的十維度分類
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             msg._norm = CoreEngine.normalize(msg.content);
-            msg._tempAttr = CoreEngine.getBaseAttribution(msg, msg._norm);
+            
+            let isUserCurrent = (i === lastUserIdx);
+            let isPrefill = (i > lastUserIdx && msg.role === 'assistant');
+            
+            msg._attr = CoreEngine.classify(msg, isUserCurrent, isPrefill);
+            msg._isDynamic = (msg._attr.type === 'DYNAMIC');
             msg._origIdx = i + 1;
             
-            if (msg._tempAttr.type === 'USER_CHAT' || msg._tempAttr.type === 'AI_CHAT') {
-                chatMessages.push(msg);
-            }
             incomingPool.push(msg);
         }
-
-        let lastUserChatIdx = -1;
-        for (let i = chatMessages.length - 1; i >= 0; i--) {
-            if (chatMessages[i]._tempAttr.type === 'USER_CHAT') {
-                lastUserChatIdx = i; break;
-            }
-        }
-
-        let currentUserMsg = null;
-        chatMessages.forEach((msg, idx) => {
-            if (msg._tempAttr.type === 'USER_CHAT') {
-                if (idx === lastUserChatIdx) {
-                    msg._attr = { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
-                    currentUserMsg = msg;
-                } else {
-                    msg._attr = { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
-                }
-            } else if (msg._tempAttr.type === 'AI_CHAT') {
-                if (lastUserChatIdx !== -1 && idx > lastUserChatIdx) {
-                    msg._attr = { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
-                } else {
-                    msg._attr = { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
-                }
-            }
-        });
-
-        incomingPool.forEach(msg => {
-            if (!msg._attr) msg._attr = msg._tempAttr;
-            msg._isDynamic = CoreEngine.isDynamic(msg, currentUserMsg);
-            
-            if (msg._attr.type === 'OTHER_PLUGIN') {
-                otherPluginActions.push(`- 偵測到其他插件 (**${msg._attr.creator}**) 注入了提示詞，長度: ${msg.content.length}`);
-            }
-        });
 
         if (!Settings.enabled) {
             incomingPool.forEach((msg, idx) => {
@@ -384,15 +284,12 @@ async function interceptAndRestructurePrompt(data) {
 
             if (Settings.logLevel >= LogLevels.DETAILED) {
                 let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (插件已停用)\n\n`;
-                if (otherPluginActions.length > 0) mdLog += `**🔌 其他插件動態：**\n${otherPluginActions.join('\n')}\n\n`;
-                mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-                mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
+                mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+                mdLog += `|---|---|---|---|---|---|---|---|---|---|---|\n`;
                 ledger.forEach(l => {
-                    mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.attr.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                    mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
                 });
                 Logger.write(mdLog, LogLevels.DETAILED);
-            } else if (Settings.logLevel >= LogLevels.STANDARD) {
-                Logger.write(`✅ 處理完成 (插件已停用)。共 ${incomingPool.length} 節點`, LogLevels.STANDARD);
             }
             return; 
         }
@@ -432,7 +329,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (isMergedPrefill && mergedRemainder.trim().length > 0) {
                     let newAiMsg = {
                         role: 'assistant', content: mergedRemainder, name: matched.name,
-                        _attr: { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' },
+                        _attr: { cat: 'AI', source: 'AI歷史回覆', type: 'AI_HISTORY' },
                         _norm: CoreEngine.normalize(mergedRemainder), _isDynamic: false, _origIdx: matched._origIdx
                     };
                     incomingPool.push(newAiMsg);
@@ -478,7 +375,7 @@ async function interceptAndRestructurePrompt(data) {
         incomingPool.forEach(msg => {
             if (msg._attr.type === 'USER_CURRENT') newCurrent.push(msg);
             else if (msg._attr.type === 'PREFILL') newPrefill.push(msg);
-            else if (msg._isDynamic) newDynamic.push(msg); // 🌟 無論對話1或對話2，動態提示詞強制抽離
+            else if (!isChat1 && msg._isDynamic) newDynamic.push(msg); 
             else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
             else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
             else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
@@ -493,12 +390,11 @@ async function interceptAndRestructurePrompt(data) {
             });
         };
 
-        // 🌟 嚴格遵守用戶要求的排序邏輯
+        // 🌟 完美實現用戶要求的排序邏輯
         if (isChat1) {
             appendToFrozen(newDefault, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newLorebook, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newOther, '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(newDynamic, '即時凍結', '絕對凍結(對話1)'); // 動態提示詞在對話1也必須置底，防止對話2時發生位移
             appendToFrozen(newHistory, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newCurrent, '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newPrefill, '即時凍結', '絕對凍結(對話1)');
@@ -507,7 +403,7 @@ async function interceptAndRestructurePrompt(data) {
             appendToFrozen(newDefault, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newLorebook, '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newOther, '追加凍結', '絕對凍結(對話2+)');
-            appendToFrozen(newDynamic, '鏡像追加', '絕對凍結(對話2+)'); // 新動態提示詞鏡像追加在底部
+            appendToFrozen(newDynamic, '鏡像追加', '絕對凍結(對話2+)');
             appendToFrozen(newCurrent, '即時凍結', '絕對凍結(對話2+)');
             appendToFrozen(newPrefill, '即時凍結', '絕對凍結(對話2+)');
         }
@@ -525,9 +421,8 @@ async function interceptAndRestructurePrompt(data) {
 
         if (Settings.logLevel >= LogLevels.DETAILED) {
             let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (量子糾纏)\n\n`;
-            if (otherPluginActions.length > 0) mdLog += `**🔌 其他插件動態：**\n${otherPluginActions.join('\n')}\n\n`;
-            mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
+            mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|\n`;
             
             ledger.forEach(entry => {
                 if (entry.status === '已刪除') entry.finalIdx = '-';
@@ -545,7 +440,7 @@ async function interceptAndRestructurePrompt(data) {
             });
 
             ledger.forEach(l => {
-                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.attr.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
             });
 
             Logger.write(mdLog, LogLevels.DETAILED);
@@ -678,9 +573,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v26-opt-drawer">
+    <div class="inline-drawer" id="ds-v27-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v26.0 終極接管版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v27.0 終極精準溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -745,22 +640,17 @@ jQuery(async () => {
         await setupUI();
         addMenuEntry();
         
-        // 🌟 註冊全天候背景監聽事件，實時更新影子字典與掃描 ST 記憶體
+        // 🌟 啟動時立即劫持 ST 核心宏引擎
+        CoreEngine.patchSTEngine();
+        
         if (eventSource) {
-            if (event_types?.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, () => { renderChatsUI(); updateRawChatShadow(); CoreEngine.updatePreFlightAnalysis(); });
-            if (event_types?.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, updateRawChatShadow);
-            if (event_types?.MESSAGE_SENT) eventSource.on(event_types.MESSAGE_SENT, () => { updateRawChatShadow(); CoreEngine.updatePreFlightAnalysis(); });
-            if (event_types?.MESSAGE_UPDATED) eventSource.on(event_types.MESSAGE_UPDATED, updateRawChatShadow);
-            if (event_types?.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, updateRawChatShadow);
-            if (event_types?.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, updateRawChatShadow);
-            if (event_types?.USER_MESSAGE_RENDERED) eventSource.on(event_types.USER_MESSAGE_RENDERED, updateRawChatShadow);
-            
+            if (event_types?.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, renderChatsUI);
             if (event_types?.CHAT_COMPLETION_PROMPT_READY) {
                 eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, interceptAndRestructurePrompt);
             }
         }
 
-        Logger.write('══════ 🛡️ V26 終極接管版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V27 終極精準溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
