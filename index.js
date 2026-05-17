@@ -39,8 +39,7 @@ const Logger = {
     },
     truncate: (text) => {
         if (!text) return '';
-        // 防止 | 符號破壞 Markdown 表格
-        const clean = text.replace(/[\n\r\|]/g, ' ');
+        const clean = text.replace(/[\n\r]/g, ' ');
         return clean.length > 30 ? clean.substring(0, 30) + '...' : clean;
     },
     write: (markdownText, level = LogLevels.STANDARD) => {
@@ -122,17 +121,18 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：編譯器劫持與名稱探測器
+// 🛡️ 核心引擎：編譯器劫持與全域名稱註冊表
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
-    promptNameMap: new Map(), // 🌟 儲存從 ST 記憶體中挖出的自訂名稱
+    nameRegistry: new Map(), // 🌟 新增：存儲 文本 -> 提示詞真實名稱
 
     normalize: (text) => {
         if (!text) return '';
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
+    // 🌟 攔截 ST 宏編譯器
     patchSTEngine: () => {
         try {
             const hook = (origFunc) => {
@@ -145,78 +145,66 @@ const CoreEngine = {
                             let cleanOrig = CoreEngine.normalize(orig);
                             if (cleanRes.length > 0) {
                                 CoreEngine.macroMap.set(cleanRes, cleanOrig);
-                                if (CoreEngine.macroMap.size > 1000) {
-                                    CoreEngine.macroMap.delete(CoreEngine.macroMap.keys().next().value);
-                                }
+                                if (CoreEngine.macroMap.size > 1000) CoreEngine.macroMap.delete(CoreEngine.macroMap.keys().next().value);
                             }
                         }
                     }
                     return res;
                 };
             };
-
             if (typeof window.substituteParams === 'function' && !window._ds_orig_substituteParams) {
-                window._ds_orig_substituteParams = window.substituteParams;
-                window.substituteParams = hook(window._ds_orig_substituteParams);
+                window._ds_orig_substituteParams = window.substituteParams; window.substituteParams = hook(window._ds_orig_substituteParams);
             }
             if (typeof window.substituteParamsExtended === 'function' && !window._ds_orig_substituteParamsExtended) {
-                window._ds_orig_substituteParamsExtended = window.substituteParamsExtended;
-                window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
+                window._ds_orig_substituteParamsExtended = window.substituteParamsExtended; window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
             }
-        } catch (e) {
-            console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
-        }
+        } catch (e) { console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e); }
     },
 
-    // 🌟 全域記憶體精準掃描：抓取你在 Prompt Manager 設定的名稱！
-    updatePromptNameMap: () => {
-        CoreEngine.promptNameMap.clear();
-        try {
-            const add = (n, t) => {
-                if (n && typeof t === 'string' && t.trim().length > 2) {
-                    CoreEngine.promptNameMap.set(CoreEngine.normalize(t), n);
-                }
-            };
+    // 🌟 新增：從 ST 底層抓取所有真實提示詞名稱
+    updateNameRegistry: () => {
+        CoreEngine.nameRegistry.clear();
 
-            const targets = [
-                window.system_prompts, 
-                window.customPrompts, 
-                window.custom_prompts,
-                window.promptManagerData,
-                window.power_user?.prompt_manager,
-                window.power_user?.system_prompts
-            ];
-            
-            try {
-                const ctx = getContext();
-                if (ctx && ctx.prompts) targets.push(ctx.prompts);
-            } catch(e) {}
+        // 1. 抓取 Prompt Manager (預設提示詞)
+        if (typeof window.system_prompts !== 'undefined' && Array.isArray(window.system_prompts)) {
+            window.system_prompts.forEach(p => {
+                if (p.name && p.content) CoreEngine.nameRegistry.set(CoreEngine.normalize(p.content), p.name);
+            });
+        }
 
-            targets.forEach(target => {
-                if (!target) return;
-                if (Array.isArray(target)) {
-                    target.forEach(obj => {
-                        if (obj && typeof obj === 'object') {
-                            let name = obj.name || obj.identifier || obj.id || obj.title;
-                            let text = obj.content || obj.value || obj.text || obj.prompt;
-                            if (name && text) add(name, text);
-                        }
-                    });
-                } else if (typeof target === 'object') {
-                    Object.values(target).forEach(obj => {
-                        if (obj && typeof obj === 'object') {
-                            let name = obj.name || obj.identifier || obj.id || obj.title;
-                            let text = obj.content || obj.value || obj.text || obj.prompt;
-                            if (name && text) add(name, text);
-                        }
-                    });
+        // 2. 抓取 角色卡專屬提示詞
+        const ctx = getContext();
+        if (ctx && ctx.characters && ctx.characterId !== undefined) {
+            const char = ctx.characters[ctx.characterId];
+            if (char) {
+                if (char.description) CoreEngine.nameRegistry.set(CoreEngine.normalize(char.description), `角色設定(${char.name})`);
+                if (char.personality) CoreEngine.nameRegistry.set(CoreEngine.normalize(char.personality), `角色性格(${char.name})`);
+                if (char.scenario) CoreEngine.nameRegistry.set(CoreEngine.normalize(char.scenario), `場景設定(${char.name})`);
+                if (char.mes_example) CoreEngine.nameRegistry.set(CoreEngine.normalize(char.mes_example), `對話範例(${char.name})`);
+            }
+        }
+
+        // 3. 抓取 ST 核心基礎提示詞
+        if (ctx) {
+            if (ctx.main_prompt) CoreEngine.nameRegistry.set(CoreEngine.normalize(ctx.main_prompt), "Main Prompt");
+            if (ctx.nsfw_prompt) CoreEngine.nameRegistry.set(CoreEngine.normalize(ctx.nsfw_prompt), "NSFW Prompt");
+            if (ctx.jailbreak_prompt) CoreEngine.nameRegistry.set(CoreEngine.normalize(ctx.jailbreak_prompt), "Jailbreak Prompt");
+            if (ctx.story_string) CoreEngine.nameRegistry.set(CoreEngine.normalize(ctx.story_string), "Story String");
+            if (ctx.note) CoreEngine.nameRegistry.set(CoreEngine.normalize(ctx.note), "Author's Note");
+        }
+
+        // 4. 抓取 世界書條目名稱
+        if (typeof window.world_info !== 'undefined' && Array.isArray(window.world_info.entries)) {
+            window.world_info.entries.forEach(entry => {
+                if (entry.content) {
+                    let entryName = entry.comment || (entry.key ? entry.key[0] : null) || "未命名條目";
+                    CoreEngine.nameRegistry.set(CoreEngine.normalize(entry.content), `世界書(${entryName})`);
                 }
             });
-        } catch(e) {
-            console.error("[DS Cache] Name map update failed:", e);
         }
     },
 
+    // 🌟 分類引擎：融合真實名稱！
     classify: (msg, structuralTag, isDynamic) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
 
@@ -226,60 +214,44 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
-        if (isDynamic) {
-            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
+        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
+
+        // 🌟 嘗試從註冊表獲取真實名稱！
+        let realName = CoreEngine.nameRegistry.get(msg._origTemplate);
+        
+        if (realName) {
+            if (realName.startsWith('世界書') || realName.startsWith('角色')) {
+                return { cat: realName.split('(')[0], source: realName, creator: 'ST核心系統', type: 'LOREBOOK_OR_CHAR' };
+            }
+            if (realName === "Author's Note") {
+                return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+            }
+            return { cat: '預設', source: `預設提示詞(${realName})`, creator: 'ST核心', type: 'DEFAULT' };
         }
 
+        // 降級備用判斷
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
-        
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-            const match = msg.name.match(/\((.*?)\)/);
-            let entryName = match ? match[1] : msg.name;
-            entryName = entryName.replace(/\|/g, '｜');
+            const match = msg.name.match(/\((.*?)\)/); const entryName = match ? match[1] : msg.name;
             return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
         }
-        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
-        }
-
-        // 🌟 透過記憶體映射表，提取你在 Prompt Manager 設定的真實名稱！
-        let pmName = CoreEngine.promptNameMap.get(msg._origTemplate) || CoreEngine.promptNameMap.get(msg._norm);
-        if (pmName) {
-            pmName = pmName.replace(/\|/g, '｜'); // 保護 Markdown 表格
-            return { cat: '預設', source: `預設提示詞(${pmName})`, creator: 'ST核心', type: 'DEFAULT' };
-        }
-
-        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
-        if (msg.name && !defaultNames.includes(name)) {
-            let safeName = msg.name.replace(/\|/g, '｜');
-            return { cat: '其他插件', source: `其他插件提示詞(${safeName})`, creator: safeName, type: 'OTHER_PLUGIN' };
-        }
+        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', "author's note"];
+        if (msg.name && !defaultNames.includes(name)) return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
         
-        if (name.includes('author') || name.includes('note')) {
-            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
-        }
-
-        let fallbackName = msg.name ? msg.name.replace(/\|/g, '｜') : '無名';
-        return { cat: '預設', source: `預設提示詞(${fallbackName})`, creator: 'ST核心', type: 'DEFAULT' };
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     },
 
-    // 🌟 Jaccard 3-gram 相似度算法 (極限捕捉文本修改)
     getSimilarity: (str1, str2) => {
         if (str1 === str2) return 1;
         if (!str1 || !str2) return 0;
         const getGrams = (str) => {
-            let grams = new Set();
-            let len = str.length;
+            let grams = new Set(); let len = str.length;
             if (len < 3) { grams.add(str); return grams; }
             for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
             return grams;
         };
-        const g1 = getGrams(str1);
-        const g2 = getGrams(str2);
+        const g1 = getGrams(str1); const g2 = getGrams(str2);
         if (g1.size === 0 || g2.size === 0) return 0;
         let intersect = 0;
         for (let g of g1) { if (g2.has(g)) intersect++; }
@@ -295,9 +267,8 @@ async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
     try {
-        // 🌟 0. 更新全域提示詞名稱映射表 (抓取最新 UI 設定)
-        CoreEngine.updatePromptNameMap();
-
+        CoreEngine.updateNameRegistry(); // 🌟 每次生成前刷新真實名稱列表！
+        
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
         let incomingPool = [];
@@ -313,8 +284,7 @@ async function interceptAndRestructurePrompt(data) {
             if (incomingStream[i].role === 'system') continue;
             if (incomingStream[i].role === 'assistant') {
                 if (contextChat.length > 0 && contextChat[contextChat.length - 1].is_user) {
-                    structuralMap[i] = 'PREFILL';
-                    uidMap[i] = 'chat_prefill';
+                    structuralMap[i] = 'PREFILL'; uidMap[i] = 'chat_prefill';
                 }
             }
             break;
@@ -324,7 +294,6 @@ async function interceptAndRestructurePrompt(data) {
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             if (structuralMap[i]) continue;
             let msg = incomingStream[i];
-            
             if (msg.role === 'system') continue;
             let name = msg.name ? msg.name.toLowerCase() : '';
             if (name.includes('example') || name.includes('scenario') || name.includes('system')) continue;
@@ -340,21 +309,17 @@ async function interceptAndRestructurePrompt(data) {
                 }
             } else if (cIdx === -1 && contextChat.length === 0) {
                 if (msg.role === 'user' && !structuralMap.includes('USER_CURRENT')) {
-                    structuralMap[i] = 'USER_CURRENT';
-                    uidMap[i] = `chat_msg_0`;
+                    structuralMap[i] = 'USER_CURRENT'; uidMap[i] = `chat_msg_0`;
                 }
             }
         }
 
         let userCurrentText = "";
         for (let i = 0; i < incomingStream.length; i++) {
-            if (structuralMap[i] === 'USER_CURRENT') {
-                userCurrentText = incomingStream[i].content.trim();
-                break;
-            }
+            if (structuralMap[i] === 'USER_CURRENT') { userCurrentText = incomingStream[i].content.trim(); break; }
         }
 
-        // 🌟 2. 源碼溯源、分類與「絕對結構 UID」生成
+        // 🌟 2. 源碼溯源、分類與「真實名稱 UID」生成
         let catCounters = {};
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
@@ -379,10 +344,10 @@ async function interceptAndRestructurePrompt(data) {
             msg._isDynamic = isDynamic;
             msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
             
-            // 🌟 天才構想實現：為所有非歷史提示詞生成基於「精準名稱+順序」的絕對結構 UID
+            // 🌟 真正的名稱綁定鎖！即使文本全改，只要名稱不變，UID 就絕對不變！
             if (!uidMap[i]) {
-                let sourceSafe = msg._attr.source.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, ''); // 移除特殊字元
-                let key = `${msg._attr.cat}_${sourceSafe}_${msg.role}`;
+                let safeName = msg._attr.source.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+                let key = `${msg._attr.cat}_${msg.role}_${safeName}`;
                 catCounters[key] = (catCounters[key] || 0) + 1;
                 uidMap[i] = `struct_${key}_${catCounters[key]}`;
             }
@@ -422,7 +387,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第二重：完美文本匹配 (針對未修改的靜態提示詞)
+        // 第二重：完美文本匹配
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -435,7 +400,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第三重：Jaccard 語義感知 (捕捉小幅/中幅修改)
+        // 第三重：Jaccard 語義感知
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -451,23 +416,20 @@ async function interceptAndRestructurePrompt(data) {
                 let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
-            if (bestSim > 0.4 && bestMatchIdx !== -1) {
+            if (bestSim > 0.5 && bestMatchIdx !== -1) {
                 matchResults[i] = bestMatchIdx; matchedIncomingIndices.add(bestMatchIdx); matchedFrozenIndices.add(i);
             }
         }
 
-        // 第四重：終極結構感知 (捕捉被徹底重寫、面目全非的預設提示詞)
+        // 第四重：真實名稱感知 (就算文本被刪光重寫，只要名稱一樣就能接上！)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
             if (frozen._isDynamic) continue;
-            if (frozen._uid && frozen._uid.startsWith('chat_')) continue; 
             
             for (let j = 0; j < incomingPool.length; j++) {
                 if (matchedIncomingIndices.has(j)) continue;
-                if (incomingPool[j]._isDynamic) continue; // 排除變成動態的提示詞
-                // 🌟 如果結構 UID 完美一致，就代表它是同一個提示詞被徹底重寫了！
-                if (incomingPool[j]._uid === frozen._uid && incomingPool[j]._attr.cat === frozen._attr.cat) {
+                if (incomingPool[j]._uid === frozen._uid) {
                     matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
                 }
             }
@@ -500,7 +462,7 @@ async function interceptAndRestructurePrompt(data) {
                     if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 } else {
-                    // 🌟 成功捕捉到極限修改！(無論是語義還是結構感知)
+                    // 成功捕捉到修改！
                     if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                     syncMessages.push(`[修改] ${matched._attr.source}`);
                     
@@ -510,7 +472,7 @@ async function interceptAndRestructurePrompt(data) {
                     frozen._uid = matched._uid;
                     
                     nextFrozen.push(frozen);
-                    let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
+                    let funcName = frozen._uid === matched._uid ? '量子糾纏(名稱感知)' : '量子糾纏(語義感知)';
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                 }
             } else if (frozen._isDynamic) {
@@ -531,7 +493,6 @@ async function interceptAndRestructurePrompt(data) {
 
         if (syncMessages.length > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
             let dropText = cacheDrop > 0 ? `預估緩存流失率：<b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b><br><span style="font-size:11px; color:#aaa;">(斷點後的所有提示詞緩存已失效)</span>` : `<span style="color:#00e5ff;">(修改位於末端，緩存無損)</span>`;
-            
             toastr.warning(
                 `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>
                 ${syncMessages.join('<br>')}<br><br>
@@ -554,7 +515,7 @@ async function interceptAndRestructurePrompt(data) {
             else if (msg._isDynamic) allDynamic.push(msg); 
             else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
             else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
-            else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
+            else if (msg._attr.type === 'LOREBOOK_OR_CHAR' || msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
             else newOther.push(msg);
         });
 
