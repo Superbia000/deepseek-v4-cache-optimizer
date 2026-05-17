@@ -1,5 +1,5 @@
 import { extension_settings, getContext } from '../../../extensions.js';
-import { power_user, eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
+import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
 // 狀態與設定 (Settings & State)
@@ -14,10 +14,10 @@ function initSettings() {
         chats: {} 
     };
 
-    if (!extension_settings.ds_cache_v37_absolute) {
-        extension_settings.ds_cache_v37_absolute = defaultSettings;
+    if (!extension_settings.ds_cache_v36_absolute) {
+        extension_settings.ds_cache_v36_absolute = defaultSettings;
     }
-    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v37_absolute);
+    Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v36_absolute);
 }
 
 function safeSave() {
@@ -123,25 +123,6 @@ function resetCurrentChatCache() {
 // ==========================================
 // 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
 // ==========================================
-const STManager = {
-    getPromptManagerMap: () => {
-        const map = new Map();
-        try {
-            // 🌟 深度讀取 ST 底層的 power_user.context 取得所有 Prompt Manager 提示詞
-            if (typeof power_user !== 'undefined' && power_user.context && Array.isArray(power_user.context)) {
-                power_user.context.forEach(item => {
-                    if (item && item.content && item.name) {
-                        map.set(CoreEngine.normalize(item.content), item.name);
-                    }
-                });
-            }
-        } catch (e) {
-            console.warn("[DS Cache] 無法讀取 Prompt Manager:", e);
-        }
-        return map;
-    }
-};
-
 const CoreEngine = {
     macroMap: new Map(), 
 
@@ -185,7 +166,7 @@ const CoreEngine = {
         }
     },
 
-    classify: (msg, structuralTag, isDynamic, realName) => {
+    classify: (msg, structuralTag, isDynamic) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
 
         if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
@@ -200,7 +181,6 @@ const CoreEngine = {
 
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
-        
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
@@ -208,11 +188,6 @@ const CoreEngine = {
         }
         if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
             return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
-        }
-
-        // 🌟 透過 Prompt Manager 字典精準命名！
-        if (realName) {
-            return { cat: '預設', source: `預設提示詞(${realName})`, creator: 'ST核心', type: 'DEFAULT' };
         }
 
         const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
@@ -312,11 +287,8 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 🌟 2. 實時抓取 Prompt Manager 名稱映射字典
-        let pmMap = STManager.getPromptManagerMap();
+        // 🌟 2. 源碼溯源、分類與「全域結構 UID」生成
         let catCounters = {};
-
-        // 🌟 3. 源碼溯源、分類與「全域結構 UID」生成
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             msg._norm = CoreEngine.normalize(msg.content);
@@ -337,13 +309,10 @@ async function interceptAndRestructurePrompt(data) {
                 }
             }
 
-            // 在字典中搜尋真實名稱
-            let origNorm = CoreEngine.normalize(msg._origTemplate);
-            let realName = pmMap.get(origNorm) || pmMap.get(msg._norm);
-
             msg._isDynamic = isDynamic;
-            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic, realName);
+            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
             
+            // 🌟 天才構想實現：為所有非歷史提示詞生成基於「分類+角色+順序」的絕對結構 UID
             if (!uidMap[i]) {
                 let key = `${msg._attr.cat}_${msg.role}`;
                 catCounters[key] = (catCounters[key] || 0) + 1;
@@ -370,7 +339,7 @@ async function interceptAndRestructurePrompt(data) {
         let matchedIncomingIndices = new Set();
         let matchedFrozenIndices = new Set();
         
-        // 🌟 4. 四重極限對齊算法 (The 4-Pass Quantum Entanglement)
+        // 🌟 3. 四重極限對齊算法 (The 4-Pass Quantum Entanglement)
 
         // 第一重：歷史紀錄絕對 UID 鎖定
         for (let i = 0; i < state.frozenSequence.length; i++) {
@@ -385,7 +354,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第二重：完美文本匹配
+        // 第二重：完美文本匹配 (針對未修改的靜態提示詞)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -398,7 +367,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 第三重：Jaccard 語義感知
+        // 第三重：Jaccard 語義感知 (捕捉小幅/中幅修改)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -412,14 +381,14 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
                 let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
-                if (sim > 0.4 && sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
+                if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
-            if (bestMatchIdx !== -1) {
+            if (bestSim > 0.5 && bestMatchIdx !== -1) {
                 matchResults[i] = bestMatchIdx; matchedIncomingIndices.add(bestMatchIdx); matchedFrozenIndices.add(i);
             }
         }
 
-        // 第四重：終極結構感知
+        // 第四重：終極結構感知 (捕捉被完全重寫的預設提示詞/世界書)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -427,13 +396,14 @@ async function interceptAndRestructurePrompt(data) {
             
             for (let j = 0; j < incomingPool.length; j++) {
                 if (matchedIncomingIndices.has(j)) continue;
+                // 如果它們的結構 UID 完全一致，說明它是同一個位置的提示詞被徹底重寫了！
                 if (incomingPool[j]._uid === frozen._uid && incomingPool[j]._attr.cat === frozen._attr.cat) {
                     matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
                 }
             }
         }
 
-        // 🌟 5. 處理對齊結果與前綴緩存斷點計算
+        // 🌟 4. 處理對齊結果與前綴緩存斷點計算
         let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
         let currentValidLength = 0;
         let firstBreakIndex = -1; 
@@ -455,33 +425,31 @@ async function interceptAndRestructurePrompt(data) {
             if (matchIdx !== -1) {
                 let matched = incomingPool[matchIdx];
                 if (frozen._norm === matched._norm) {
-                    // 完美繼承 (如果名稱變了，依然同步更新名稱)
-                    frozen._attr = matched._attr; 
-                    frozen._uid = matched._uid;
+                    // 完美繼承
                     nextFrozen.push(frozen);
                     if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 } else {
-                    // 成功捕捉到修改！
+                    // 成功捕捉到修改！(無論是語義還是結構)
                     if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
-                    let nameChange = frozen._attr.source !== matched._attr.source ? ` ➔ ${matched._attr.source}` : '';
-                    syncMessages.push(`[修改] ${frozen._attr.source}${nameChange}`);
+                    syncMessages.push(`[修改] ${matched._attr.source}`);
                     
                     frozen.content = matched.content; 
                     frozen._norm = matched._norm; 
                     frozen._origTemplate = matched._origTemplate;
                     frozen._uid = matched._uid;
-                    frozen._attr = matched._attr; // 確保替換為新的真實名稱！
                     
                     nextFrozen.push(frozen);
                     let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                 }
             } else if (frozen._isDynamic) {
+                // 動態幽靈協議
                 nextFrozen.push(frozen);
                 if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
             } else {
+                // 真正被刪除
                 if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                 syncMessages.push(`[刪除] ${frozen._attr.source}`);
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
@@ -506,7 +474,7 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
-        // 🌟 6. 處理剩餘的、需要被追加的新提示詞 (完美實現絕對排序邏輯)
+        // 🌟 5. 處理剩餘的、需要被追加的新提示詞 (完美實現絕對排序邏輯)
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
         let isChat1 = state.frozenSequence.length === 0;
@@ -715,9 +683,9 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v37-opt-drawer">
+    <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v37.0 終極完美溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.0 終極完美溯源版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -791,7 +759,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V37 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36 終極完美溯源版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
