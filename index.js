@@ -121,7 +121,7 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：全域基元真空透視 (The Omniscient X-Ray)
+// 🛡️ 核心引擎：全域基元真空吸取 (The Omniscient Vacuum)
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
@@ -129,17 +129,17 @@ const CoreEngine = {
 
     normalize: (text) => {
         if (!text) return '';
+        // 極限過濾：移除所有空白、換行、Tab 與不可見字元，實現 100% 絕對文本匹配
         return text.replace(/[\s\n\r\t\u200B\u200C\u200D\uFEFF]/g, '').trim();
     },
 
-    // 🌟 全知透視：擴展至 9 大記憶體根節點，無死角掃描
+    // 🌟 全知吸塵器：掃描 6 大記憶體根節點的所有字串基元
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            // 門檻下調至 4，確保能抓到極短的 Persona 或 Story String
-            if (!norm || norm.length < 4 || seenNorms.has(norm)) return;
+            if (!norm || norm.length < 5 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
@@ -152,20 +152,18 @@ const CoreEngine = {
             if (chatId && window.chats && window.chats[chatId]) chatMeta = window.chats[chatId];
         } catch(e) {}
 
-        // 🌟 擴展根節點：加入 power_user, personas, characters
         const Roots = {
             '核心設定': window.settings || {},
-            '進階設定': window.power_user || {}, 
             '擴展設定': window.extension_settings || {},
             '全域世界書': window.world_info || {},
             '提示詞管理': window.prompt_manager || {},
-            '當前角色': activeChar,
-            '所有角色': window.characters || [],
-            '用戶設定': window.personas || {},
+            '角色卡': activeChar,
             '聊天元數據': chatMeta
         };
 
+        // 遞迴遍歷物件，吸取所有字串
         const deepCrawl = (obj, path, depth, visited) => {
+            // 防止循環參照與過深遞迴
             if (depth > 15 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
@@ -175,21 +173,18 @@ const CoreEngine = {
                     let val = obj[key];
                     let currentPath = path ? `${path}.${key}` : key;
 
-                    if (typeof val === 'string' && val.trim().length > 4) {
+                    if (typeof val === 'string' && val.trim().length > 5) {
                         let norm = CoreEngine.normalize(val);
                         if (seenNorms.has(norm)) continue;
 
                         let cat = '預設', creator = 'ST系統', type = 'DEFAULT', sourceName = currentPath;
 
-                        // 🌟 智能路徑命名法升級
+                        // 🌟 智能路徑命名法：根據字串被發現的位置自動賦予身分
                         if (currentPath.includes('world_info') || currentPath.includes('character_book') || currentPath.includes('entries')) {
                             cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
                             let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
                             if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(',');
                             sourceName = `世界書(${entryName})`;
-                        } else if (currentPath.includes('persona')) {
-                            cat = '用戶'; creator = '用戶設定'; type = 'DEFAULT';
-                            sourceName = `用戶角色(Persona)`;
                         } else if (currentPath.includes('authors_note')) {
                             cat = '其他插件'; creator = '用戶(A/N)'; type = 'OTHER_PLUGIN';
                             sourceName = `作者備註(Author's Note)`;
@@ -211,13 +206,6 @@ const CoreEngine = {
                         } else if (currentPath.includes('first_mes')) {
                             cat = '角色'; creator = '設定';
                             sourceName = `初次對話(First Mes)`;
-                        } else if (currentPath.includes('mes_example')) {
-                            cat = '角色'; creator = '設定';
-                            sourceName = `對話範例(Mes Example)`;
-                        } else if (currentPath.includes('system_prompt') || currentPath.includes('main_prompt')) {
-                            sourceName = `主提示詞(Main Prompt)`;
-                        } else if (currentPath.includes('nsfw_prompt')) {
-                            sourceName = `NSFW提示詞`;
                         } else if (obj.name || obj.identifier) {
                             sourceName = `提示詞(${obj.name || obj.identifier})`;
                         } else {
@@ -262,47 +250,39 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段與巨集替換)
+    // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段的發送機制)
     findInIndex: (normContent) => {
-        if (!normContent || normContent.length < 4) return null;
+        if (!normContent || normContent.length < 5) return null;
         
-        // 1. 完美比對
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 2. 雙向包含比對 (門檻下調至 5)
+        // 🌟 核心突破：如果 ST 把一整段字串切成了 4 塊 (如 35-38 條)，或者把多段字串黏成一塊 (如 54, 55 條)
+        // 只要發生包含關係，就能精準溯源！
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length >= 5 && normContent.length >= 5) {
+            if (idxContent.length > 10 && normContent.length > 10) {
+                // ST 輸出的字串包含了記憶體中的母體 (黏合現象)
                 if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
+                // 記憶體中的母體包含了 ST 輸出的字串 (碎屍/截斷現象)
                 if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
         
-        // 3. 量子重疊率比對 (高重疊率免死金牌)
         let bestMatch = null;
         let bestScore = 0;
 
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length >= 5 && normContent.length >= 5) {
+            if (idxContent.length > 10 && normContent.length > 10) {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
                 
-                // 🌟 免死金牌：如果碎片與母體重疊率極高(>=0.85)，無視長度差異直接認可 (解決 XML 碎屍與巨集替換)
-                if (overlap >= 0.85) {
-                    let score = overlap + lenRatio * 0.1; 
-                    if (score > bestScore) {
-                        bestScore = score;
-                        bestMatch = CoreEngine.promptIndex[i];
-                    }
-                } else {
-                    let score = overlap * 0.8 + lenRatio * 0.2;
-                    if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
-                        bestScore = score;
-                        bestMatch = CoreEngine.promptIndex[i];
-                    }
+                let score = overlap * 0.85 + lenRatio * 0.15;
+                if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
+                    bestScore = score;
+                    bestMatch = CoreEngine.promptIndex[i];
                 }
             }
         }
@@ -543,6 +523,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._isDynamic) continue;
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
+                // 這裡修復了調用錯誤，將 CoreEngine.getSimilarity 替換為 CoreEngine.getOverlapRatio
                 let sim = CoreEngine.getOverlapRatio(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
@@ -841,7 +822,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9.2 全知真空透視版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9.1 全知真空穩定版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -915,7 +896,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V36.9.2 全知真空透視版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.9.1 全知真空穩定版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
