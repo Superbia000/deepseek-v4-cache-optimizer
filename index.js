@@ -523,7 +523,8 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._isDynamic) continue;
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
-                let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
+                // 這裡修復了調用錯誤，將 CoreEngine.getSimilarity 替換為 CoreEngine.getOverlapRatio
+                let sim = CoreEngine.getOverlapRatio(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
             if (bestSim > 0.5 && bestMatchIdx !== -1) {
@@ -821,7 +822,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9 全知真空吸塵版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9.1 全知真空穩定版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -895,7 +896,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V36.9 全知真空吸塵版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.9.1 全知真空穩定版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
