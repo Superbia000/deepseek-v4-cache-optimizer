@@ -132,69 +132,100 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 終極內存暴風掃描：無視 ST 版本與路徑，直接抓取特徵結構
+    // 🌟 終極真理掃描：不僅深掃，更主動直取 ST 隱藏變數與角色卡結構
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
+            if (!norm || norm.length < 5 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
-        // ST 硬編碼字串直穿 (解決 Prompt 34 無名問題)
-        addToIndex(CoreEngine.normalize("这是一个故事的开始"), '預設', `預設提示詞(故事開端)`, 'ST核心', 'DEFAULT');
-        addToIndex(CoreEngine.normalize("This is the beginning of a story"), '預設', `預設提示詞(故事開端)`, 'ST核心', 'DEFAULT');
+        // 1. 直取 ST 核心隱藏字串 (解決 Story String / Jailbreak / 格式規範 等被無視的問題)
+        if (window.settings) {
+            const coreFields = {
+                'jailbreak_prompt': 'Jailbreak (越獄提示詞)',
+                'main_prompt': 'Main Prompt (主提示詞)',
+                'nsfw_prompt': 'NSFW Prompt',
+                'story_string': 'Story String (故事字串)',
+                'authors_note': 'Author\'s Note (作者備註)',
+                'post_history_instructions': 'Post-History',
+                'pre_history_instructions': 'Pre-History',
+                'system_prompt': 'System Prompt'
+            };
+            for (let key in coreFields) {
+                if (window.settings[key] && typeof window.settings[key] === 'string') {
+                    addToIndex(CoreEngine.normalize(window.settings[key]), '預設', `ST核心設定(${coreFields[key]})`, 'ST核心', 'DEFAULT');
+                }
+            }
+        }
 
-        const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "未知") => {
+        // 2. 貫穿所有角色卡記憶體 (解決角色專屬世界書、專屬設定被 XML 包裹的問題)
+        const context = getContext();
+        if (context && context.characters) {
+            for (let i = 0; i < context.characters.length; i++) {
+                let char = context.characters[i];
+                if (!char) continue;
+                
+                // 抓取角色基本設定 (Description, Personality, Scenario 等)
+                if (char.description) addToIndex(CoreEngine.normalize(char.description), '角色', `設定(${char.name})`, '角色卡', 'DEFAULT');
+                if (char.personality) addToIndex(CoreEngine.normalize(char.personality), '角色', `性格(${char.name})`, '角色卡', 'DEFAULT');
+                if (char.scenario) addToIndex(CoreEngine.normalize(char.scenario), '角色', `場景(${char.name})`, '角色卡', 'DEFAULT');
+                if (char.first_mes) addToIndex(CoreEngine.normalize(char.first_mes), '角色', `初次對話(${char.name})`, '角色卡', 'DEFAULT');
+                if (char.mes_example) addToIndex(CoreEngine.normalize(char.mes_example), '角色', `對話範例(${char.name})`, '角色卡', 'DEFAULT');
+                if (char.creator_notes) addToIndex(CoreEngine.normalize(char.creator_notes), '角色', `作者備註(${char.name})`, '角色卡', 'DEFAULT');
+                if (char.system_prompt) addToIndex(CoreEngine.normalize(char.system_prompt), '角色', `專屬系統提示(${char.name})`, '角色卡', 'DEFAULT');
+                if (char.post_history_instructions) addToIndex(CoreEngine.normalize(char.post_history_instructions), '角色', `專屬Post-History(${char.name})`, '角色卡', 'DEFAULT');
+                
+                // 抓取角色卡專屬世界書 (Character Lorebook)
+                try {
+                    let charBook = char.data?.character_book?.entries || char.character_book?.entries;
+                    if (charBook) {
+                        let entryList = Array.isArray(charBook) ? charBook : Object.values(charBook);
+                        entryList.forEach(entry => {
+                            if (entry && entry.content) {
+                                let entryName = entry.comment || entry.name || entry.title;
+                                if (!entryName && Array.isArray(entry.key)) entryName = entry.key.join(', ');
+                                addToIndex(CoreEngine.normalize(entry.content), '世界書', `角色專屬世界書[${char.name}] - ${entryName || '未命名'}`, '角色卡', 'LOREBOOK');
+                            }
+                        });
+                    }
+                } catch(e){}
+            }
+        }
+
+        // 3. 泛用暴風掃描 (處理全局世界書、Prompt Manager)
+        const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "未知世界書") => {
             if (depth > 12 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
-            // 1. 世界書 (Lorebook / World Info) 廣域特徵攔截
-            if (typeof obj.content === 'string' && (obj.uid !== undefined || obj.key !== undefined || obj.keys !== undefined || obj.comment !== undefined || obj.constant !== undefined)) {
-                if (obj.is_user === undefined && obj.mes === undefined && obj.name === undefined && obj.extension_settings === undefined) { 
-                    let entryName = obj.comment || obj.title;
+            if (typeof obj.content === 'string' && (Array.isArray(obj.key) || obj.uid !== undefined || obj.comment !== undefined || obj.constant !== undefined)) {
+                if (!obj.role && obj.type !== 'prompt') { 
+                    let entryName = obj.comment || obj.name || obj.title;
                     if (!entryName && Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(', ');
                     if (!entryName) entryName = '未命名條目';
-                    let bName = currentBookName === '未知' || currentBookName === '__WAITING__' ? '全域/角色世界書' : currentBookName;
-                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書[${bName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
+                    let bookName = currentBookName !== '未知世界書' && isNaN(parseInt(currentBookName)) ? currentBookName : (obj.book || '未知世界書');
+                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書[${bookName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
                 }
             }
             
-            // 2. 提示詞管理器 (Prompt Manager) 特徵攔截
-            if (typeof obj.content === 'string' && (obj.name !== undefined || obj.identifier !== undefined || obj.title !== undefined)) {
-                if (obj.is_user === undefined && obj.mes === undefined && obj.extension_settings === undefined) {
-                    let pName = obj.name || obj.identifier || obj.title;
-                    addToIndex(CoreEngine.normalize(obj.content), '預設', `預設提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
-                }
+            if (typeof obj.content === 'string' && (obj.name || obj.identifier) && (obj.role || obj.type === 'prompt')) {
+                let pName = obj.name || obj.identifier;
+                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
             }
 
-            // 3. 角色與系統全局設定攔截
-            if (typeof obj.description === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.description), '角色', `設定(${obj.name})`, '核心設定', 'DEFAULT');
-            if (typeof obj.personality === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.personality), '角色', `性格(${obj.name})`, '核心設定', 'DEFAULT');
-            if (typeof obj.scenario === 'string' && obj.scenario.length > 0) addToIndex(CoreEngine.normalize(obj.scenario), '角色', `場景(Scenario)`, '核心設定', 'DEFAULT');
-            if (typeof obj.first_mes === 'string' && obj.first_mes.length > 0) addToIndex(CoreEngine.normalize(obj.first_mes), '角色', `初次對話(First Mes)`, '核心設定', 'DEFAULT');
-            if (typeof obj.mes_example === 'string' && obj.mes_example.length > 0) addToIndex(CoreEngine.normalize(obj.mes_example), '角色', `對話範例(Mes Example)`, '核心設定', 'DEFAULT');
-            if (typeof obj.system_prompt === 'string' && obj.system_prompt.length > 0) addToIndex(CoreEngine.normalize(obj.system_prompt), '角色', `系統提示詞(Char)`, '核心設定', 'DEFAULT');
-            if (typeof obj.post_history_instructions === 'string' && obj.post_history_instructions.length > 0) addToIndex(CoreEngine.normalize(obj.post_history_instructions), '角色', `歷史後提示詞(Char)`, '核心設定', 'DEFAULT');
-            if (typeof obj.persona_description === 'string' && obj.persona_description.length > 0) addToIndex(CoreEngine.normalize(obj.persona_description), '用戶', `用戶設定(Persona)`, '用戶', 'DEFAULT');
-            if (typeof obj.chat_notes === 'string' && obj.chat_notes.length > 0) addToIndex(CoreEngine.normalize(obj.chat_notes), '筆記', `Chat Notes`, '用戶筆記', 'DEFAULT');
-            if (typeof obj.authors_note === 'string' && obj.authors_note.length > 0) addToIndex(CoreEngine.normalize(obj.authors_note), '筆記', `Author's Note`, '用戶筆記', 'DEFAULT');
-            
-            // ST Global Prompts
-            if (typeof obj.main_prompt === 'string' && obj.main_prompt.length > 0) addToIndex(CoreEngine.normalize(obj.main_prompt), '預設', `主提示詞(Main)`, 'ST核心', 'DEFAULT');
-            if (typeof obj.nsfw_prompt === 'string' && obj.nsfw_prompt.length > 0) addToIndex(CoreEngine.normalize(obj.nsfw_prompt), '預設', `NSFW提示詞`, 'ST核心', 'DEFAULT');
-            if (typeof obj.jailbreak_prompt === 'string' && obj.jailbreak_prompt.length > 0) addToIndex(CoreEngine.normalize(obj.jailbreak_prompt), '預設', `越獄提示詞(Jailbreak)`, 'ST核心', 'DEFAULT');
+            if (typeof obj.persona_description === 'string' && obj.persona_description.length > 0) {
+                addToIndex(CoreEngine.normalize(obj.persona_description), '用戶', `用戶設定(Persona)`, '用戶', 'DEFAULT');
+            }
 
             for (let key in obj) {
                 try {
                     let val = obj[key];
                     if (val && typeof val === 'object' && !(val instanceof Element)) {
                         let nextBookName = currentBookName;
-                        if (key === 'entries' || key === 'character_book') {
-                            nextBookName = '__WAITING__';
-                        } else if (currentBookName === '__WAITING__') {
+                        if (obj === window.world_info?.entries || obj === window.world_info?.books || obj === window.extension_settings?.world_info?.entries) {
                             nextBookName = key;
                         }
                         deepScan(val, depth + 1, visited, nextBookName);
@@ -203,12 +234,10 @@ const CoreEngine = {
             }
         };
 
-        // 發動 12 層暴風掃描
-        const roots = [window.world_info, window.settings, window.extension_settings, window.power_user, window.prompt_manager, window.characters, getContext()];
+        const roots = [window.world_info, window.extension_settings, window.power_user, window.prompt_manager];
         roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域世界書"); });
     },
 
-    // 🌟 量子重疊率演算法
     getOverlapRatio: (str1, str2) => {
         if (str1 === str2) return 1;
         if (!str1 || !str2) return 0;
@@ -231,25 +260,7 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    getSimilarity: (str1, str2) => {
-        if (str1 === str2) return 1;
-        if (!str1 || !str2) return 0;
-        const getGrams = (str) => {
-            let grams = new Set();
-            let len = str.length;
-            if (len < 3) { grams.add(str); return grams; }
-            for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
-            return grams;
-        };
-        const g1 = getGrams(str1);
-        const g2 = getGrams(str2);
-        if (g1.size === 0 || g2.size === 0) return 0;
-        let intersect = 0;
-        for (let g of g1) { if (g2.has(g)) intersect++; }
-        let union = g1.size + g2.size - intersect;
-        return union === 0 ? 0 : intersect / union;
-    },
-
+    // 🌟 量子重疊演算法強化：完美吸收 XML 標籤與 Macro 巨集替換的干擾
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 5) return null;
         
@@ -258,15 +269,15 @@ const CoreEngine = {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 2. 子字串暴風攔截 (解決 ST 的 World Info 首尾包裝問題)
+        // 2. 包含比對 (應對 ST 強加的 XML 外殼標籤，如 <Character_Design>)
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
             if (idxContent.length > 15 && normContent.length > 15) {
                 if (normContent.includes(idxContent) || idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
-
-        // 3. 量子重疊比對 (對付巨集替換與混合文本)
+        
+        // 3. 量子重疊率比對 (應對 XML 標籤 + {{char}} 巨集被替換的雙重破壞)
         let bestMatch = null;
         let bestScore = 0;
 
@@ -276,8 +287,11 @@ const CoreEngine = {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
                 
-                let score = overlap * 0.8 + lenRatio * 0.2;
-                if (overlap > 0.70 && score > bestScore) {
+                // 重疊率佔絕對主導權 (0.85)，因為巨集替換會導致長度劇變
+                let score = overlap * 0.85 + lenRatio * 0.15;
+
+                // 容錯閾值降至 0.65，足以在保證不誤判的情況下抓住被替換破壞的文本
+                if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
                     bestScore = score;
                     bestMatch = CoreEngine.promptIndex[i];
                 }
@@ -330,7 +344,6 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
-        // 🌟 核心升級：經由全域指紋庫精準攔截！
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         let matchedIndex = CoreEngine.findInIndex(normContent);
         
@@ -341,7 +354,6 @@ const CoreEngine = {
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        // 原版兜底防禦
         if (isDynamic) {
             return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
@@ -378,7 +390,6 @@ const CoreEngine = {
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
-    // 🌟 在攔截數據流的當下，即時構建/刷新全局內存指紋字典
     CoreEngine.buildIndex();
 
     try {
@@ -388,7 +399,6 @@ async function interceptAndRestructurePrompt(data) {
         let ledger = []; 
         const processTime = Logger.getTime();
 
-        // 🌟 1. 純結構時序映射 & 歷史紀錄 UID 綁定
         const contextChat = getContext().chat || [];
         let structuralMap = new Array(incomingStream.length).fill(null);
         let uidMap = new Array(incomingStream.length).fill(null);
@@ -438,7 +448,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 🌟 2. 源碼溯源、分類與「全域結構 UID」生成
         let catCounters = {};
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
@@ -463,7 +472,6 @@ async function interceptAndRestructurePrompt(data) {
             msg._isDynamic = isDynamic;
             msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
             
-            // 🌟 天才構想實現：為所有非歷史提示詞生成基於「分類+角色+順序」的絕對結構 UID
             if (!uidMap[i]) {
                 let key = `${msg._attr.cat}_${msg.role}`;
                 catCounters[key] = (catCounters[key] || 0) + 1;
@@ -489,8 +497,6 @@ async function interceptAndRestructurePrompt(data) {
         let matchResults = new Array(state.frozenSequence.length).fill(-1);
         let matchedIncomingIndices = new Set();
         let matchedFrozenIndices = new Set();
-        
-        // 🌟 3. 四重極限對齊算法 (The 4-Pass Quantum Entanglement)
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
@@ -549,7 +555,6 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 🌟 4. 處理對齊結果與前綴緩存斷點計算
         let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
         let currentValidLength = 0;
         let firstBreakIndex = -1; 
@@ -617,7 +622,6 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
-        // 🌟 5. 處理剩餘的、需要被追加的新提示詞
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
         let isChat1 = state.frozenSequence.length === 0;
