@@ -132,7 +132,7 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 終極真理掃描 (v36.8 升級版)：完美破解 ST 1.18 記憶體迷宮，精確定位世界書與無名提示詞
+    // 🌟 終極真理掃描：不僅深掃，更主動直取 ST 隱藏變數、DOM節點與角色卡結構
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
@@ -143,91 +143,59 @@ const CoreEngine = {
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
-        // 1. 直取 ST 核心與用戶設定 (修復 Persona 與核心 Prompt 未識別問題)
-        if (window.settings) {
-            const coreFields = {
-                'jailbreak_prompt': 'Jailbreak (越獄提示詞)',
-                'main_prompt': 'Main Prompt (主提示詞)',
-                'nsfw_prompt': 'NSFW Prompt',
-                'story_string': 'Story String (故事字串)',
-                'authors_note': 'Author\'s Note (作者備註)',
-                'post_history_instructions': 'Post-History',
-                'pre_history_instructions': 'Pre-History',
-                'system_prompt': 'System Prompt'
-            };
-            for (let key in coreFields) {
-                if (window.settings[key] && typeof window.settings[key] === 'string') {
-                    addToIndex(CoreEngine.normalize(window.settings[key]), '預設', `ST核心設定(${coreFields[key]})`, 'ST核心', 'DEFAULT');
-                }
-            }
-            
-            // 提取 Persona (修復 Prompt 28 極重度綠帽奴)
-            let personaText = window.settings.persona_description || window.settings.personadescription;
-            if (personaText) {
-                let pName = window.settings.persona_name || "當前用戶";
-                addToIndex(CoreEngine.normalize(personaText), '用戶', `用戶設定(${pName})`, '用戶', 'DEFAULT');
+        // 1. 直取 ST 核心隱藏字串 (DOM直接讀取，無視ST版本內部結構變更，絕對防禦)
+        const coreDOM = {
+            'system_prompt_textarea': 'Main Prompt (主提示詞)',
+            'post_history_instructions_textarea': 'Post-History',
+            'pre_history_instructions_textarea': 'Pre-History',
+            'jailbreak_prompt_textarea': 'Jailbreak (越獄提示詞)',
+            'story_string_textarea': 'Story String (故事字串)',
+            'nsfw_prompt_textarea': 'NSFW Prompt',
+            'global_authors_note': 'Author\'s Note (全局)',
+            'character_authors_note': 'Author\'s Note (角色)'
+        };
+        for (let id in coreDOM) {
+            let el = document.getElementById(id);
+            if (el && el.value) {
+                addToIndex(CoreEngine.normalize(el.value), '預設', `ST核心設定(${coreDOM[id]})`, 'ST核心', 'DEFAULT');
             }
         }
 
-        // 2. 精確解析全局/聊天世界書 (修復 Prompt 30-38 無名問題)
-        try {
-            const wiData = window.extension_settings?.world_info || window.world_info;
-            if (wiData && wiData.entries) {
-                const entries = wiData.entries;
-                for (let uid in entries) {
-                    let entry = entries[uid];
-                    if (entry && typeof entry.content === 'string') {
-                        // 提取條目名稱
-                        let entryName = entry.comment || entry.name || entry.title;
-                        if (!entryName && Array.isArray(entry.key) && entry.key.length > 0) entryName = entry.key.join(', ');
-                        if (!entryName) entryName = '未命名條目';
-                        
-                        // 交叉比對所屬世界書名稱
-                        let bookName = entry.book || '全局世界書';
-                        if (!entry.book && wiData.books) {
-                            for (let bName in wiData.books) {
-                                let book = wiData.books[bName];
-                                if (book && book.entries && book.entries.includes(uid)) {
-                                    bookName = book.name || bName;
-                                    break;
-                                }
-                            }
-                        }
-                        addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[${bookName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
-                    }
-                }
-            }
-        } catch (e) { console.warn("[DS Cache] 世界書精確解析失敗", e); }
+        // 用戶Persona提取 (優先DOM，其次記憶體)
+        let personaContent = document.getElementById('persona_description')?.value;
+        if (!personaContent && window.settings?.personas && window.settings?.persona) {
+            let p = window.settings.personas[window.settings.persona];
+            personaContent = typeof p === 'string' ? p : p?.description;
+        }
+        if (personaContent) {
+            addToIndex(CoreEngine.normalize(personaContent), '用戶', '用戶設定(Persona)', '用戶', 'DEFAULT');
+        }
 
-        // 3. 精確解析 Prompt Manager (修復 Prompt 55 及其他擴展提示詞)
-        try {
-            const pmData = window.extension_settings?.prompt_manager || window.prompt_manager;
-            if (pmData && pmData.prompts) {
-                let pmArray = Array.isArray(pmData.prompts) ? pmData.prompts : Object.values(pmData.prompts);
-                pmArray.forEach(p => {
-                    if (p && p.content) {
-                        let pName = p.name || p.identifier || '自定義提示詞';
-                        addToIndex(CoreEngine.normalize(p.content), '預設', `PromptManager(${pName})`, '提示詞管理器', 'DEFAULT');
-                    }
-                });
-            }
-        } catch (e) { console.warn("[DS Cache] Prompt Manager 解析失敗", e); }
-
-        // 4. 貫穿所有角色卡記憶體 (角色專屬世界書、設定)
-        const context = getContext();
+        // 2. 貫穿所有角色卡記憶體 (支援V2結構及專屬世界書被包裹的問題)
+        const context = typeof getContext === 'function' ? getContext() : null;
         if (context && context.characters) {
             for (let i = 0; i < context.characters.length; i++) {
                 let char = context.characters[i];
                 if (!char) continue;
                 
-                if (char.description) addToIndex(CoreEngine.normalize(char.description), '角色', `設定(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.personality) addToIndex(CoreEngine.normalize(char.personality), '角色', `性格(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.scenario) addToIndex(CoreEngine.normalize(char.scenario), '角色', `場景(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.first_mes) addToIndex(CoreEngine.normalize(char.first_mes), '角色', `初次對話(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.mes_example) addToIndex(CoreEngine.normalize(char.mes_example), '角色', `對話範例(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.creator_notes) addToIndex(CoreEngine.normalize(char.creator_notes), '角色', `作者備註(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.system_prompt) addToIndex(CoreEngine.normalize(char.system_prompt), '角色', `專屬系統提示(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.post_history_instructions) addToIndex(CoreEngine.normalize(char.post_history_instructions), '角色', `專屬Post-History(${char.name})`, '角色卡', 'DEFAULT');
+                // 抓取角色基本設定 (支援 V1 與 V2)
+                let desc = char.data?.description || char.description;
+                let pers = char.data?.personality || char.personality;
+                let scen = char.data?.scenario || char.scenario;
+                let first = char.data?.first_mes || char.first_mes;
+                let mesEx = char.data?.mes_example || char.mes_example;
+                let cNotes = char.data?.creator_notes || char.creator_notes;
+                let sysP = char.data?.system_prompt || char.system_prompt;
+                let postH = char.data?.post_history_instructions || char.post_history_instructions;
+                
+                if (desc) addToIndex(CoreEngine.normalize(desc), '角色', `設定(${char.name})`, '角色卡', 'DEFAULT');
+                if (pers) addToIndex(CoreEngine.normalize(pers), '角色', `性格(${char.name})`, '角色卡', 'DEFAULT');
+                if (scen) addToIndex(CoreEngine.normalize(scen), '角色', `場景(${char.name})`, '角色卡', 'DEFAULT');
+                if (first) addToIndex(CoreEngine.normalize(first), '角色', `初次對話(${char.name})`, '角色卡', 'DEFAULT');
+                if (mesEx) addToIndex(CoreEngine.normalize(mesEx), '角色', `對話範例(${char.name})`, '角色卡', 'DEFAULT');
+                if (cNotes) addToIndex(CoreEngine.normalize(cNotes), '角色', `作者備註(${char.name})`, '角色卡', 'DEFAULT');
+                if (sysP) addToIndex(CoreEngine.normalize(sysP), '角色', `專屬系統提示(${char.name})`, '角色卡', 'DEFAULT');
+                if (postH) addToIndex(CoreEngine.normalize(postH), '角色', `專屬Post-History(${char.name})`, '角色卡', 'DEFAULT');
                 
                 // 抓取角色卡專屬世界書
                 try {
@@ -238,7 +206,7 @@ const CoreEngine = {
                             if (entry && entry.content) {
                                 let entryName = entry.comment || entry.name || entry.title;
                                 if (!entryName && Array.isArray(entry.key)) entryName = entry.key.join(', ');
-                                addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[${char.name}專屬] - ${entryName || '未命名'}`, '角色卡', 'LOREBOOK');
+                                addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[角色專屬:${char.name}] - ${entryName || '未命名'}`, '角色卡', 'LOREBOOK');
                             }
                         });
                     }
@@ -246,28 +214,55 @@ const CoreEngine = {
             }
         }
 
-        // 5. 泛用暴風掃描 (兜底機制，防止任何遺漏，但不覆蓋上面精確的命名)
-        const deepScan = (obj, depth = 0, visited = new Set()) => {
-            if (depth > 8 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
+        // 3. 泛用暴風掃描 (處理全局世界書、Prompt Manager 及 API Cache)
+        const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "全域世界書") => {
+            if (depth > 12 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
-            if (typeof obj.content === 'string' && (obj.name || obj.identifier || obj.comment) && (obj.role || obj.type === 'prompt')) {
-                let pName = obj.name || obj.identifier || obj.comment;
-                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
+            if (typeof obj.content === 'string' && obj.content.length > 2) {
+                let isLorebook = false;
+                if (Array.isArray(obj.key) || obj.uid !== undefined || obj.comment !== undefined || obj.constant !== undefined) {
+                    isLorebook = true;
+                } else if (currentBookName !== "全域世界書" && obj.content) {
+                    isLorebook = true;
+                }
+                
+                if (isLorebook && !obj.role && obj.type !== 'prompt') { 
+                    let entryName = obj.comment || obj.name || obj.title;
+                    if (!entryName && Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(', ');
+                    if (!entryName && obj.uid) entryName = `UID:${obj.uid}`;
+                    if (!entryName) entryName = '未命名條目';
+                    let bookName = currentBookName !== '全域世界書' && isNaN(parseInt(currentBookName)) ? currentBookName : (obj.book || '全域世界書');
+                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書[${bookName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
+                } else if ((obj.name || obj.identifier) && (obj.role || obj.type === 'prompt')) {
+                    let pName = obj.name || obj.identifier;
+                    addToIndex(CoreEngine.normalize(obj.content), '預設', `預設提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
+                }
             }
 
             for (let key in obj) {
                 try {
                     let val = obj[key];
-                    if (val && typeof val === 'object' && !(val instanceof Element)) {
-                        deepScan(val, depth + 1, visited);
+                    if (val && typeof val === 'object' && !(val instanceof Element) && !(val instanceof Window) && !(val instanceof Document)) {
+                        // 防暴走
+                        if (key === 'chat' || key === 'messages' || key === 'eventSource' || key === 'vue' || key === 'react') continue;
+                        
+                        let nextBookName = currentBookName;
+                        if (obj.name && key === 'entries') nextBookName = obj.name;
+                        else if (key !== 'entries' && key !== 'books' && isNaN(parseInt(key)) && key.length > 2) nextBookName = key;
+                        
+                        deepScan(val, depth + 1, visited, nextBookName);
                     }
                 } catch (e) {}
             }
         };
 
-        const roots = [window.extension_settings];
-        roots.forEach(root => { if (root) deepScan(root, 0, new Set()); });
+        const roots = [
+            window.world_info, window.world_info_data, window.world_infos, window.wi_books, window.wi_data,
+            window.extension_settings, window.power_user, window.prompt_manager, window.settings,
+            window.characters, window.personas, window._ds_api_cache
+        ];
+        roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域世界書"); });
     },
 
     getOverlapRatio: (str1, str2) => {
@@ -292,13 +287,16 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
+    // 🌟 量子重疊演算法強化：完美吸收 XML 標籤與 Macro 巨集替換的干擾
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 5) return null;
         
+        // 1. 完美比對
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
+        // 2. 包含比對 (應對 ST 強加的 XML 外殼標籤)
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
             if (idxContent.length > 15 && normContent.length > 15) {
@@ -306,6 +304,7 @@ const CoreEngine = {
             }
         }
         
+        // 3. 量子重疊率比對
         let bestMatch = null;
         let bestScore = 0;
 
@@ -314,9 +313,12 @@ const CoreEngine = {
             if (idxContent.length > 10 && normContent.length > 10) {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
+                
+                // 重疊率佔絕對主導權 (0.85)
                 let score = overlap * 0.85 + lenRatio * 0.15;
 
-                if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
+                // 容錯閾值降至 0.55，保證在被巨集替換大量破壞的文字下依然可以精確抓出所屬條目
+                if (overlap >= 0.55 && score > bestScore && score >= 0.55) {
                     bestScore = score;
                     bestMatch = CoreEngine.promptIndex[i];
                 }
@@ -355,8 +357,30 @@ const CoreEngine = {
                 window._ds_orig_substituteParamsExtended = window.substituteParamsExtended;
                 window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
             }
+
+            // 🌟 劫持 API Fetch，動態補獲所有模塊化的世界書加載 (絕對不錯漏)
+            if (!window._ds_orig_fetch) {
+                window._ds_orig_fetch = window.fetch;
+                window.fetch = async function(...args) {
+                    const response = await window._ds_orig_fetch.apply(this, args);
+                    try {
+                        let url = typeof args[0] === 'string' ? args[0] : (args[0]?.url || '');
+                        if (url.includes('/api/worldinfo/get') || url.includes('/api/characters/all')) {
+                            const clone = response.clone();
+                            clone.json().then(data => {
+                                if (data && typeof data === 'object') {
+                                    window._ds_api_cache = window._ds_api_cache || {};
+                                    window._ds_api_cache[url] = window._ds_api_cache[url] || {};
+                                    Object.assign(window._ds_api_cache[url], data);
+                                }
+                            }).catch(e=>{});
+                        }
+                    } catch(e) {}
+                    return response;
+                };
+            }
         } catch (e) {
-            console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
+            console.error("[DS Cache] 劫持 ST 引擎失敗:", e);
         }
     },
 
@@ -385,8 +409,6 @@ const CoreEngine = {
 
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
-        
-        // 增加兜底推斷，若未能完全精確抓取，則以內容推斷
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
@@ -407,7 +429,7 @@ const CoreEngine = {
             return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
         }
 
-        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(未知源)', creator: 'ST核心', type: 'DEFAULT' };
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
@@ -561,7 +583,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._isDynamic) continue;
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
-                let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
+                let sim = CoreEngine.getOverlapRatio(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
             if (bestSim > 0.5 && bestMatchIdx !== -1) {
