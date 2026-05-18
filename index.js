@@ -121,7 +121,7 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：編譯器劫持與 100% 精準分類
+// 🛡️ 核心引擎：全知矩陣 (The Omniscient Matrix)
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
@@ -129,103 +129,85 @@ const CoreEngine = {
 
     normalize: (text) => {
         if (!text) return '';
+        // 移除所有空白、換行與特殊控制字元，達成絕對無損比對
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 終極真理掃描：不僅深掃，更主動直取 ST 隱藏變數與角色卡結構
+    // 🌟 全知掃描：不再依賴特徵，暴力提取所有有效字串
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            if (!norm || norm.length < 5 || seenNorms.has(norm)) return;
+            if (!norm || norm.length < 6 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
-        // 1. 直取 ST 核心隱藏字串 (解決 Story String / Jailbreak / 格式規範 等被無視的問題)
+        // 1. 直取 ST 核心純字串 (完美解決 34, 54, 55 的遺漏)
         if (window.settings) {
-            const coreFields = {
-                'jailbreak_prompt': 'Jailbreak (越獄提示詞)',
-                'main_prompt': 'Main Prompt (主提示詞)',
-                'nsfw_prompt': 'NSFW Prompt',
-                'story_string': 'Story String (故事字串)',
-                'authors_note': 'Author\'s Note (作者備註)',
-                'post_history_instructions': 'Post-History',
-                'pre_history_instructions': 'Pre-History',
-                'system_prompt': 'System Prompt'
-            };
-            for (let key in coreFields) {
-                if (window.settings[key] && typeof window.settings[key] === 'string') {
-                    addToIndex(CoreEngine.normalize(window.settings[key]), '預設', `ST核心設定(${coreFields[key]})`, 'ST核心', 'DEFAULT');
+            for (let key in window.settings) {
+                if (typeof window.settings[key] === 'string' && window.settings[key].trim().length > 5) {
+                    addToIndex(CoreEngine.normalize(window.settings[key]), '預設', `核心設定(${key})`, 'ST核心', 'DEFAULT');
+                }
+            }
+        }
+        if (window.extension_settings) {
+            for (let key in window.extension_settings) {
+                if (typeof window.extension_settings[key] === 'string' && window.extension_settings[key].trim().length > 5) {
+                    addToIndex(CoreEngine.normalize(window.extension_settings[key]), '擴展', `擴展設定(${key})`, 'ST擴展', 'DEFAULT');
                 }
             }
         }
 
-        // 2. 貫穿所有角色卡記憶體 (解決角色專屬世界書、專屬設定被 XML 包裹的問題)
+        // 2. 直取當前活躍角色卡的所有欄位 (完美解決 35-38 XML 包裹問題)
         const context = getContext();
-        if (context && context.characters) {
-            for (let i = 0; i < context.characters.length; i++) {
-                let char = context.characters[i];
-                if (!char) continue;
-                
-                // 抓取角色基本設定 (Description, Personality, Scenario 等)
-                if (char.description) addToIndex(CoreEngine.normalize(char.description), '角色', `設定(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.personality) addToIndex(CoreEngine.normalize(char.personality), '角色', `性格(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.scenario) addToIndex(CoreEngine.normalize(char.scenario), '角色', `場景(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.first_mes) addToIndex(CoreEngine.normalize(char.first_mes), '角色', `初次對話(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.mes_example) addToIndex(CoreEngine.normalize(char.mes_example), '角色', `對話範例(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.creator_notes) addToIndex(CoreEngine.normalize(char.creator_notes), '角色', `作者備註(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.system_prompt) addToIndex(CoreEngine.normalize(char.system_prompt), '角色', `專屬系統提示(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.post_history_instructions) addToIndex(CoreEngine.normalize(char.post_history_instructions), '角色', `專屬Post-History(${char.name})`, '角色卡', 'DEFAULT');
-                
-                // 抓取角色卡專屬世界書 (Character Lorebook)
-                try {
-                    let charBook = char.data?.character_book?.entries || char.character_book?.entries;
-                    if (charBook) {
-                        let entryList = Array.isArray(charBook) ? charBook : Object.values(charBook);
-                        entryList.forEach(entry => {
-                            if (entry && entry.content) {
-                                let entryName = entry.comment || entry.name || entry.title;
-                                if (!entryName && Array.isArray(entry.key)) entryName = entry.key.join(', ');
-                                addToIndex(CoreEngine.normalize(entry.content), '世界書', `角色專屬世界書[${char.name}] - ${entryName || '未命名'}`, '角色卡', 'LOREBOOK');
-                            }
-                        });
-                    }
-                } catch(e){}
-            }
+        let activeChar = null;
+        if (context && context.characters && context.characterId !== undefined) {
+            activeChar = context.characters[context.characterId];
+        }
+        if (activeChar) {
+            const charKeys = ['description', 'personality', 'scenario', 'first_mes', 'mes_example', 'creator_notes', 'system_prompt', 'post_history_instructions'];
+            charKeys.forEach(k => {
+                if (typeof activeChar[k] === 'string' && activeChar[k].trim().length > 5) {
+                    addToIndex(CoreEngine.normalize(activeChar[k]), '角色', `角色卡(${k})`, activeChar.name || '角色', 'DEFAULT');
+                }
+            });
         }
 
-        // 3. 泛用暴風掃描 (處理全局世界書、Prompt Manager)
-        const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "未知世界書") => {
+        // 3. 泛用暴風遞迴掃描 (完美解決 30, 31 幽靈世界書)
+        const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "未知") => {
             if (depth > 12 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
-            if (typeof obj.content === 'string' && (Array.isArray(obj.key) || obj.uid !== undefined || obj.comment !== undefined || obj.constant !== undefined)) {
-                if (!obj.role && obj.type !== 'prompt') { 
-                    let entryName = obj.comment || obj.name || obj.title;
-                    if (!entryName && Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(', ');
-                    if (!entryName) entryName = '未命名條目';
-                    let bookName = currentBookName !== '未知世界書' && isNaN(parseInt(currentBookName)) ? currentBookName : (obj.book || '未知世界書');
-                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書[${bookName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
+            // 只要有 content 屬性且長度足夠，一律視為目標提取
+            if (typeof obj.content === 'string' && obj.content.trim().length > 5) {
+                // 寬鬆的世界書判定：只要有 key 或是常數，就歸類為世界書
+                let isLorebook = ('key' in obj) || ('constant' in obj) || ('selective' in obj) || ('uid' in obj && !obj.identifier);
+                let name = obj.name || obj.title || obj.comment || obj.identifier || obj.id || obj.uid || "無名條目";
+                
+                if (isLorebook && Array.isArray(obj.key) && obj.key.length > 0) {
+                    name = obj.comment || obj.key.join(', ');
+                }
+                
+                let norm = CoreEngine.normalize(obj.content);
+                if (isLorebook) {
+                    let bName = (currentBookName !== "未知" && isNaN(Number(currentBookName))) ? currentBookName : (obj.book || "未知世界書");
+                    addToIndex(norm, '世界書', `世界書[${bName}] - ${name}`, '世界書系統', 'LOREBOOK');
+                } else {
+                    addToIndex(norm, '預設', `提示詞(${name})`, obj.role || 'ST核心', 'DEFAULT');
                 }
             }
-            
-            if (typeof obj.content === 'string' && (obj.name || obj.identifier) && (obj.role || obj.type === 'prompt')) {
-                let pName = obj.name || obj.identifier;
-                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
-            }
 
-            if (typeof obj.persona_description === 'string' && obj.persona_description.length > 0) {
-                addToIndex(CoreEngine.normalize(obj.persona_description), '用戶', `用戶設定(Persona)`, '用戶', 'DEFAULT');
-            }
-
+            // 遞迴遍歷
             for (let key in obj) {
                 try {
                     let val = obj[key];
                     if (val && typeof val === 'object' && !(val instanceof Element)) {
                         let nextBookName = currentBookName;
-                        if (obj === window.world_info?.entries || obj === window.world_info?.books || obj === window.extension_settings?.world_info?.entries) {
+                        if (key === 'entries' || key === 'books') {
+                            // 保持父層書名
+                        } else if (isNaN(Number(key)) && key.length > 2) {
                             nextBookName = key;
                         }
                         deepScan(val, depth + 1, visited, nextBookName);
@@ -234,8 +216,11 @@ const CoreEngine = {
             }
         };
 
-        const roots = [window.world_info, window.extension_settings, window.power_user, window.prompt_manager];
-        roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域世界書"); });
+        // 掃描活躍角色內部 (包含角色專屬世界書)
+        if (activeChar) deepScan(activeChar, 0, new Set(), activeChar.name);
+        // 掃描全域核心
+        const roots = [window.world_info, window.prompt_manager];
+        roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域"); });
     },
 
     getOverlapRatio: (str1, str2) => {
@@ -255,12 +240,11 @@ const CoreEngine = {
         let intersect = 0;
         let smaller = g1.size < g2.size ? g1 : g2;
         let larger = g1.size < g2.size ? g2 : g1;
-        
         for (let g of smaller) { if (larger.has(g)) intersect++; }
         return intersect / smaller.size; 
     },
 
-    // 🌟 量子重疊演算法強化：完美吸收 XML 標籤與 Macro 巨集替換的干擾
+    // 🌟 雙向無損判定與量子重疊演算法
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 5) return null;
         
@@ -269,15 +253,18 @@ const CoreEngine = {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 2. 包含比對 (應對 ST 強加的 XML 外殼標籤，如 <Character_Design>)
+        // 2. 雙向包含比對 (解決 XML 標籤包裹與字串合併問題)
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length > 15 && normContent.length > 15) {
-                if (normContent.includes(idxContent) || idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
+            if (idxContent.length > 10 && normContent.length > 10) {
+                // 如果 ST 送出的內容包裹了原始字串 (例如被加上了 <Character_Design>)
+                if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
+                // 如果原始字串包含了 ST 送出的內容 (被 ST 截斷)
+                if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
         
-        // 3. 量子重疊率比對 (應對 XML 標籤 + {{char}} 巨集被替換的雙重破壞)
+        // 3. 量子重疊率比對 (解決巨集替換 {{char}} 導致的字串破壞)
         let bestMatch = null;
         let bestScore = 0;
 
@@ -287,10 +274,7 @@ const CoreEngine = {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
                 
-                // 重疊率佔絕對主導權 (0.85)，因為巨集替換會導致長度劇變
                 let score = overlap * 0.85 + lenRatio * 0.15;
-
-                // 容錯閾值降至 0.65，足以在保證不誤判的情況下抓住被替換破壞的文本
                 if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
                     bestScore = score;
                     bestMatch = CoreEngine.promptIndex[i];
@@ -832,7 +816,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.7 終極真理溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.8 終極全知矩陣版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -906,7 +890,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V36.7 終極真理溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.8 終極全知矩陣版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
