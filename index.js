@@ -129,7 +129,6 @@ const CoreEngine = {
 
     normalize: (text) => {
         if (!text) return '';
-        // 極限過濾：移除所有空白、換行、Tab 與不可見字元，實現 100% 絕對文本匹配
         return text.replace(/[\s\n\r\t\u200B\u200C\u200D\uFEFF]/g, '').trim();
     },
 
@@ -144,6 +143,87 @@ const CoreEngine = {
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
+        // 1. 深度提取世界書 (Lorebooks) - 精準獲取書名與條目名
+        try {
+            const extractWorldInfo = () => {
+                let books = [];
+                if (window.world_info && window.world_info.books) {
+                    Object.values(window.world_info.books).forEach(b => books.push(b));
+                }
+                const context = getContext();
+                let chatId = context?.chatId;
+                if (chatId && window.chats && window.chats[chatId] && window.chats[chatId].world_info) {
+                    let chatWi = window.chats[chatId].world_info;
+                    if (chatWi.books) {
+                        Object.values(chatWi.books).forEach(b => books.push(b));
+                    } else if (chatWi.entries) {
+                        books.push(chatWi);
+                    }
+                }
+                
+                let extractedEntries = 0;
+                books.forEach(book => {
+                    if (!book || !book.entries) return;
+                    let bookName = book.name || '未知世界書';
+                    Object.values(book.entries).forEach(entry => {
+                        if (entry && entry.content) {
+                            let norm = CoreEngine.normalize(entry.content);
+                            let entryName = entry.comment || entry.name || entry.title || entry.uid || '未命名條目';
+                            if (entryName === '未命名條目' && Array.isArray(entry.key) && entry.key.length > 0) {
+                                entryName = entry.key.join(',');
+                            }
+                            addToIndex(norm, '世界書', `世界書(${bookName} - ${entryName})`, '世界書系統', 'LOREBOOK');
+                            extractedEntries++;
+                        }
+                    });
+                });
+
+                // Fallback: 如果沒有找到書本結構，但存在扁平化的 entries
+                if (extractedEntries === 0 && window.world_info && window.world_info.entries) {
+                    Object.values(window.world_info.entries).forEach(entry => {
+                        if (entry && entry.content) {
+                            let norm = CoreEngine.normalize(entry.content);
+                            let entryName = entry.comment || entry.name || entry.title || entry.uid || '未命名條目';
+                            if (entryName === '未命名條目' && Array.isArray(entry.key) && entry.key.length > 0) {
+                                entryName = entry.key.join(',');
+                            }
+                            addToIndex(norm, '世界書', `世界書(全域 - ${entryName})`, '世界書系統', 'LOREBOOK');
+                        }
+                    });
+                }
+            };
+            extractWorldInfo();
+        } catch (e) {
+            console.warn("[DS Cache] World Info extraction error", e);
+        }
+
+        // 2. 深度提取提示詞管理器 (Prompt Manager) - 精準獲取真實名稱
+        try {
+            const extractPromptManager = () => {
+                let prompts = [];
+                if (window.extension_settings && window.extension_settings.prompt_manager) {
+                    let pm = window.extension_settings.prompt_manager;
+                    if (Array.isArray(pm.prompts)) prompts.push(...pm.prompts);
+                    if (Array.isArray(pm.custom_prompts)) prompts.push(...pm.custom_prompts);
+                }
+                if (window.prompt_manager) {
+                    if (Array.isArray(window.prompt_manager.prompts)) prompts.push(...window.prompt_manager.prompts);
+                }
+                
+                prompts.forEach(p => {
+                    if (p && (p.content || p.text) && p.name) {
+                        let content = p.content || p.text;
+                        let norm = CoreEngine.normalize(content);
+                        addToIndex(norm, '預設', `提示詞(${p.name})`, 'system', 'DEFAULT');
+                    }
+                });
+            };
+            extractPromptManager();
+        } catch (e) {
+            console.warn("[DS Cache] Prompt Manager extraction error", e);
+        }
+
+        // 3. 遞迴遍歷其餘所有設定 (Fallback)
         const context = getContext();
         let activeChar = context?.characters?.[context?.characterId] || {};
         let chatMeta = {};
@@ -161,9 +241,7 @@ const CoreEngine = {
             '聊天元數據': chatMeta
         };
 
-        // 遞迴遍歷物件，吸取所有字串
         const deepCrawl = (obj, path, depth, visited) => {
-            // 防止循環參照與過深遞迴
             if (depth > 15 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
@@ -177,9 +255,8 @@ const CoreEngine = {
                         let norm = CoreEngine.normalize(val);
                         if (seenNorms.has(norm)) continue;
 
-                        let cat = '預設', creator = 'ST系統', type = 'DEFAULT', sourceName = currentPath;
+                        let cat = '預設', creator = 'ST核心', type = 'DEFAULT', sourceName = currentPath;
 
-                        // 🌟 智能路徑命名法：根據字串被發現的位置自動賦予身分
                         if (currentPath.includes('world_info') || currentPath.includes('character_book') || currentPath.includes('entries')) {
                             cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
                             let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
@@ -208,6 +285,7 @@ const CoreEngine = {
                             sourceName = `初次對話(First Mes)`;
                         } else if (obj.name || obj.identifier) {
                             sourceName = `提示詞(${obj.name || obj.identifier})`;
+                            creator = 'system';
                         } else {
                             let rootPrefix = path.split('.')[0] || '未知';
                             if (!sourceName.includes(rootPrefix) && !sourceName.includes('(')) {
@@ -250,7 +328,7 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段的發送機制)
+    // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段與黏合的發送機制)
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 5) return null;
         
@@ -258,16 +336,60 @@ const CoreEngine = {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 🌟 核心突破：如果 ST 把一整段字串切成了 4 塊 (如 35-38 條)，或者把多段字串黏成一塊 (如 54, 55 條)
-        // 只要發生包含關係，就能精準溯源！
+        // 🌟 核心突破：如果 ST 把多段字串黏成一塊 (如世界書合併發送)，或者切成多塊
+        let includedMatches = [];
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
             if (idxContent.length > 10 && normContent.length > 10) {
                 // ST 輸出的字串包含了記憶體中的母體 (黏合現象)
-                if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
+                if (normContent.includes(idxContent)) {
+                    includedMatches.push(CoreEngine.promptIndex[i]);
+                }
                 // 記憶體中的母體包含了 ST 輸出的字串 (碎屍/截斷現象)
-                if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
+                else if (idxContent.includes(normContent)) {
+                    return CoreEngine.promptIndex[i];
+                }
             }
+        }
+        
+        // 處理黏合現象：將多個被包含的來源合併顯示
+        if (includedMatches.length > 0) {
+            if (includedMatches.length === 1) return includedMatches[0];
+            
+            // 按長度降序排列，優先保留大段落
+            includedMatches.sort((a, b) => b.contentNorm.length - a.contentNorm.length);
+            
+            // 過濾掉被其他段落包含的子段落
+            let filteredMatches = [];
+            for (let i = 0; i < includedMatches.length; i++) {
+                let isSub = false;
+                for (let j = 0; j < filteredMatches.length; j++) {
+                    if (filteredMatches[j].contentNorm.includes(includedMatches[i].contentNorm)) {
+                        isSub = true;
+                        break;
+                    }
+                }
+                if (!isSub) filteredMatches.push(includedMatches[i]);
+            }
+            
+            if (filteredMatches.length === 1) return filteredMatches[0];
+            
+            // 組合名稱
+            let combinedSource = filteredMatches.map(m => {
+                let match = m.source.match(/\((.*?)\)/);
+                return match ? match[1] : m.source;
+            }).join(' + ');
+            
+            if (combinedSource.length > 40) combinedSource = combinedSource.substring(0, 37) + '...';
+            
+            let primaryMatch = filteredMatches[0];
+            return {
+                contentNorm: primaryMatch.contentNorm,
+                cat: primaryMatch.cat === '世界書' ? '世界書(組合)' : '組合提示詞',
+                source: `組合(${combinedSource})`,
+                creator: primaryMatch.creator,
+                type: primaryMatch.type
+            };
         }
         
         let bestMatch = null;
@@ -352,10 +474,10 @@ const CoreEngine = {
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+            return { cat: '世界書', source: `世界書(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
         }
         if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
+            return { cat: '世界書', source: '世界書(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
         const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
@@ -523,7 +645,6 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._isDynamic) continue;
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
-                // 這裡修復了調用錯誤，將 CoreEngine.getSimilarity 替換為 CoreEngine.getOverlapRatio
                 let sim = CoreEngine.getOverlapRatio(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
@@ -898,6 +1019,4 @@ jQuery(async () => {
 
         Logger.write('══════ 🛡️ V36.9.1 全知真空穩定版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
-        console.error('[DS Cache] 插件啟動崩潰:', e);
-    }
-});
+        console.error('
