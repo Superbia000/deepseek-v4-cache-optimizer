@@ -39,8 +39,7 @@ const Logger = {
     },
     truncate: (text) => {
         if (!text) return '';
-        // 替換換行符與 | 符號，防止破壞 Markdown 表格排版
-        const clean = text.replace(/[\n\r]/g, ' ').replace(/\|/g, '｜').trim();
+        const clean = text.replace(/[\n\r]/g, ' ');
         return clean.length > 30 ? clean.substring(0, 30) + '...' : clean;
     },
     write: (markdownText, level = LogLevels.STANDARD) => {
@@ -134,13 +133,14 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t\u200B\u200C\u200D\uFEFF]/g, '').trim();
     },
 
-    // 🌟 全知吸塵器：掃描記憶體節點的所有字串基元，加入高精度原生結構剖析
+        // 🌟 全知吸塵器：掃描 7 大記憶體根節點的所有字串基元 (加入 power_user)
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            if (!norm || norm.length < 5 || seenNorms.has(norm)) return;
+            // 放寬短提示詞門檻（例如極重度綠帽奴等詞的長度可能很短），只要>=2即可
+            if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
@@ -153,63 +153,23 @@ const CoreEngine = {
             if (chatId && window.chats && window.chats[chatId]) chatMeta = window.chats[chatId];
         } catch(e) {}
 
-        // ==========================================
-        // 🚀 高精度提取階段 (結構感知：精確抓取名稱)
-        // ==========================================
-        
-        // 1. 深度解析 ST Prompt Manager (完美對應圖1：擴展與預設提示詞)
-        try {
-            if (window.extension_settings?.prompt_manager?.prompts) {
-                let pmPrompts = window.extension_settings.prompt_manager.prompts;
-                if (Array.isArray(pmPrompts)) {
-                    for (let p of pmPrompts) {
-                        if (p.content && typeof p.content === 'string') {
-                            let norm = CoreEngine.normalize(p.content);
-                            // 精確提取 UI 真實名稱 (如: 🔪大清洗)
-                            let realName = p.name || p.identifier || '無名';
-                            addToIndex(norm, '預設', `提示詞(${realName})`, 'system', 'DEFAULT');
-                        }
-                    }
-                }
-            }
-        } catch(e) { console.warn("[DS Cache] 解析 Prompt Manager 失敗", e); }
-
-        // 2. 深度解析 ST 世界書 / Lorebooks (完美對應圖2、圖3)
-        try {
-            // ST1.18.0 標準全域世界書容器
-            if (typeof window.world_info_data === 'object' && window.world_info_data !== null) {
-                for (let bookName in window.world_info_data) {
-                    let book = window.world_info_data[bookName];
-                    if (book && book.entries && typeof book.entries === 'object') {
-                        for (let uid in book.entries) {
-                            let entry = book.entries[uid];
-                            if (entry.content && typeof entry.content === 'string') {
-                                let norm = CoreEngine.normalize(entry.content);
-                                // 精確提取 條目真實名稱(UI中的"名稱/備註")，如果沒設定則取用Key
-                                let entryRealName = entry.comment || (Array.isArray(entry.key) ? entry.key.join(',') : uid);
-                                // 組合世界書名與條目名，納入陣列計算
-                                addToIndex(norm, '世界書', `世界書(${bookName} - ${entryRealName})`, '世界書系統', 'LOREBOOK');
-                            }
-                        }
-                    }
-                }
-            }
-        } catch(e) { console.warn("[DS Cache] 解析 World Info 失敗", e); }
-
-        // ==========================================
-        // 🧲 廣度兜底階段 ( Deep Crawl 防禦性遍歷 )
-        // ==========================================
         const Roots = {
             '核心設定': window.settings || {},
             '擴展設定': window.extension_settings || {},
-            '全域世界書': window.world_info || {}, // 給舊版數據或未知資料集備用
+            '全域世界書': window.world_info || {},
+            '高階與自訂用戶設定': window.power_user || {}, // 💡 修復預設(28等Persona提示詞)不見的關鍵核心
+            '提示詞管理': window.prompt_manager || window.extension_settings?.prompt_manager || {}, // 防呆抓取
             '角色卡': activeChar,
             '聊天元數據': chatMeta
         };
 
         const deepCrawl = (obj, path, depth, visited) => {
-            if (depth > 15 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
+            // 放寬遞迴至20以保證深層的 Prompt Manager 或 WI 全局目錄都能被掃出
+            if (depth > 20 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
+
+            // 💡 特徵檢測引擎：辨識是否為世界書條目的物件結構
+            const isWIEntry = ('content' in obj && 'key' in obj && Array.isArray(obj.key) && ('uid' in obj || 'comment' in obj));
 
             for (let key in obj) {
                 try {
@@ -217,46 +177,75 @@ const CoreEngine = {
                     let val = obj[key];
                     let currentPath = path ? `${path}.${key}` : key;
 
-                    if (typeof val === 'string' && val.trim().length > 5) {
+                    if (typeof val === 'string' && val.trim().length >= 2) { 
                         let norm = CoreEngine.normalize(val);
                         if (seenNorms.has(norm)) continue;
 
                         let cat = '預設', creator = 'ST核心', type = 'DEFAULT', sourceName = currentPath;
 
-                        if (currentPath.includes('world_info') || currentPath.includes('character_book') || currentPath.includes('entries')) {
-                            cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
-                            let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
-                            if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(',');
-                            sourceName = `世界書(${entryName})`;
-                        } else if (currentPath.includes('authors_note')) {
-                            cat = '其他插件'; creator = '用戶(A/N)'; type = 'OTHER_PLUGIN';
-                            sourceName = `提示詞(Author's Note)`;
-                        } else if (currentPath.includes('jailbreak')) {
-                            sourceName = `提示詞(Jailbreak)`;
-                            creator = 'system';
-                        } else if (currentPath.includes('post_history')) {
-                            sourceName = `提示詞(Post-History)`;
-                            creator = 'system';
-                        } else if (currentPath.includes('pre_history')) {
-                            sourceName = `提示詞(Pre-History)`;
-                            creator = 'system';
-                        } else if (currentPath.includes('story_string') || currentPath.includes('scenario')) {
+                        // 💡 深度命名及溯源：讓 UI、記錄無死角對應
+                        if (isWIEntry && key === 'content') {
+                            // ★ 1. 世界書深度解析：提取書名及內部條目名 ★
+                            cat = '世界書'; 
+                            creator = '世界書系統'; 
+                            type = 'LOREBOOK';
+                            
+                            // 利用正則表達式，自動向根目錄回推，尋找所屬的 World Book Name (如 "服装随机化")
+                            let bookMatch = currentPath.match(/(?:books?|world_info|globalSelect)[\.\[]?([^.]+?)[\.\]]?(?:\.entries|\.\[|$)/i);
+                            let bookName = bookMatch ? bookMatch[1] : '所屬全局世界書';
+                            
+                            // 獲取具體條目名
+                            let entryTitle = obj.comment || obj.uid;
+                            if (obj.key && obj.key.length > 0) entryTitle = obj.key.join(','); // 偏向關鍵詞(如 "性感类")
+                            
+                            sourceName = `世界書(${bookName}) - 條目(${entryTitle})`;
+                        } 
+                        else if (currentPath.includes('persona_description') || key === 'persona_description' || currentPath.includes('user_persona')) {
+                            // ★ 2. Persona 完美映射 (ID:28 對策) ★
+                            cat = '用戶'; creator = 'ST設定'; type = 'USER_PERSONA';
+                            sourceName = '預設提示詞(用戶身份 / Persona)';
+                        }
+                        else if (key === 'system_prompt') {
+                            sourceName = '預設提示詞(主提示詞 / System Prompt)';
+                        }
+                        else if (key === 'post_history_instructions') {
+                            // ★ 3. 後置設定映射 (ID:55 對策) ★
+                            sourceName = '預設提示詞(後置提示詞 / Post-History)';
+                        }
+                        else if (key === 'pre_history_instructions') {
+                            sourceName = '預設提示詞(前置提示詞 / Pre-History)';
+                        }
+                        else if (key === 'jailbreak_prompt') {
+                            sourceName = '預設提示詞(越獄指令 / Jailbreak)';
+                        }
+                        else if (key === 'authors_note' || currentPath.includes('authors_note')) {
+                            cat = '其他插件'; creator = '用戶'; type = 'OTHER_PLUGIN';
+                            sourceName = '提示詞(作者備註 / A/N)';
+                        }
+                        else if (obj && typeof obj.identifier === 'string' && key === 'content') {
+                            // ★ 4. Extension 附件 (Prompt Manager 等工具) 對策 ★
+                            cat = '預設'; creator = 'ST擴展附件'; type = 'DEFAULT';
+                            sourceName = `附件提示詞(${obj.identifier})`;
+                        }
+                        else if (currentPath.includes('story_string') || currentPath.includes('scenario')) {
                             cat = '角色'; creator = '設定';
-                            sourceName = `提示詞(Scenario/Story)`;
+                            sourceName = `故事背景(Scenario/Story)`;
                         } else if (currentPath.includes('personality')) {
                             cat = '角色'; creator = '設定';
-                            sourceName = `提示詞(Personality)`;
+                            sourceName = `性格(Personality)`;
                         } else if (currentPath.includes('description')) {
                             cat = '角色'; creator = '設定';
-                            sourceName = `提示詞(Description)`;
+                            sourceName = `描述(Description)`;
                         } else if (currentPath.includes('first_mes')) {
                             cat = '角色'; creator = '設定';
-                            sourceName = `提示詞(First Mes)`;
+                            sourceName = `初次對話(First Mes)`;
                         } else if (obj.name || obj.identifier) {
-                            cat = '預設'; creator = 'system'; type = 'DEFAULT';
                             sourceName = `提示詞(${obj.name || obj.identifier})`;
                         } else {
-                            sourceName = `預設提示詞(無名)`;
+                            let rootPrefix = path.split('.')[0] || '未知';
+                            if (!sourceName.includes(rootPrefix) && !sourceName.includes('(')) {
+                                sourceName = `${rootPrefix}(${key})`;
+                            }
                         }
 
                         addToIndex(norm, cat, sourceName, creator, type);
@@ -294,19 +283,23 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 雙向無損判定與量子重疊演算法
+        // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段的發送機制)
     findInIndex: (normContent) => {
-        if (!normContent || normContent.length < 5) return null;
+        // 放寬最底線：防止Persona過短無法被緩存跟蹤器追蹤
+        if (!normContent || normContent.length < 2) return null;
         
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // ST 黏合現象 與 碎屍/截斷現象 檢查
+        // 🌟 核心突破：如果 ST 把一整段字串切成了 4 塊 (如日誌內的 34-38 條)，或者把多段字串黏成一塊 (如 54, 55 條)
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length > 10 && normContent.length > 10) {
+            // 💡 降低嚴苛的 10字符 長度下限門檻至 4，以覆蓋切片後極短的提示區塊
+            if (idxContent.length > 4 && normContent.length > 4) {
+                // ST 輸出的字串包含了記憶體中的母體 (黏合現象)
                 if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
+                // 記憶體中的母體包含了 ST 輸出的字串 (碎屍/截斷現象，用以抓回 ID 34-38 所需)
                 if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
@@ -316,11 +309,13 @@ const CoreEngine = {
 
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length > 10 && normContent.length > 10) {
+            if (idxContent.length > 5 && normContent.length > 5) {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
+                
                 let score = overlap * 0.85 + lenRatio * 0.15;
-                if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
+                // 放鬆針對 3-Grams 模糊比對的寬容性
+                if (overlap >= 0.55 && score > bestScore && score >= 0.55) {
                     bestScore = score;
                     bestMatch = CoreEngine.promptIndex[i];
                 }
@@ -360,15 +355,13 @@ const CoreEngine = {
                 window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
             }
         } catch (e) {
-            console.error("[DS Cache] 劫持 ST 巨集引擎失敗:", e);
+            console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
         }
     },
 
-    // 將攔截的 Payload 即時標記與歸類，對齊日誌所期望的格式
     classify: (msg, structuralTag, isDynamic) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
 
-        // 使用者聊天與上下文定位
         if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
         if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
         if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI上一次回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
@@ -376,9 +369,8 @@ const CoreEngine = {
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
-        
-        // 進入已由 buildIndex 剖析好的無損陣列進行量子定位
         let matchedIndex = CoreEngine.findInIndex(normContent);
+        
         if (matchedIndex) {
             if (isDynamic) {
                 return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
@@ -386,25 +378,33 @@ const CoreEngine = {
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        // =======================
-        // 以下為 ST 注入不明 Payload 或緩存丟失時的智慧降級判斷
-        // =======================
-        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
+        if (isDynamic) {
+            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
+        }
 
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
-
-        // 防漏抓：如果封包自身攜帶了 ST 原裝注入的提示詞變數名稱
-        if (msg.name && msg.name !== 'system') {
-            if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-                const match = msg.name.match(/\((.*?)\)/);
-                const entryName = match ? match[1] : msg.name;
-                return { cat: '世界書', source: `世界書(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
-            }
-            return { cat: '預設', source: `提示詞(${msg.name})`, creator: 'system', type: 'DEFAULT' };
+        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
+            const match = msg.name.match(/\((.*?)\)/);
+            const entryName = match ? match[1] : msg.name;
+            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+        }
+        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
+            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
-        return { cat: '預設', source: '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
+        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
+        if (msg.name && !defaultNames.includes(name)) {
+            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('author') || name.includes('note')) {
+            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+        }
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
+            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
+        }
+
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
@@ -558,6 +558,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._isDynamic) continue;
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
+                // 這裡修復了調用錯誤，將 CoreEngine.getSimilarity 替換為 CoreEngine.getOverlapRatio
                 let sim = CoreEngine.getOverlapRatio(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
@@ -721,7 +722,6 @@ async function interceptAndRestructurePrompt(data) {
             });
 
             ledger.forEach(l => {
-                // 完美對齊你圖表中的數據格式要求
                 mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
             });
 
