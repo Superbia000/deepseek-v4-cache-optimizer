@@ -121,7 +121,7 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：全知矩陣 (The Omniscient Matrix)
+// 🛡️ 核心引擎：語義自畫像引擎 (The Semantic Profiler)
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
@@ -129,11 +129,9 @@ const CoreEngine = {
 
     normalize: (text) => {
         if (!text) return '';
-        // 移除所有空白、換行與特殊控制字元，達成絕對無損比對
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 全知掃描：不再依賴特徵，暴力提取所有有效字串
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
@@ -144,7 +142,6 @@ const CoreEngine = {
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
-        // 1. 直取 ST 核心純字串 (完美解決 34, 54, 55 的遺漏)
         if (window.settings) {
             for (let key in window.settings) {
                 if (typeof window.settings[key] === 'string' && window.settings[key].trim().length > 5) {
@@ -160,7 +157,6 @@ const CoreEngine = {
             }
         }
 
-        // 2. 直取當前活躍角色卡的所有欄位 (完美解決 35-38 XML 包裹問題)
         const context = getContext();
         let activeChar = null;
         if (context && context.characters && context.characterId !== undefined) {
@@ -175,14 +171,11 @@ const CoreEngine = {
             });
         }
 
-        // 3. 泛用暴風遞迴掃描 (完美解決 30, 31 幽靈世界書)
         const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "未知") => {
             if (depth > 12 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
-            // 只要有 content 屬性且長度足夠，一律視為目標提取
             if (typeof obj.content === 'string' && obj.content.trim().length > 5) {
-                // 寬鬆的世界書判定：只要有 key 或是常數，就歸類為世界書
                 let isLorebook = ('key' in obj) || ('constant' in obj) || ('selective' in obj) || ('uid' in obj && !obj.identifier);
                 let name = obj.name || obj.title || obj.comment || obj.identifier || obj.id || obj.uid || "無名條目";
                 
@@ -199,14 +192,13 @@ const CoreEngine = {
                 }
             }
 
-            // 遞迴遍歷
             for (let key in obj) {
                 try {
                     let val = obj[key];
                     if (val && typeof val === 'object' && !(val instanceof Element)) {
                         let nextBookName = currentBookName;
                         if (key === 'entries' || key === 'books') {
-                            // 保持父層書名
+                            // Keep parent book name
                         } else if (isNaN(Number(key)) && key.length > 2) {
                             nextBookName = key;
                         }
@@ -216,9 +208,7 @@ const CoreEngine = {
             }
         };
 
-        // 掃描活躍角色內部 (包含角色專屬世界書)
         if (activeChar) deepScan(activeChar, 0, new Set(), activeChar.name);
-        // 掃描全域核心
         const roots = [window.world_info, window.prompt_manager];
         roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域"); });
     },
@@ -244,27 +234,27 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 🌟 雙向無損判定與量子重疊演算法
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 5) return null;
         
-        // 1. 完美比對
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 2. 雙向包含比對 (解決 XML 標籤包裹與字串合併問題)
+        // XML stripping for Deep Match
+        let noXMLContent = normContent.replace(/<[^>]+>/g, '');
+
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
             if (idxContent.length > 10 && normContent.length > 10) {
-                // 如果 ST 送出的內容包裹了原始字串 (例如被加上了 <Character_Design>)
                 if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
-                // 如果原始字串包含了 ST 送出的內容 (被 ST 截斷)
                 if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
+                if (noXMLContent.length > 10 && (noXMLContent.includes(idxContent) || idxContent.includes(noXMLContent))) {
+                    return CoreEngine.promptIndex[i];
+                }
             }
         }
         
-        // 3. 量子重疊率比對 (解決巨集替換 {{char}} 導致的字串破壞)
         let bestMatch = null;
         let bestScore = 0;
 
@@ -273,7 +263,6 @@ const CoreEngine = {
             if (idxContent.length > 10 && normContent.length > 10) {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
-                
                 let score = overlap * 0.85 + lenRatio * 0.15;
                 if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
                     bestScore = score;
@@ -338,33 +327,39 @@ const CoreEngine = {
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        if (isDynamic) {
-            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
-        }
-
-        let name = msg.name ? msg.name.toLowerCase() : '';
+        // 🌟 終極語義自畫像引擎 (Semantic Auto-Profiling Fallback)
+        // 絕對不會再有「無名」的提示詞出現！
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
-        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-            const match = msg.name.match(/\((.*?)\)/);
-            const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
-        }
-        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
+        let trimContent = msg.content ? msg.content.trim() : '';
+
+        // 特判 ST 核心字串 (解決 Prompt 34)
+        if (contentLower.includes('这是一个故事的开始') || contentLower.includes('this is a story') || contentLower.includes('this is the start of')) {
+            return { cat: '預設', source: 'Story String (故事字串)', creator: 'ST核心', type: 'DEFAULT' };
         }
 
-        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
-        if (msg.name && !defaultNames.includes(name)) {
-            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('author') || name.includes('note')) {
-            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
+        // XML 標籤提取 (解決 Prompt 35-38 等被正則或插件動態生成的 XML 標籤)
+        const xmlMatch = trimContent.match(/^<([a-zA-Z0-9_]+)>/);
+        if (xmlMatch) {
+            return { cat: '設定', source: `標籤定義(${xmlMatch[1]})`, creator: '動態腳本/插件', type: 'DEFAULT' };
         }
 
-        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
+        // Markdown 標題提取 (解決 Prompt 54, 55 這種帶有 # 或 --- 開頭的排版提示詞)
+        const mdMatch = trimContent.match(/^(?:---|###|#)\s*([^\n]+)/);
+        if (mdMatch) {
+            let name = mdMatch[1].replace(/[:：]/g, '').trim().substring(0, 16);
+            return { cat: '設定', source: `結構定義(${name})`, creator: '動態腳本/插件', type: 'DEFAULT' };
+        }
+
+        // 字典式標題提取 (解決 Lorebook 或 自定義 Prompt 常用的 "標題:" 寫法)
+        const dictMatch = trimContent.match(/^([a-zA-Z0-9_\u4e00-\u9fa5]+)\s*[:：]/);
+        if (dictMatch) {
+            let name = dictMatch[1].trim().substring(0, 12);
+            return { cat: '設定', source: `提取標題(${name})`, creator: '動態腳本/插件', type: 'DEFAULT' };
+        }
+
+        // 兜底：直接提取內容前 14 個字作為特徵 (徹底消滅 "無名")
+        let shortSnippet = trimContent.substring(0, 14).replace(/[\n\r]/g, '');
+        return { cat: '未知', source: `提取內容(${shortSnippet}...)`, creator: '動態組裝', type: 'DEFAULT' };
     }
 };
 
@@ -816,7 +811,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.8 終極全知矩陣版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9 語義自畫像引擎版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -890,7 +885,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V36.8 終極全知矩陣版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.9 語義自畫像引擎版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
