@@ -133,92 +133,104 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t\u200B\u200C\u200D\uFEFF]/g, '').trim();
     },
 
-    // 🌟 全知吸塵器 2.0：涵蓋所有 World Book 及高精度提示詞預載
+    // 🌟 全知吸塵器：掃描 6 大記憶體根節點的所有字串基元 (經深度思考強化)
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            // 放寬字元限制至 2 以支援極短的人設詞（例如: "綠帽奴" 歸一化後只有3個字元）
+            // 【修復】將最小擷取長度由 5 下調為 2，以捕獲短字串如 "極重度綠帽奴" 或 "1111"
             if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
-        const context = getContext() || {};
-        const activeChar = context.characters?.[context.characterId] || {};
-        const S = window.settings || {};
+        const context = getContext();
+        let activeChar = context?.characters?.[context?.characterId] || {};
+        let chatMeta = {};
+        try {
+            let chatId = context?.chatId;
+            if (chatId && window.chats && window.chats[chatId]) chatMeta = window.chats[chatId];
+        } catch(e) {}
 
-        // 🌟 核心突破 1：硬攔截 ST 隱藏變數 (解決 #28 #55 等被視為無名預設的問題)
-        const explicitFields = [
-            { val: S.persona_description, cat: '用戶', src: '預設提示詞(當前用戶Persona人設)', maker: 'ST核心/用戶' },
-            { val: S.custom_system_prompt || S.system_prompt, cat: '預設', src: '預設提示詞(System主指令)', maker: 'ST核心' },
-            { val: S.post_history_instructions || S.post_prompt, cat: '預設', src: '預設提示詞(Post-History追加規則)', maker: 'ST核心' },
-            { val: S.pre_history_instructions || S.pre_prompt, cat: '預設', src: '預設提示詞(Pre-History前置指令)', maker: 'ST核心' }
-        ];
-
-        if (activeChar) {
-            explicitFields.push({ val: activeChar.description, cat: '角色', src: `提示詞(角色設定-${activeChar.name})`, maker: '角色卡' });
-            explicitFields.push({ val: activeChar.personality, cat: '角色', src: `提示詞(角色性格-${activeChar.name})`, maker: '角色卡' });
-            explicitFields.push({ val: activeChar.scenario, cat: '角色', src: `提示詞(世界場景-${activeChar.name})`, maker: '角色卡' });
-            explicitFields.push({ val: activeChar.first_mes, cat: '角色', src: `提示詞(初次對話-${activeChar.name})`, maker: '角色卡' });
-        }
-
-        explicitFields.forEach(field => {
-            if (typeof field.val === 'string') {
-                addToIndex(CoreEngine.normalize(field.val), field.cat, field.src, field.maker, 'DEFAULT');
+        // ========================================================
+        // 🎯 階段一：精準標靶提取 (Targeted Extraction for ST 1.18.0)
+        // ========================================================
+        
+        // 1. 精準提取: Prompt Manager (提示詞管理器)
+        try {
+            let prompts = window.extension_settings?.prompt_manager?.prompts || window.prompt_manager?.prompts || [];
+            if (Array.isArray(prompts)) {
+                prompts.forEach(p => {
+                    if (p.content) {
+                        let pName = p.name || p.identifier || "未命名";
+                        addToIndex(CoreEngine.normalize(p.content), '預設', `提示詞(${pName})`, 'ST核心', 'DEFAULT');
+                    }
+                });
             }
-        });
+        } catch (e) {}
 
-        // 🌟 核心突破 2：三維定向擷取世界書 Lorebooks
-        const extractWorldBookEntries = (bookName, bookObj, creatorStr = '世界書系統') => {
-            if (!bookObj || !bookObj.entries) return;
-            for (let eKey in bookObj.entries) {
-                let entry = bookObj.entries[eKey];
-                if (entry && typeof entry.content === 'string') {
-                    let entryTitle = entry.comment || entry.name || (Array.isArray(entry.key) ? entry.key.join(', ') : entry.key) || eKey;
-                    let norm = CoreEngine.normalize(entry.content);
-                    addToIndex(norm, '世界書', `世界書[${bookName}]-條目(${entryTitle})`, creatorStr, 'LOREBOOK');
+        // 2. 精準提取: 世界書/Lorebooks (包含全局與當前啟用)
+        try {
+            // 掃描 window.world_info_data (ST 新版完整加載的世界書庫)
+            if (window.world_info_data) {
+                for (let bookName in window.world_info_data) {
+                    let book = window.world_info_data[bookName];
+                    if (book && book.entries) {
+                        for (let uid in book.entries) {
+                            let entry = book.entries[uid];
+                            if (entry.content) {
+                                let entryName = entry.comment || entry.name || (entry.key ? entry.key.join(',') : uid);
+                                // 提取格式：世界書[書名] - 條目名
+                                addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[${bookName}] - 條目(${entryName})`, '世界書系統', 'LOREBOOK');
+                            }
+                        }
+                    }
                 }
             }
+            // 掃描 window.world_info.entries (ST 當前啟用的條目緩存)
+            if (window.world_info && window.world_info.entries) {
+                for (let uid in window.world_info.entries) {
+                    let entry = window.world_info.entries[uid];
+                    if (entry.content) {
+                        let entryName = entry.comment || entry.name || (entry.key ? entry.key.join(',') : uid);
+                        let bookName = entry.book || "全局/未知世界書";
+                        addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[${bookName}] - 條目(${entryName})`, '世界書系統', 'LOREBOOK');
+                    }
+                }
+            }
+        } catch (e) {}
+
+        // 3. 精準提取: Persona (用戶角色，解決28號問題)
+        try {
+            if (window.settings?.persona_description) {
+                addToIndex(CoreEngine.normalize(window.settings.persona_description), '用戶', `用戶角色(Persona)`, '用戶', 'USER_PERSONA');
+            }
+            // 匹配當前選中的 persona
+            let personaUid = window.settings?.persona_uid;
+            if (personaUid && window.characters && window.characters.length > 0) {
+                let persona = window.characters.find(c => c.avatar === personaUid);
+                if (persona && persona.description) {
+                    addToIndex(CoreEngine.normalize(persona.description), '用戶', `用戶角色(${persona.name || 'Persona'})`, '用戶', 'USER_PERSONA');
+                }
+            }
+        } catch (e) {}
+
+
+        // ========================================================
+        // 🌌 階段二：全域無腦深爬 (Fallback Deep Crawl)
+        // ========================================================
+        const Roots = {
+            '核心設定': window.settings || {},
+            '擴展設定': window.extension_settings || {},
+            '全域世界書': window.world_info || {}, // 保底掃描
+            '角色卡': activeChar,
+            '聊天元數據': chatMeta
         };
 
-        // 擷取全局啟用中的 World Info
-        if (window.world_info) {
-            for (let bKey in window.world_info) {
-                let book = window.world_info[bKey];
-                if (book && typeof book === 'object' && book.entries) {
-                    extractWorldBookEntries(book.name || bKey, book);
-                }
-            }
-        }
-
-        // 擷取角色卡專屬世界書
-        if (activeChar?.data?.character_book) {
-            extractWorldBookEntries(`專屬世界書(${activeChar.name})`, activeChar.data.character_book, '角色卡(世界書)');
-        }
-
-        // 若為群聊，擷取所有參與角色的世界書
-        if (context.groupId && Array.isArray(context.chat)) {
-            const allChars = window.characters || context.characters || [];
-            allChars.forEach(char => {
-                if (char?.data?.character_book) {
-                    extractWorldBookEntries(`專屬世界書(${char.name})`, char.data.character_book, '群聊角色卡(世界書)');
-                }
-            });
-        }
-
-        // 🌟 退源掃描器（保留用來獲取各類冷門提示詞或新增的外掛擴展模組）
-        const deepCrawl = (obj, path, depth, visited, currentMeta = {}) => {
-            if (depth > 12 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
+        const deepCrawl = (obj, path, depth, visited) => {
+            if (depth > 15 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
-
-            let newMeta = { ...currentMeta };
-
-            // 即時感知上下級世界書從屬關聯
-            if ((obj.name || obj.title) && (obj.entries || obj.character_book || obj.content)) {
-                newMeta.bookName = obj.name || obj.title;
-            }
 
             for (let key in obj) {
                 try {
@@ -226,29 +238,40 @@ const CoreEngine = {
                     let val = obj[key];
                     let currentPath = path ? `${path}.${key}` : key;
 
-                    if (typeof val === 'string' && val.trim().length > 2) {
+                    if (typeof val === 'string' && val.trim().length > 2) { // 同樣下調至 2
                         let norm = CoreEngine.normalize(val);
-                        if (seenNorms.has(norm)) continue;
+                        if (seenNorms.has(norm)) continue; // 已經被階段一精準捕獲的，這裡會直接跳過
 
-                        let cat = '預設', creator = 'ST核心', type = 'DEFAULT', sourceName = currentPath;
+                        let cat = '預設', creator = 'ST系統', type = 'DEFAULT', sourceName = currentPath;
 
-                        // 判斷遺漏的外掛模組或世界書塊
-                        if (key === 'content' && (obj.uid !== undefined || obj.comment !== undefined || obj.key !== undefined || obj.keys !== undefined)) {
-                            cat = '世界書'; creator = '世界書擴展'; type = 'LOREBOOK';
-                            let entryName = obj.comment || obj.name || obj.uid || "未命名";
-                            if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(', ');
-                            else if (Array.isArray(obj.keys) && obj.keys.length > 0) entryName = obj.keys.join(', ');
-
-                            sourceName = newMeta.bookName ? `世界書[${newMeta.bookName}]-條目(${entryName})` : `未知分類世界書(${entryName})`;
-                        } 
-                        else if (currentPath.includes('authors_note')) {
-                            cat = '其他插件'; creator = '用戶'; type = 'OTHER_PLUGIN'; sourceName = `作者備註(Author's Note)`;
+                        if (currentPath.includes('world_info') || currentPath.includes('entries')) {
+                            cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
+                            let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
+                            if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(',');
+                            sourceName = `世界書(${entryName})`;
+                        } else if (currentPath.includes('authors_note')) {
+                            cat = '其他插件'; creator = '用戶(A/N)'; type = 'OTHER_PLUGIN';
+                            sourceName = `作者備註(Author's Note)`;
                         } else if (currentPath.includes('jailbreak')) {
-                            sourceName = `越獄指令(Jailbreak)`;
+                            sourceName = `越獄提示詞(Jailbreak)`;
                         } else if (currentPath.includes('post_history')) {
-                            sourceName = `後置指令(Post-History)`;
+                            sourceName = `後置提示詞(Post-History)`;
+                        } else if (currentPath.includes('pre_history')) {
+                            sourceName = `前置提示詞(Pre-History)`;
+                        } else if (currentPath.includes('story_string') || currentPath.includes('scenario')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `故事背景(Scenario/Story)`;
+                        } else if (currentPath.includes('personality')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `性格(Personality)`;
+                        } else if (currentPath.includes('description')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `描述(Description)`;
+                        } else if (currentPath.includes('first_mes')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `初次對話(First Mes)`;
                         } else if (obj.name || obj.identifier) {
-                            sourceName = `自定義擴充(${obj.name || obj.identifier})`;
+                            sourceName = `提示詞(${obj.name || obj.identifier})`;
                         } else {
                             let rootPrefix = path.split('.')[0] || '未知';
                             if (!sourceName.includes(rootPrefix) && !sourceName.includes('(')) {
@@ -259,19 +282,10 @@ const CoreEngine = {
                         addToIndex(norm, cat, sourceName, creator, type);
                     } 
                     else if (typeof val === 'object' && val !== null && !(val instanceof Element)) {
-                        deepCrawl(val, currentPath, depth + 1, visited, newMeta);
+                        deepCrawl(val, currentPath, depth + 1, visited);
                     }
                 } catch(e) {}
             }
-        };
-
-        const Roots = {
-            '核心設定': S,
-            '擴展設定': window.extension_settings || {},
-            '全域世界書': window.world_info || {},
-            '提示詞管理': window.prompt_manager || {},
-            '角色卡': activeChar,
-            '聊天元數據': context.chatId && window.chats ? window.chats[context.chatId] || {} : {}
         };
 
         for (let rootName in Roots) {
@@ -300,48 +314,36 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 🌟 升級版量子重疊演算法 (大幅度強化短句容錯與巨集解析)
+    // 🌟 雙向無損判定與量子重疊演算法
     findInIndex: (normContent) => {
-        if (!normContent || normContent.length < 2) return null;
+        if (!normContent || normContent.length < 2) return null; // 支援短文本匹配
+        
+        for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
+            if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
+        }
+
+        // 🌟 核心突破：如果 ST 把一整段字串切成了 4 塊，或者黏成一塊，依然能捕捉
+        for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
+            const idxContent = CoreEngine.promptIndex[i].contentNorm;
+            if (idxContent.length > 5 && normContent.length > 5) { // 包含判斷僅在一定長度上生效避免誤判
+                if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
+                if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
+            }
+        }
         
         let bestMatch = null;
         let bestScore = 0;
 
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
-            const idxObj = CoreEngine.promptIndex[i];
-            const idxContent = idxObj.contentNorm;
-
-            // 1. 100% 精準捕捉 (無痛秒鎖)
-            if (idxContent === normContent) return idxObj;
-
-            // 2. ST碎片化/連鎖黏合對抗 (Containment Catching)
-            // 當前載入的內容包含庫存母體 (或者反過來被包含)，直接加持權重。有效針對巨型陣列斷點切分
-            if (idxContent.length >= 5 && normContent.length >= 5) {
-                if (normContent.includes(idxContent) || idxContent.includes(normContent)) {
-                    let overlapMin = Math.min(idxContent.length, normContent.length);
-                    let ratio = overlapMin / Math.max(idxContent.length, normContent.length);
-                    
-                    // 防範如短詞眼("我是")等低質文本綁架世界書的亂象，規定最低有效內容包含門檻
-                    if (overlapMin >= 10 || ratio >= 0.3) {
-                        let score = 2.0 + ratio; // 置頂積分段 (2.0 ~ 3.0) 必定先執行這個判斷結果
-                        if (score > bestScore) {
-                            bestScore = score;
-                            bestMatch = idxObj;
-                        }
-                        continue;
-                    }
-                }
-            }
-            
-            // 3. 多重過濾相似感知 (針對巨集導致部分文本變異時介入運算)
-            if (idxContent.length > 8 && normContent.length > 8) {
-                let overlapRatio = CoreEngine.getOverlapRatio(idxContent, normContent);
+            const idxContent = CoreEngine.promptIndex[i].contentNorm;
+            if (idxContent.length > 10 && normContent.length > 10) {
+                let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
-                let score = (overlapRatio * 0.85) + (lenRatio * 0.15);
-
-                if (overlapRatio >= 0.65 && score > bestScore && score >= 0.65 && score < 2.0) { // < 2 避免把強匹配蓋掉
+                
+                let score = overlap * 0.85 + lenRatio * 0.15;
+                if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
                     bestScore = score;
-                    bestMatch = idxObj;
+                    bestMatch = CoreEngine.promptIndex[i];
                 }
             }
         }
@@ -360,7 +362,7 @@ const CoreEngine = {
                             let cleanOrig = CoreEngine.normalize(orig);
                             if (cleanRes.length > 0) {
                                 CoreEngine.macroMap.set(cleanRes, cleanOrig);
-                                if (CoreEngine.macroMap.size > 1500) { // 放寬 Mapping Queue 容量
+                                if (CoreEngine.macroMap.size > 1000) {
                                     CoreEngine.macroMap.delete(CoreEngine.macroMap.keys().next().value);
                                 }
                             }
@@ -392,44 +394,44 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
-        // 使用更精準巨集 Mapping 結果取代原始內容作為檢索來源
-        let normContent = msg._origTemplate ? CoreEngine.macroMap.get(msg._norm) || CoreEngine.normalize(msg._origTemplate) : msg._norm;
+        let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         let matchedIndex = CoreEngine.findInIndex(normContent);
         
         if (matchedIndex) {
             if (isDynamic) {
-                return { cat: '動態', source: `${matchedIndex.source}(動態變量感知)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
+                return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
             }
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
         if (isDynamic) {
-            return { cat: '動態', source: '實時生成態提示詞(變數覆寫)', creator: 'ST模組', type: 'DYNAMIC' };
+            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
+        // 後備命名策略
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `已覆寫世界書(${entryName})`, creator: '世界書引擎', type: 'LOREBOOK' };
+            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
         }
         if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書串聯生成端', creator: '世界書引擎', type: 'LOREBOOK' };
+            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
         const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
         if (msg.name && !defaultNames.includes(name)) {
-            return { cat: '其他插件', source: `自定義輔助模塊(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
         }
         if (name.includes('author') || name.includes('note')) {
-            return { cat: '其他插件', source: `插件追加(Author's Note)`, creator: '用戶層', type: 'OTHER_PLUGIN' };
+            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
         }
         if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-            return { cat: '其他插件', source: `數據庫探針(向量庫/RAG)`, creator: '檢索引擎', type: 'OTHER_PLUGIN' };
+            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
         }
 
-        return { cat: '未知節點', source: msg.name ? `遊離提示塊(${msg.name})` : '遊離/串聯提示詞塊(無名或無關)', creator: '底層併發', type: 'DEFAULT' };
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
@@ -618,7 +620,7 @@ async function interceptAndRestructurePrompt(data) {
             if (frozen._origTemplate && state.promptTracker[frozen._origTemplate]?.isDynamic) {
                 frozen._isDynamic = true;
                 if (frozen._attr.type !== 'DYNAMIC') {
-                    frozen._attr.cat = '動態'; frozen._attr.source = '動態提示詞(巨集解封)'; frozen._attr.type = 'DYNAMIC';
+                    frozen._attr.cat = '動態'; frozen._attr.source = '動態提示詞(舊版保留)'; frozen._attr.type = 'DYNAMIC';
                 }
             }
 
@@ -630,7 +632,7 @@ async function interceptAndRestructurePrompt(data) {
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 } else {
                     if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
-                    syncMessages.push(`[修改重定向] ${matched._attr.source}`);
+                    syncMessages.push(`[修改] ${matched._attr.source}`);
                     
                     frozen.content = matched.content; 
                     frozen._norm = matched._norm; 
@@ -639,17 +641,17 @@ async function interceptAndRestructurePrompt(data) {
                     frozen._attr = matched._attr;
                     
                     nextFrozen.push(frozen);
-                    let funcName = frozen._uid === matched._uid ? '量子糾纏(結構深潛)' : '量子糾纏(語義穿透)';
+                    let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                 }
             } else if (frozen._isDynamic) {
                 nextFrozen.push(frozen);
                 if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '動態延存', creator: frozen._attr.creator, action: '保留變數節點', func: '動態幽靈補正', status: '已凍結' });
+                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
             } else {
                 if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
-                syncMessages.push(`[已銷毀移除] ${frozen._attr.source}`);
-                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失空缺', creator: frozen._attr.creator, action: '主動剔除向上補位', func: '量子退火感知', status: '已刪除' });
+                syncMessages.push(`[刪除] ${frozen._attr.source}`);
+                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
             }
         }
 
@@ -659,15 +661,15 @@ async function interceptAndRestructurePrompt(data) {
         }
 
         if (syncMessages.length > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
-            let dropText = cacheDrop > 0 ? `預測前端快取流失：<b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b><br><span style="font-size:11px; color:#aaa;">(後續序列必須在服務端重新建立)</span>` : `<span style="color:#00e5ff;">(末端異動無損前綴！快取保護完好)</span>`;
+            let dropText = cacheDrop > 0 ? `預估緩存流失率：<b style="color:#ff4444;">${cacheDrop.toFixed(2)}%</b><br><span style="font-size:11px; color:#aaa;">(斷點後的所有提示詞緩存已失效)</span>` : `<span style="color:#00e5ff;">(修改位於末端，緩存無損)</span>`;
             
             toastr.warning(
-                `<b style="font-size:14px;">⚠️ 量子糾纏校正協議介入</b><br><br>
+                `<b style="font-size:14px;">⚠️ 量子糾纏同步觸發</b><br><br>
                 ${syncMessages.join('<br>')}<br><br>
-                <b style="color:#ff4444;">斷層掃描警告：</b><br>
-                碎裂端起點：${breakNodeName || '無紀錄端點'}<br>
+                <b style="color:#ff4444;">前綴緩存已斷裂！</b><br>
+                斷點位置：${breakNodeName || '末端'}<br>
                 ${dropText}`, 
-                'DS Cache 絕對防禦矩陣', {timeOut: 10000, escapeHtml: false}
+                'DeepSeek 緩存優化器', {timeOut: 10000, escapeHtml: false}
             );
         }
 
@@ -695,23 +697,23 @@ async function interceptAndRestructurePrompt(data) {
         };
 
         if (isChat1) {
-            appendToFrozen(newDefault, '啟動加載', '根基預熱凍結', '靜態池構建(Initial)');
-            appendToFrozen(newLorebook, '引擎加載', '根基預熱凍結', '靜態池構建(Initial)');
-            appendToFrozen(newOther, '插件加載', '根基預熱凍結', '靜態池構建(Initial)');
-            appendToFrozen(allDynamic, '態生加載', '根基預熱凍結', '靜態池構建(Initial)');
-            appendToFrozen(newHistory, '序列載入', '史序凍結', '時空建構');
-            appendToFrozen(aiLastReply, '史末序列', '史序凍結', '時空建構');
-            appendToFrozen(currentUser, '觸發序列', '主鎖凍結', '最後屏障');
-            appendToFrozen(currentPrefill, '誘答序列', '引導凍結', '末端穿透');
+            appendToFrozen(newDefault, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(newLorebook, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(newOther, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(allDynamic, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(newHistory, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(aiLastReply, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話1)');
         } else {
-            appendToFrozen(newHistory, '進程推送', '尾置追加鎖定', '記憶堆疊擴展(Post)');
-            appendToFrozen(aiLastReply, '對答入史', '尾置追加鎖定', '記憶堆疊擴展(Post)');
-            appendToFrozen(newDefault, '規則注入', '順延凍結', '動態適應追加');
-            appendToFrozen(newLorebook, '概念解封', '順延凍結', '世界書增殖注入');
-            appendToFrozen(newOther, '擴展介入', '順延凍結', '模組額外追加');
-            appendToFrozen(allDynamic, '動態演算', '彈性封存', '變數量子追加');
-            appendToFrozen(currentUser, '實時流進', '最末壓實凍結', '前綴防爆護衛');
-            appendToFrozen(currentPrefill, '實時誘導', '最終誘爆鎖死', '穿刺末端建構');
+            appendToFrozen(newHistory, '新增', '追加凍結', '絕對凍結(對話2+)');
+            appendToFrozen(aiLastReply, '新增', '追加凍結', '絕對凍結(對話2+)');
+            appendToFrozen(newDefault, '新增', '追加凍結', '絕對凍結(對話2+)');
+            appendToFrozen(newLorebook, '新增', '追加凍結', '絕對凍結(對話2+)');
+            appendToFrozen(newOther, '新增', '追加凍結', '絕對凍結(對話2+)');
+            appendToFrozen(allDynamic, '新增', '鏡像追加', '絕對凍結(對話2+)');
+            appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話2+)');
+            appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話2+)');
         }
 
         state.frozenSequence = nextFrozen;
@@ -726,7 +728,7 @@ async function interceptAndRestructurePrompt(data) {
         }));
 
         if (Settings.logLevel >= LogLevels.DETAILED) {
-            let mdLog = `### 🛡️ 絕對防禦矩陣 V5 處理報告 (全息掃描與量子穿透)\n\n`;
+            let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (量子糾纏)\n\n`;
             mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
             mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
             
@@ -751,12 +753,12 @@ async function interceptAndRestructurePrompt(data) {
 
             Logger.write(mdLog, LogLevels.DETAILED);
         } else if (Settings.logLevel >= LogLevels.STANDARD) {
-            Logger.write(`✅ 快取護城河建立完畢。全效池容量: ${state.frozenSequence.length} 微區節點`, LogLevels.STANDARD);
+            Logger.write(`✅ 處理完成。凍結池: ${state.frozenSequence.length} 節點`, LogLevels.STANDARD);
         }
 
     } catch (err) {
-        console.error('[DS Cache] 高併發引擎死鎖:', err);
-        Logger.write(`❌ 量子引擎保護性斷火: ${err.message}`, LogLevels.BASIC);
+        console.error('[DS Cache] 攔截器發生錯誤:', err);
+        Logger.write(`❌ 攔截器發生錯誤: ${err.message}`, LogLevels.BASIC);
     }
 }
 
@@ -772,8 +774,8 @@ function addMenuEntry() {
     item.className = 'list-group-item flex-container flexGap5 interactable';
     item.tabIndex = 0;
     item.setAttribute('role', 'listitem');
-    item.title = '手動解封當前進程狀態並抹除快取記憶池';
-    item.innerHTML = `<div class="fa-fw fa-solid fa-rotate-left extensionsMenuExtensionButton"></div><span>抹除當前 DS 凍結池</span>`;
+    item.title = '重置當前聊天凍結池 (DeepSeek Cache)';
+    item.innerHTML = `<div class="fa-fw fa-solid fa-rotate-left extensionsMenuExtensionButton"></div><span>重置當前凍結池</span>`;
     
     item.addEventListener('click', () => {
         const menuEl = document.getElementById('extensionsMenu');
@@ -791,7 +793,7 @@ function renderChatsUI() {
     
     const keys = Object.keys(Settings.chats);
     if (keys.length === 0) {
-        container.append(`<div style="padding: 20px; text-align: center; color: #888; font-size: 13px;">伺服矩陣待機中...無任何接管狀態</div>`);
+        container.append(`<div style="padding: 20px; text-align: center; color: #888; font-size: 13px;">尚無接管的存檔數據</div>`);
         return;
     }
 
@@ -815,10 +817,10 @@ function renderChatsUI() {
             html += `
             <div class="ds-chat-item ${isCurrent ? 'ds-chat-current' : ''}">
                 <div class="ds-chat-info">
-                    <span class="ds-chat-name">${isCurrent ? '<i class="fa-solid fa-location-dot" style="color:#00e5ff; margin-right:4px;"></i>' : ''}全息態: ${chatName}</span>
-                    <span class="ds-chat-nodes">${c.frozenSequence.length} 防護節點</span>
+                    <span class="ds-chat-name">${isCurrent ? '<i class="fa-solid fa-location-dot" style="color:#00e5ff; margin-right:4px;"></i>' : ''}存檔: ${chatName}</span>
+                    <span class="ds-chat-nodes">${c.frozenSequence.length} 節點</span>
                 </div>
-                <button class="ds-icon-btn ds-delete-chat-btn" data-key="${c.key}" title="手動剝除防護節點並刷新"><i class="fa-solid fa-trash-can"></i></button>
+                <button class="ds-icon-btn ds-delete-chat-btn" data-key="${c.key}" title="清除此存檔的凍結池"><i class="fa-solid fa-trash-can"></i></button>
             </div>`;
         });
         html += `</div>`;
@@ -828,11 +830,11 @@ function renderChatsUI() {
 
     $('.ds-delete-chat-btn').on('click', function() {
         const key = $(this).data('key');
-        if (confirm('是否剝除該狀態的所有排列記憶節點？\n(提示詞將重新以ST格式組合)')) {
+        if (confirm('確定要清除此存檔的凍結池嗎？\n(這不會刪除你的聊天記錄，只會重置緩存排序)')) {
             delete Settings.chats[key];
             safeSave();
             renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success("防護記憶已從核心抹除");
+            if (typeof toastr !== 'undefined') toastr.success("已清除該存檔的凍結池");
         }
     });
 }
@@ -879,41 +881,41 @@ async function setupUI() {
     }
 
     const html = `
-    <div class="inline-drawer" id="ds-v5-opt-drawer">
+    <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦引擎 (V5 空間穿透版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9.1 全知真空穩定版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
             
             <div style="margin-bottom: 15px;">
-                ${createToggle('enabled', '🛡️ 快取硬鎖固態防護網', '遵守「只能後插絕不移位」原理，透過解算所有巨集強制封裝緩存結構點以適應V4 Cache Hit！', Settings.enabled)}
-                ${createToggle('instantNotify', '🔔 動態坍縮雷達彈窗', '前端感知有用戶改寫導致斷層流失機率變高時實時推送預警至ST！', Settings.instantNotify)}
+                ${createToggle('enabled', '🛡️ 啟用絕對不可變序列 (總開關)', '嚴格遵守「只追加不移位」的絕對規則，鎖定所有提示詞位置，實現接近 100% 的緩存命中率。', Settings.enabled)}
+                ${createToggle('instantNotify', '🔔 啟用量子糾纏即時提醒', '全自動感知用戶修改或刪除歷史訊息，並即時彈窗提醒該操作對緩存命中率的影響。', Settings.instantNotify)}
             </div>
 
             <div style="margin-bottom: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; display: flex; align-items: center; justify-content: space-between;">
-                <span style="font-size: 14px; font-weight: bold; color: #e0e0e0;">📝 觀測面板精密級別</span>
+                <span style="font-size: 14px; font-weight: bold; color: #e0e0e0;">📝 日誌輸出等級</span>
                 <select id="ds-opt-logLevel" class="text_pole" style="width: 150px; padding: 4px;">
-                    <option value="0" ${Settings.logLevel===0?'selected':''}>0: 全面禁默</option>
-                    <option value="1" ${Settings.logLevel===1?'selected':''}>1: 失誤截取</option>
-                    <option value="2" ${Settings.logLevel===2?'selected':''}>2: 成就標示</option>
-                    <option value="3" ${Settings.logLevel===3?'selected':''}>3: 全息 Markdown 清單</option>
-                    <option value="4" ${Settings.logLevel===4?'selected':''}>4: 核心深潛</option>
+                    <option value="0" ${Settings.logLevel===0?'selected':''}>0: 關閉</option>
+                    <option value="1" ${Settings.logLevel===1?'selected':''}>1: 基礎警告</option>
+                    <option value="2" ${Settings.logLevel===2?'selected':''}>2: 標準摘要</option>
+                    <option value="3" ${Settings.logLevel===3?'selected':''}>3: 全景 Markdown 表格</option>
+                    <option value="4" ${Settings.logLevel===4?'selected':''}>4: 極限除錯</option>
                 </select>
             </div>
             
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <b style="font-size: 13px; color: #aaa;">📂 全息狀態與記憶池監視列：</b>
-                <button id="ds-cache-factory-reset" class="ds-icon-btn" style="color: #ff4444; font-size: 12px;" title="實體熔斷"><i class="fa-solid fa-triangle-exclamation"></i> 矩陣重啟(核平)</button>
+                <b style="font-size: 13px; color: #aaa;">📂 存檔凍結池狀態：</b>
+                <button id="ds-cache-factory-reset" class="ds-icon-btn" style="color: #ff4444; font-size: 12px;" title="清空所有存檔"><i class="fa-solid fa-triangle-exclamation"></i> 全部清空</button>
             </div>
             <div id="ds-chat-list-container" style="max-height: 250px; overflow-y: auto; margin-bottom: 15px; padding-right: 5px;"></div>
             
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                <b style="font-size: 13px; color: #aaa;">📝 觀測成果(MD格式支持提取)：</b>
+                <b style="font-size: 13px; color: #aaa;">📝 全景 Markdown 日誌：</b>
                 <div>
-                    <button id="ds-log-copy" class="ds-icon-btn" title="提取複製"><i class="fa-solid fa-copy"></i></button>
-                    <button id="ds-log-export" class="ds-icon-btn" title="打包文件"><i class="fa-solid fa-download"></i></button>
-                    <button id="ds-log-clear" class="ds-icon-btn" title="清場"><i class="fa-solid fa-trash"></i></button>
+                    <button id="ds-log-copy" class="ds-icon-btn" title="複製日誌"><i class="fa-solid fa-copy"></i></button>
+                    <button id="ds-log-export" class="ds-icon-btn" title="導出 .md"><i class="fa-solid fa-download"></i></button>
+                    <button id="ds-log-clear" class="ds-icon-btn" title="清空日誌"><i class="fa-solid fa-trash"></i></button>
                 </div>
             </div>
             <div id="ds-cache-log-viewer" style="width: 100%; height: 350px; background: #0d0d0d; color: #e0e0e0; font-family: Consolas, monospace; font-size: 12px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px solid rgba(255,255,255,0.1); white-space: nowrap;"></div>
@@ -928,7 +930,7 @@ async function setupUI() {
     $('#ds-opt-logLevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
     
     $('#ds-cache-factory-reset').on('click', () => { 
-        if (confirm("🚨核爆警告🚨這將讓現有建立起的所有排序化成灰燼並全毀！您確定嗎？")) { 
+        if (confirm("⚠️ 警告：這將摧毀所有角色卡、所有存檔的快取連續性！確定要全部清除嗎？")) { 
             Settings.chats = {}; safeSave(); renderChatsUI(); 
         } 
     });
@@ -955,8 +957,8 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V5.0.0 量子穿透穩定版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.9.1 全知真空穩定版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
-        console.error('[DS Cache] 模組開局引線脫落:', e);
+        console.error('[DS Cache] 插件啟動崩潰:', e);
     }
 });
