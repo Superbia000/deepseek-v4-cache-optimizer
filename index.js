@@ -134,7 +134,7 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t\u200B\u200C\u200D\uFEFF]/g, '').trim();
     },
 
-    // 🌟 全知吸塵器：升級版 AST 結構感知算法
+    // 🌟 全知吸塵器：掃描記憶體節點的所有字串基元，加入高精度原生結構剖析
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
@@ -153,40 +153,63 @@ const CoreEngine = {
             if (chatId && window.chats && window.chats[chatId]) chatMeta = window.chats[chatId];
         } catch(e) {}
 
+        // ==========================================
+        // 🚀 高精度提取階段 (結構感知：精確抓取名稱)
+        // ==========================================
+        
+        // 1. 深度解析 ST Prompt Manager (完美對應圖1：擴展與預設提示詞)
+        try {
+            if (window.extension_settings?.prompt_manager?.prompts) {
+                let pmPrompts = window.extension_settings.prompt_manager.prompts;
+                if (Array.isArray(pmPrompts)) {
+                    for (let p of pmPrompts) {
+                        if (p.content && typeof p.content === 'string') {
+                            let norm = CoreEngine.normalize(p.content);
+                            // 精確提取 UI 真實名稱 (如: 🔪大清洗)
+                            let realName = p.name || p.identifier || '無名';
+                            addToIndex(norm, '預設', `提示詞(${realName})`, 'system', 'DEFAULT');
+                        }
+                    }
+                }
+            }
+        } catch(e) { console.warn("[DS Cache] 解析 Prompt Manager 失敗", e); }
+
+        // 2. 深度解析 ST 世界書 / Lorebooks (完美對應圖2、圖3)
+        try {
+            // ST1.18.0 標準全域世界書容器
+            if (typeof window.world_info_data === 'object' && window.world_info_data !== null) {
+                for (let bookName in window.world_info_data) {
+                    let book = window.world_info_data[bookName];
+                    if (book && book.entries && typeof book.entries === 'object') {
+                        for (let uid in book.entries) {
+                            let entry = book.entries[uid];
+                            if (entry.content && typeof entry.content === 'string') {
+                                let norm = CoreEngine.normalize(entry.content);
+                                // 精確提取 條目真實名稱(UI中的"名稱/備註")，如果沒設定則取用Key
+                                let entryRealName = entry.comment || (Array.isArray(entry.key) ? entry.key.join(',') : uid);
+                                // 組合世界書名與條目名，納入陣列計算
+                                addToIndex(norm, '世界書', `世界書(${bookName} - ${entryRealName})`, '世界書系統', 'LOREBOOK');
+                            }
+                        }
+                    }
+                }
+            }
+        } catch(e) { console.warn("[DS Cache] 解析 World Info 失敗", e); }
+
+        // ==========================================
+        // 🧲 廣度兜底階段 ( Deep Crawl 防禦性遍歷 )
+        // ==========================================
         const Roots = {
             '核心設定': window.settings || {},
             '擴展設定': window.extension_settings || {},
-            '全域世界書': window.world_info || {},
-            '提示詞管理': window.prompt_manager || {},
+            '全域世界書': window.world_info || {}, // 給舊版數據或未知資料集備用
             '角色卡': activeChar,
             '聊天元數據': chatMeta
         };
 
-        // 遞迴遍歷：攜帶 contextMeta 以感知上下層級的名稱與屬性
-        const deepCrawl = (obj, path, depth, visited, contextMeta) => {
-            if (depth > 20 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
+        const deepCrawl = (obj, path, depth, visited) => {
+            if (depth > 15 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
-
-            let currentMeta = { ...contextMeta }; // 克隆避免污染兄弟節點
-
-            // 🌟 深度識別 1：世界書母體 (Lorebook Book)
-            if (obj.name && (obj.entries || obj.world_info || typeof obj.entries === 'object')) {
-                currentMeta.bookName = obj.name;
-            }
-
-            // 🌟 深度識別 2：世界書條目 (Lorebook Entry)
-            if (obj.uid !== undefined && (obj.comment !== undefined || obj.key !== undefined)) {
-                currentMeta.isLorebook = true;
-                // 優先提取 comment(UI名稱)，其次提取關鍵字，最後 fallback 為 UID
-                currentMeta.entryName = obj.comment || (obj.key && obj.key.length ? obj.key.join(',') : '') || `UID:${obj.uid}`;
-            }
-
-            // 🌟 深度識別 3：預設提示詞 / UI提示詞卡片 (Prompt Manager Entry)
-            if (obj.name && typeof obj.name === 'string' && obj.content !== undefined && !currentMeta.isLorebook) {
-                currentMeta.isPrompt = true;
-                currentMeta.promptName = obj.name;
-                currentMeta.role = obj.role ? obj.role.toLowerCase() : 'system'; 
-            }
 
             for (let key in obj) {
                 try {
@@ -198,46 +221,55 @@ const CoreEngine = {
                         let norm = CoreEngine.normalize(val);
                         if (seenNorms.has(norm)) continue;
 
-                        let cat = '預設';
-                        let creator = 'ST核心';
-                        let sourceName = `預設提示詞(無名)`;
-                        let type = 'DEFAULT';
+                        let cat = '預設', creator = 'ST核心', type = 'DEFAULT', sourceName = currentPath;
 
-                        // 判斷該字符串的真實所屬身份
-                        if (currentMeta.isLorebook) {
-                            cat = '世界書';
-                            let bName = currentMeta.bookName || '未知世界書';
-                            sourceName = `提示詞(${bName} - ${currentMeta.entryName})`;
-                            creator = '世界書';
-                            type = 'LOREBOOK';
-                        } else if (currentMeta.isPrompt) {
-                            cat = '預設';
-                            creator = currentMeta.role === 'user' ? '用戶' : 'system'; // 對齊日誌要求
-                            sourceName = `提示詞(${currentMeta.promptName})`;
-                            type = 'DEFAULT';
+                        if (currentPath.includes('world_info') || currentPath.includes('character_book') || currentPath.includes('entries')) {
+                            cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
+                            let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
+                            if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(',');
+                            sourceName = `世界書(${entryName})`;
                         } else if (currentPath.includes('authors_note')) {
-                            cat = '其他插件'; creator = '用戶'; sourceName = `作者備註(Author's Note)`; type = 'OTHER_PLUGIN';
-                        } else if (currentPath.includes('scenario') || currentPath.includes('story_string')) {
-                            cat = '角色'; creator = '設定'; sourceName = `故事背景(Scenario)`; type = 'CHAR';
-                        } else if (key === 'content' && obj.name) {
-                            creator = obj.role || 'system';
-                            sourceName = `提示詞(${obj.name})`;
+                            cat = '其他插件'; creator = '用戶(A/N)'; type = 'OTHER_PLUGIN';
+                            sourceName = `提示詞(Author's Note)`;
+                        } else if (currentPath.includes('jailbreak')) {
+                            sourceName = `提示詞(Jailbreak)`;
+                            creator = 'system';
+                        } else if (currentPath.includes('post_history')) {
+                            sourceName = `提示詞(Post-History)`;
+                            creator = 'system';
+                        } else if (currentPath.includes('pre_history')) {
+                            sourceName = `提示詞(Pre-History)`;
+                            creator = 'system';
+                        } else if (currentPath.includes('story_string') || currentPath.includes('scenario')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `提示詞(Scenario/Story)`;
+                        } else if (currentPath.includes('personality')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `提示詞(Personality)`;
+                        } else if (currentPath.includes('description')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `提示詞(Description)`;
+                        } else if (currentPath.includes('first_mes')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `提示詞(First Mes)`;
+                        } else if (obj.name || obj.identifier) {
+                            cat = '預設'; creator = 'system'; type = 'DEFAULT';
+                            sourceName = `提示詞(${obj.name || obj.identifier})`;
                         } else {
-                            let rootPrefix = path.split('.')[0] || '未知';
-                            if (!sourceName.includes('(')) sourceName = `${rootPrefix}(${key})`;
+                            sourceName = `預設提示詞(無名)`;
                         }
 
                         addToIndex(norm, cat, sourceName, creator, type);
                     } 
                     else if (typeof val === 'object' && val !== null && !(val instanceof Element)) {
-                        deepCrawl(val, currentPath, depth + 1, visited, currentMeta);
+                        deepCrawl(val, currentPath, depth + 1, visited);
                     }
                 } catch(e) {}
             }
         };
 
         for (let rootName in Roots) {
-            deepCrawl(Roots[rootName], rootName, 0, new Set(), {});
+            deepCrawl(Roots[rootName], rootName, 0, new Set());
         }
     },
 
@@ -262,32 +294,23 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 🌟 雙向無損判定與最大長度包含匹配 (量子重疊演算法升級版)
+    // 雙向無損判定與量子重疊演算法
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 5) return null;
         
-        // 1. 絕對精確匹配
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 2. 包含匹配 (處理 ST 的拼接與截斷) -> 尋找涵蓋面積最大的提示詞母體
-        let bestDirectMatch = null;
-        let maxLen = 0;
+        // ST 黏合現象 與 碎屍/截斷現象 檢查
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
             if (idxContent.length > 10 && normContent.length > 10) {
-                if (normContent.includes(idxContent) || idxContent.includes(normContent)) {
-                    if (idxContent.length > maxLen) {
-                        maxLen = idxContent.length;
-                        bestDirectMatch = CoreEngine.promptIndex[i];
-                    }
-                }
+                if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
+                if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
-        if (bestDirectMatch) return bestDirectMatch;
         
-        // 3. 模糊匹配 (防禦格式微調造成的破壞)
         let bestMatch = null;
         let bestScore = 0;
 
@@ -296,7 +319,6 @@ const CoreEngine = {
             if (idxContent.length > 10 && normContent.length > 10) {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
-                
                 let score = overlap * 0.85 + lenRatio * 0.15;
                 if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
                     bestScore = score;
@@ -338,13 +360,15 @@ const CoreEngine = {
                 window.substituteParamsExtended = hook(window._ds_orig_substituteParamsExtended);
             }
         } catch (e) {
-            console.error("[DS Cache] 劫持 ST 宏引擎失敗:", e);
+            console.error("[DS Cache] 劫持 ST 巨集引擎失敗:", e);
         }
     },
 
+    // 將攔截的 Payload 即時標記與歸類，對齊日誌所期望的格式
     classify: (msg, structuralTag, isDynamic) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
 
+        // 使用者聊天與上下文定位
         if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
         if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
         if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI上一次回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
@@ -352,8 +376,9 @@ const CoreEngine = {
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
-        let matchedIndex = CoreEngine.findInIndex(normContent);
         
+        // 進入已由 buildIndex 剖析好的無損陣列進行量子定位
+        let matchedIndex = CoreEngine.findInIndex(normContent);
         if (matchedIndex) {
             if (isDynamic) {
                 return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
@@ -361,13 +386,21 @@ const CoreEngine = {
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        if (isDynamic) {
-            return { cat: '動態', source: '動態提示詞', creator: 'ST核心', type: 'DYNAMIC' };
-        }
+        // =======================
+        // 以下為 ST 注入不明 Payload 或緩存丟失時的智慧降級判斷
+        // =======================
+        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
 
-        // 終極降級處理 (通常 AST 已完全捕獲，此處僅作為防禦)
         let name = msg.name ? msg.name.toLowerCase() : '';
-        if (name) {
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
+
+        // 防漏抓：如果封包自身攜帶了 ST 原裝注入的提示詞變數名稱
+        if (msg.name && msg.name !== 'system') {
+            if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
+                const match = msg.name.match(/\((.*?)\)/);
+                const entryName = match ? match[1] : msg.name;
+                return { cat: '世界書', source: `世界書(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+            }
             return { cat: '預設', source: `提示詞(${msg.name})`, creator: 'system', type: 'DEFAULT' };
         }
 
