@@ -133,14 +133,13 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t\u200B\u200C\u200D\uFEFF]/g, '').trim();
     },
 
-    // 🌟 全知吸塵器：掃描 6 大記憶體根節點的所有字串基元 (經深度思考強化)
+    // 🌟 全知吸塵器：掃描 6 大記憶體根節點的所有字串基元
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            // 【修復】將最小擷取長度由 5 下調為 2，以捕獲短字串如 "極重度綠帽奴" 或 "1111"
-            if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
+            if (!norm || norm.length < 5 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
@@ -153,82 +152,18 @@ const CoreEngine = {
             if (chatId && window.chats && window.chats[chatId]) chatMeta = window.chats[chatId];
         } catch(e) {}
 
-        // ========================================================
-        // 🎯 階段一：精準標靶提取 (Targeted Extraction for ST 1.18.0)
-        // ========================================================
-        
-        // 1. 精準提取: Prompt Manager (提示詞管理器)
-        try {
-            let prompts = window.extension_settings?.prompt_manager?.prompts || window.prompt_manager?.prompts || [];
-            if (Array.isArray(prompts)) {
-                prompts.forEach(p => {
-                    if (p.content) {
-                        let pName = p.name || p.identifier || "未命名";
-                        addToIndex(CoreEngine.normalize(p.content), '預設', `提示詞(${pName})`, 'ST核心', 'DEFAULT');
-                    }
-                });
-            }
-        } catch (e) {}
-
-        // 2. 精準提取: 世界書/Lorebooks (包含全局與當前啟用)
-        try {
-            // 掃描 window.world_info_data (ST 新版完整加載的世界書庫)
-            if (window.world_info_data) {
-                for (let bookName in window.world_info_data) {
-                    let book = window.world_info_data[bookName];
-                    if (book && book.entries) {
-                        for (let uid in book.entries) {
-                            let entry = book.entries[uid];
-                            if (entry.content) {
-                                let entryName = entry.comment || entry.name || (entry.key ? entry.key.join(',') : uid);
-                                // 提取格式：世界書[書名] - 條目名
-                                addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[${bookName}] - 條目(${entryName})`, '世界書系統', 'LOREBOOK');
-                            }
-                        }
-                    }
-                }
-            }
-            // 掃描 window.world_info.entries (ST 當前啟用的條目緩存)
-            if (window.world_info && window.world_info.entries) {
-                for (let uid in window.world_info.entries) {
-                    let entry = window.world_info.entries[uid];
-                    if (entry.content) {
-                        let entryName = entry.comment || entry.name || (entry.key ? entry.key.join(',') : uid);
-                        let bookName = entry.book || "全局/未知世界書";
-                        addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[${bookName}] - 條目(${entryName})`, '世界書系統', 'LOREBOOK');
-                    }
-                }
-            }
-        } catch (e) {}
-
-        // 3. 精準提取: Persona (用戶角色，解決28號問題)
-        try {
-            if (window.settings?.persona_description) {
-                addToIndex(CoreEngine.normalize(window.settings.persona_description), '用戶', `用戶角色(Persona)`, '用戶', 'USER_PERSONA');
-            }
-            // 匹配當前選中的 persona
-            let personaUid = window.settings?.persona_uid;
-            if (personaUid && window.characters && window.characters.length > 0) {
-                let persona = window.characters.find(c => c.avatar === personaUid);
-                if (persona && persona.description) {
-                    addToIndex(CoreEngine.normalize(persona.description), '用戶', `用戶角色(${persona.name || 'Persona'})`, '用戶', 'USER_PERSONA');
-                }
-            }
-        } catch (e) {}
-
-
-        // ========================================================
-        // 🌌 階段二：全域無腦深爬 (Fallback Deep Crawl)
-        // ========================================================
         const Roots = {
             '核心設定': window.settings || {},
             '擴展設定': window.extension_settings || {},
-            '全域世界書': window.world_info || {}, // 保底掃描
+            '全域世界書': window.world_info || {},
+            '提示詞管理': window.prompt_manager || {},
             '角色卡': activeChar,
             '聊天元數據': chatMeta
         };
 
+        // 遞迴遍歷物件，吸取所有字串
         const deepCrawl = (obj, path, depth, visited) => {
+            // 防止循環參照與過深遞迴
             if (depth > 15 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
@@ -238,13 +173,14 @@ const CoreEngine = {
                     let val = obj[key];
                     let currentPath = path ? `${path}.${key}` : key;
 
-                    if (typeof val === 'string' && val.trim().length > 2) { // 同樣下調至 2
+                    if (typeof val === 'string' && val.trim().length > 5) {
                         let norm = CoreEngine.normalize(val);
-                        if (seenNorms.has(norm)) continue; // 已經被階段一精準捕獲的，這裡會直接跳過
+                        if (seenNorms.has(norm)) continue;
 
                         let cat = '預設', creator = 'ST系統', type = 'DEFAULT', sourceName = currentPath;
 
-                        if (currentPath.includes('world_info') || currentPath.includes('entries')) {
+                        // 🌟 智能路徑命名法：根據字串被發現的位置自動賦予身分
+                        if (currentPath.includes('world_info') || currentPath.includes('character_book') || currentPath.includes('entries')) {
                             cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
                             let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
                             if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(',');
@@ -314,19 +250,22 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 🌟 雙向無損判定與量子重疊演算法
+    // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段的發送機制)
     findInIndex: (normContent) => {
-        if (!normContent || normContent.length < 2) return null; // 支援短文本匹配
+        if (!normContent || normContent.length < 5) return null;
         
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 🌟 核心突破：如果 ST 把一整段字串切成了 4 塊，或者黏成一塊，依然能捕捉
+        // 🌟 核心突破：如果 ST 把一整段字串切成了 4 塊 (如 35-38 條)，或者把多段字串黏成一塊 (如 54, 55 條)
+        // 只要發生包含關係，就能精準溯源！
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length > 5 && normContent.length > 5) { // 包含判斷僅在一定長度上生效避免誤判
+            if (idxContent.length > 10 && normContent.length > 10) {
+                // ST 輸出的字串包含了記憶體中的母體 (黏合現象)
                 if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
+                // 記憶體中的母體包含了 ST 輸出的字串 (碎屍/截斷現象)
                 if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
@@ -408,7 +347,6 @@ const CoreEngine = {
             return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
-        // 後備命名策略
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
@@ -585,6 +523,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._isDynamic) continue;
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
+                // 這裡修復了調用錯誤，將 CoreEngine.getSimilarity 替換為 CoreEngine.getOverlapRatio
                 let sim = CoreEngine.getOverlapRatio(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
@@ -763,7 +702,7 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 🌟 UI 渲染與設置
+// 🌟 UI 渲染與設置 (重構與美化)
 // ==========================================
 function addMenuEntry() {
     const menu = document.getElementById('extensionsMenu');
