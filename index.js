@@ -121,7 +121,7 @@ function resetCurrentChatCache() {
 }
 
 // ==========================================
-// 🛡️ 核心引擎：全域基元真空吸取 (The Omniscient Vacuum)
+// 🛡️ 核心引擎：全域基元真空透視 (The Omniscient X-Ray)
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
@@ -129,110 +129,105 @@ const CoreEngine = {
 
     normalize: (text) => {
         if (!text) return '';
-        // 增強型容錯：若傳入非字串(如多模態陣列)，安全轉換為 JSON 字串
-        if (typeof text !== 'string') {
-            try { text = JSON.stringify(text); } catch(e) { return ''; }
-        }
-        // 極限過濾：移除所有空白、換行、Tab 與不可見字元，實現 100% 絕對文本匹配
         return text.replace(/[\s\n\r\t\u200B\u200C\u200D\uFEFF]/g, '').trim();
     },
 
-    // 🌟 全知吸塵器：掃描 8 大記憶體根節點的所有字串基元
+    // 🌟 全知透視：擴展至 9 大記憶體根節點，無死角掃描
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            // 閾值降至 4，確保能捕捉到短設定，如「極重度綠帽奴」
+            // 門檻下調至 4，確保能抓到極短的 Persona 或 Story String
             if (!norm || norm.length < 4 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
         const context = getContext();
-        // 🌟 核心突破：直接獲取所有加載的角色卡，防止錯過綁定在其他角色身上的全局世界書！
-        let allChars = context?.characters || window.characters || [];
+        let activeChar = context?.characters?.[context?.characterId] || {};
         let chatMeta = {};
         try {
             let chatId = context?.chatId;
             if (chatId && window.chats && window.chats[chatId]) chatMeta = window.chats[chatId];
         } catch(e) {}
 
+        // 🌟 擴展根節點：加入 power_user, personas, characters
         const Roots = {
             '核心設定': window.settings || {},
+            '進階設定': window.power_user || {}, 
             '擴展設定': window.extension_settings || {},
             '全域世界書': window.world_info || {},
             '提示詞管理': window.prompt_manager || {},
-            '用戶高級設定': window.power_user || {}, // 捕捉隱藏的 Persona
-            '用戶身份庫': window.personas || {}, // 捕捉所有切換過的 Persona
-            '所有角色卡': allChars, // 捕捉所有角色卡內的專屬世界書與設定
+            '當前角色': activeChar,
+            '所有角色': window.characters || [],
+            '用戶設定': window.personas || {},
             '聊天元數據': chatMeta
         };
 
-        // 遞迴遍歷物件，吸取所有字串
         const deepCrawl = (obj, path, depth, visited) => {
-            // 防止循環參照與過深遞迴
             if (depth > 15 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
-            let keys = Object.keys(obj);
-            for (let i = 0; i < keys.length; i++) {
-                let key = keys[i];
+            for (let key in obj) {
                 try {
+                    if (!obj.hasOwnProperty(key)) continue;
                     let val = obj[key];
                     let currentPath = path ? `${path}.${key}` : key;
 
-                    if (typeof val === 'string') {
-                        let trimmed = val.trim();
-                        if (trimmed.length >= 4) {
-                            let norm = CoreEngine.normalize(trimmed);
-                            if (!seenNorms.has(norm)) {
-                                let cat = '預設', creator = 'ST系統', type = 'DEFAULT', sourceName = currentPath;
-                                let lowerPath = currentPath.toLowerCase();
+                    if (typeof val === 'string' && val.trim().length > 4) {
+                        let norm = CoreEngine.normalize(val);
+                        if (seenNorms.has(norm)) continue;
 
-                                // 🌟 智能路徑命名法：根據字串被發現的位置自動賦予身分
-                                if (lowerPath.includes('world_info') || lowerPath.includes('character_book') || lowerPath.includes('entries') || lowerPath.includes('lorebook')) {
-                                    cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
-                                    let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
-                                    if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(',');
-                                    sourceName = `世界書(${entryName})`;
-                                } else if (lowerPath.includes('persona') || lowerPath.includes('user_desc') || lowerPath.includes('name1')) {
-                                    cat = '用戶'; creator = '用戶設定'; type = 'DEFAULT';
-                                    let pName = obj.name || obj.persona_name || 'Persona';
-                                    sourceName = `用戶設定(${pName})`;
-                                } else if (lowerPath.includes('authors_note')) {
-                                    cat = '其他插件'; creator = '用戶(A/N)'; type = 'OTHER_PLUGIN';
-                                    sourceName = `作者備註(Author's Note)`;
-                                } else if (lowerPath.includes('jailbreak')) {
-                                    sourceName = `越獄提示詞(Jailbreak)`;
-                                } else if (lowerPath.includes('post_history')) {
-                                    sourceName = `後置提示詞(Post-History)`;
-                                } else if (lowerPath.includes('pre_history')) {
-                                    sourceName = `前置提示詞(Pre-History)`;
-                                } else if (lowerPath.includes('story_string') || lowerPath.includes('scenario')) {
-                                    cat = '角色'; creator = '設定';
-                                    sourceName = `故事背景(Scenario/Story)`;
-                                } else if (lowerPath.includes('personality')) {
-                                    cat = '角色'; creator = '設定';
-                                    sourceName = `性格(Personality)`;
-                                } else if (lowerPath.includes('description')) {
-                                    cat = '角色'; creator = '設定';
-                                    sourceName = `描述(Description)`;
-                                } else if (lowerPath.includes('first_mes')) {
-                                    cat = '角色'; creator = '設定';
-                                    sourceName = `初次對話(First Mes)`;
-                                } else if (obj.name || obj.identifier) {
-                                    sourceName = `提示詞(${obj.name || obj.identifier})`;
-                                } else {
-                                    let rootPrefix = path.split('.')[0] || '未知';
-                                    if (!sourceName.includes(rootPrefix) && !sourceName.includes('(')) {
-                                        sourceName = `${rootPrefix}(${key})`;
-                                    }
-                                }
+                        let cat = '預設', creator = 'ST系統', type = 'DEFAULT', sourceName = currentPath;
 
-                                addToIndex(norm, cat, sourceName, creator, type);
+                        // 🌟 智能路徑命名法升級
+                        if (currentPath.includes('world_info') || currentPath.includes('character_book') || currentPath.includes('entries')) {
+                            cat = '世界書'; creator = '世界書系統'; type = 'LOREBOOK';
+                            let entryName = obj.comment || obj.name || obj.title || obj.uid || key;
+                            if (Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(',');
+                            sourceName = `世界書(${entryName})`;
+                        } else if (currentPath.includes('persona')) {
+                            cat = '用戶'; creator = '用戶設定'; type = 'DEFAULT';
+                            sourceName = `用戶角色(Persona)`;
+                        } else if (currentPath.includes('authors_note')) {
+                            cat = '其他插件'; creator = '用戶(A/N)'; type = 'OTHER_PLUGIN';
+                            sourceName = `作者備註(Author's Note)`;
+                        } else if (currentPath.includes('jailbreak')) {
+                            sourceName = `越獄提示詞(Jailbreak)`;
+                        } else if (currentPath.includes('post_history')) {
+                            sourceName = `後置提示詞(Post-History)`;
+                        } else if (currentPath.includes('pre_history')) {
+                            sourceName = `前置提示詞(Pre-History)`;
+                        } else if (currentPath.includes('story_string') || currentPath.includes('scenario')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `故事背景(Scenario/Story)`;
+                        } else if (currentPath.includes('personality')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `性格(Personality)`;
+                        } else if (currentPath.includes('description')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `描述(Description)`;
+                        } else if (currentPath.includes('first_mes')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `初次對話(First Mes)`;
+                        } else if (currentPath.includes('mes_example')) {
+                            cat = '角色'; creator = '設定';
+                            sourceName = `對話範例(Mes Example)`;
+                        } else if (currentPath.includes('system_prompt') || currentPath.includes('main_prompt')) {
+                            sourceName = `主提示詞(Main Prompt)`;
+                        } else if (currentPath.includes('nsfw_prompt')) {
+                            sourceName = `NSFW提示詞`;
+                        } else if (obj.name || obj.identifier) {
+                            sourceName = `提示詞(${obj.name || obj.identifier})`;
+                        } else {
+                            let rootPrefix = path.split('.')[0] || '未知';
+                            if (!sourceName.includes(rootPrefix) && !sourceName.includes('(')) {
+                                sourceName = `${rootPrefix}(${key})`;
                             }
                         }
+
+                        addToIndex(norm, cat, sourceName, creator, type);
                     } 
                     else if (typeof val === 'object' && val !== null && !(val instanceof Element)) {
                         deepCrawl(val, currentPath, depth + 1, visited);
@@ -267,37 +262,47 @@ const CoreEngine = {
         return intersect / smaller.size; 
     },
 
-    // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段的發送機制)
+    // 🌟 雙向無損判定與量子重疊演算法 (破解 ST 碎屍萬段與巨集替換)
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 4) return null;
         
+        // 1. 完美比對
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 🌟 核心突破：如果 ST 把一整段字串切成了 4 塊 (如 35-38 條)，或者把多段字串黏成一塊 (如 54, 55 條)
-        // 只要發生包含關係，就能精準溯源！閾值降為 4，完美捕捉短設定。
+        // 2. 雙向包含比對 (門檻下調至 5)
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length >= 4 && normContent.length >= 4) {
+            if (idxContent.length >= 5 && normContent.length >= 5) {
                 if (normContent.includes(idxContent)) return CoreEngine.promptIndex[i];
                 if (idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
             }
         }
         
+        // 3. 量子重疊率比對 (高重疊率免死金牌)
         let bestMatch = null;
         let bestScore = 0;
 
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length >= 4 && normContent.length >= 4) {
+            if (idxContent.length >= 5 && normContent.length >= 5) {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
                 
-                let score = overlap * 0.85 + lenRatio * 0.15;
-                if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
-                    bestScore = score;
-                    bestMatch = CoreEngine.promptIndex[i];
+                // 🌟 免死金牌：如果碎片與母體重疊率極高(>=0.85)，無視長度差異直接認可 (解決 XML 碎屍與巨集替換)
+                if (overlap >= 0.85) {
+                    let score = overlap + lenRatio * 0.1; 
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMatch = CoreEngine.promptIndex[i];
+                    }
+                } else {
+                    let score = overlap * 0.8 + lenRatio * 0.2;
+                    if (overlap >= 0.65 && score > bestScore && score >= 0.65) {
+                        bestScore = score;
+                        bestMatch = CoreEngine.promptIndex[i];
+                    }
                 }
             }
         }
@@ -363,7 +368,7 @@ const CoreEngine = {
         }
 
         let name = msg.name ? msg.name.toLowerCase() : '';
-        let contentLower = msg.content ? (typeof msg.content === 'string' ? msg.content.toLowerCase() : '') : '';
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
@@ -447,7 +452,7 @@ async function interceptAndRestructurePrompt(data) {
         let userCurrentText = "";
         for (let i = 0; i < incomingStream.length; i++) {
             if (structuralMap[i] === 'USER_CURRENT') {
-                userCurrentText = typeof incomingStream[i].content === 'string' ? incomingStream[i].content.trim() : '';
+                userCurrentText = incomingStream[i].content.trim();
                 break;
             }
         }
@@ -459,7 +464,7 @@ async function interceptAndRestructurePrompt(data) {
             msg._origTemplate = CoreEngine.macroMap.get(msg._norm) || msg._norm;
 
             let isDynamic = false;
-            if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && typeof msg.content === 'string' && msg.content.includes(userCurrentText)) {
+            if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && msg.content.includes(userCurrentText)) {
                 isDynamic = true;
             } else if (msg._origTemplate.includes('{{') && msg._origTemplate.includes('}}')) {
                 if (!state.promptTracker[msg._origTemplate]) {
@@ -559,7 +564,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + (typeof m.content === 'string' ? m.content.length : 10), 0) || 1;
+        let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
         let currentValidLength = 0;
         let firstBreakIndex = -1; 
         let breakNodeName = "";
@@ -581,7 +586,7 @@ async function interceptAndRestructurePrompt(data) {
                 let matched = incomingPool[matchIdx];
                 if (frozen._norm === matched._norm) {
                     nextFrozen.push(frozen);
-                    if (firstBreakIndex === -1) currentValidLength += (typeof frozen.content === 'string' ? frozen.content.length : 10);
+                    if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 } else {
                     if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
@@ -599,7 +604,7 @@ async function interceptAndRestructurePrompt(data) {
                 }
             } else if (frozen._isDynamic) {
                 nextFrozen.push(frozen);
-                if (firstBreakIndex === -1) currentValidLength += (typeof frozen.content === 'string' ? frozen.content.length : 10);
+                if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
             } else {
                 if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
@@ -701,8 +706,7 @@ async function interceptAndRestructurePrompt(data) {
             });
 
             ledger.forEach(l => {
-                let contentStr = typeof l.ref.content === 'string' ? l.ref.content : JSON.stringify(l.ref.content);
-                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(contentStr)} |\n`;
+                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
             });
 
             Logger.write(mdLog, LogLevels.DETAILED);
@@ -837,7 +841,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9.2 全知真空終極版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.9.2 全知真空透視版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -911,7 +915,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V36.9.2 全知真空終極版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.9.2 全知真空透視版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
