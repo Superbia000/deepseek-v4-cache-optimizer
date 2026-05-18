@@ -132,134 +132,71 @@ const CoreEngine = {
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
-    // 🌟 終極真理掃描：不僅深掃，更主動直取 ST 隱藏變數與角色卡結構
+    // 🌟 終極內存暴風掃描：無視 ST 版本與路徑，直接抓取特徵結構
     buildIndex: () => {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
-            if (!norm || norm.length < 5 || seenNorms.has(norm)) return;
+            if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
             CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
         };
 
-        // 1. 直取 ST 核心隱藏字串 (完美解決 User Persona 與 Post-History 隱藏問題)
-        if (window.settings) {
-            const coreFields = {
-                'persona_description': `用戶設定(${window.name1 || 'User'})`,
-                'jailbreak_prompt': '越獄提示詞(Jailbreak)',
-                'main_prompt': '主提示詞(Main)',
-                'nsfw_prompt': 'NSFW 提示詞',
-                'story_string': '故事字串(Story String)',
-                'authors_note': "作者備註(Author's Note)",
-                'post_history_instructions': '後置提示詞(Post-History)',
-                'pre_history_instructions': '前置提示詞(Pre-History)',
-                'system_prompt': '系統提示詞(System)'
-            };
-            
-            for (let key in coreFields) {
-                if (window.settings[key] && typeof window.settings[key] === 'string') {
-                    let cat = key === 'persona_description' ? '用戶' : '預設';
-                    let creator = key === 'persona_description' ? '用戶' : 'ST核心';
-                    addToIndex(CoreEngine.normalize(window.settings[key]), cat, coreFields[key], creator, 'DEFAULT');
-                }
-            }
-
-            // 掃描 Instruct Mode 的潛藏 Preset (如 # RULE 等設定)
-            if (window.settings.instruct) {
-                for (let k in window.settings.instruct) {
-                    if (typeof window.settings.instruct[k] === 'string' && window.settings.instruct[k].length > 5) {
-                        addToIndex(CoreEngine.normalize(window.settings.instruct[k]), '預設', `指令預設(${k})`, 'ST核心(Instruct)', 'DEFAULT');
-                    }
-                }
-            }
-        }
-
-        // 2. 貫穿所有角色卡記憶體 (解決角色專屬設定)
-        const context = getContext();
-        if (context && context.characters) {
-            for (let i = 0; i < context.characters.length; i++) {
-                let char = context.characters[i];
-                if (!char) continue;
-                
-                if (char.description) addToIndex(CoreEngine.normalize(char.description), '角色', `設定(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.personality) addToIndex(CoreEngine.normalize(char.personality), '角色', `性格(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.scenario) addToIndex(CoreEngine.normalize(char.scenario), '角色', `場景(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.creator_notes) addToIndex(CoreEngine.normalize(char.creator_notes), '角色', `作者備註(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.system_prompt) addToIndex(CoreEngine.normalize(char.system_prompt), '角色', `專屬系統提示(${char.name})`, '角色卡', 'DEFAULT');
-                if (char.post_history_instructions) addToIndex(CoreEngine.normalize(char.post_history_instructions), '角色', `專屬Post-History(${char.name})`, '角色卡', 'DEFAULT');
-                
-                try {
-                    let charBook = char.data?.character_book?.entries || char.character_book?.entries;
-                    if (charBook) {
-                        let entryList = Array.isArray(charBook) ? charBook : Object.values(charBook);
-                        entryList.forEach(entry => {
-                            if (entry && entry.content) {
-                                let entryName = entry.comment || entry.name || (Array.isArray(entry.key) ? entry.key.join(', ') : '未命名');
-                                addToIndex(CoreEngine.normalize(entry.content), '世界書', `專屬世界書[${char.name}] - ${entryName}`, '角色卡', 'LOREBOOK');
-                            }
-                        });
-                    }
-                } catch(e){}
-            }
-        }
-
-        // 3. 全局世界書精準提取 (完美解決 30,31,34-38 無法識別的問題)
-        const extractWorldInfo = (wiRoot, label) => {
-            if (wiRoot && wiRoot.entries) {
-                Object.values(wiRoot.entries).forEach(entry => {
-                    if (entry && entry.content) {
-                        let entryName = entry.comment || entry.name || (Array.isArray(entry.key) ? entry.key.join(', ') : '未命名條目');
-                        // 追溯世界書來源名稱
-                        let bookName = entry.book;
-                        if (!bookName && wiRoot.books) {
-                            for (let bName in wiRoot.books) {
-                                if (wiRoot.books[bName] && wiRoot.books[bName].entries && wiRoot.books[bName].entries[entry.uid]) {
-                                    bookName = bName; break;
-                                }
-                            }
-                        }
-                        bookName = bookName || '全局世界書';
-                        addToIndex(CoreEngine.normalize(entry.content), '世界書', `世界書[${bookName}] - ${entryName}`, label, 'LOREBOOK');
-                    }
-                });
-            }
-        };
-
-        extractWorldInfo(window.world_info, '世界書系統');
-        extractWorldInfo(window.extension_settings?.world_info, '擴展世界書');
-
-        // 4. 泛用暴風掃描 (處理無法直接定位的 Prompt Manager 等外掛)
         const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "未知世界書") => {
             if (depth > 10 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
             visited.add(obj);
 
-            if (typeof obj.content === 'string') {
-                if ((obj.name || obj.identifier) && (obj.role || obj.type === 'prompt')) {
-                    let pName = obj.name || obj.identifier;
-                    addToIndex(CoreEngine.normalize(obj.content), '預設', `外掛提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
+            // 1. 世界書 (Lorebook) 特徵攔截
+            if (typeof obj.content === 'string' && (Array.isArray(obj.key) || obj.uid !== undefined || obj.comment !== undefined || obj.constant !== undefined)) {
+                if (!obj.role && obj.type !== 'prompt') { // 排除提示詞
+                    let entryName = obj.comment || obj.name || obj.title;
+                    if (!entryName && Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(', ');
+                    if (!entryName) entryName = '未命名條目';
+                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書[${currentBookName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
                 }
             }
+            
+            // 2. 提示詞 (Prompt Manager) 特徵攔截
+            if (typeof obj.content === 'string' && (obj.name || obj.identifier) && (obj.role || obj.type === 'prompt')) {
+                let pName = obj.name || obj.identifier;
+                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
+            }
 
+            // 3. 角色與場景 (Character / Scenario) 特徵攔截
+            if (typeof obj.description === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.description), '角色', `設定(${obj.name})`, '核心設定', 'DEFAULT');
+            if (typeof obj.personality === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.personality), '角色', `性格(${obj.name})`, '核心設定', 'DEFAULT');
+            if (typeof obj.scenario === 'string' && obj.scenario.length > 0) addToIndex(CoreEngine.normalize(obj.scenario), '角色', `場景(Scenario)`, '核心設定', 'DEFAULT');
+            if (typeof obj.first_mes === 'string' && obj.first_mes.length > 0) addToIndex(CoreEngine.normalize(obj.first_mes), '角色', `初次對話(First Mes)`, '核心設定', 'DEFAULT');
+            if (typeof obj.mes_example === 'string' && obj.mes_example.length > 0) addToIndex(CoreEngine.normalize(obj.mes_example), '角色', `對話範例(Mes Example)`, '核心設定', 'DEFAULT');
+
+            // 4. 用戶設定 (User Persona) 特徵攔截
+            if (typeof obj.persona_description === 'string' && obj.persona_description.length > 0) {
+                addToIndex(CoreEngine.normalize(obj.persona_description), '用戶', `用戶設定(Persona)`, '用戶', 'DEFAULT');
+            }
+
+            // 遞迴深入
             for (let key in obj) {
                 try {
                     let val = obj[key];
                     if (val && typeof val === 'object' && !(val instanceof Element)) {
                         let nextBookName = currentBookName;
-                        if (obj === window.world_info?.entries || obj === window.world_info?.books) nextBookName = key;
+                        // 探測是否進入了特定的世界書目錄
+                        if (obj === window.world_info?.entries || obj === window.world_info?.books || obj === window.extension_settings?.world_info?.entries) {
+                            nextBookName = key;
+                        }
                         deepScan(val, depth + 1, visited, nextBookName);
                     }
                 } catch (e) {}
             }
         };
 
-        const roots = [window.power_user, window.prompt_manager];
-        roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域記憶體"); });
-
-        // 排序：內容長的優先比對，避免短字串(如單詞的世界書)搶佔長字串(如整個模板)的匹配
-        CoreEngine.promptIndex.sort((a, b) => b.contentNorm.length - a.contentNorm.length);
+        // 對 ST 的所有核心記憶體根節點發動暴風掃描
+        const roots = [window.world_info, window.settings, window.extension_settings, window.power_user, window.prompt_manager, window.characters, getContext()];
+        roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域世界書"); });
     },
 
+    // 🌟 量子重疊率演算法 (專門對付巨集展開與格式包裝)
     getOverlapRatio: (str1, str2) => {
         if (str1 === str2) return 1;
         if (!str1 || !str2) return 0;
@@ -279,10 +216,29 @@ const CoreEngine = {
         let larger = g1.size < g2.size ? g2 : g1;
         
         for (let g of smaller) { if (larger.has(g)) intersect++; }
-        return intersect / smaller.size; 
+        return intersect / smaller.size; // 回傳較短字串被包含的比例 (最高 1.0)
     },
 
-    // 🌟 量子重疊演算法強化：完美吸收 XML 標籤與 Macro 巨集替換的干擾
+    // 傳統 Jaccard 相似度 (保留給用戶手動修改的容錯比對)
+    getSimilarity: (str1, str2) => {
+        if (str1 === str2) return 1;
+        if (!str1 || !str2) return 0;
+        const getGrams = (str) => {
+            let grams = new Set();
+            let len = str.length;
+            if (len < 3) { grams.add(str); return grams; }
+            for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
+            return grams;
+        };
+        const g1 = getGrams(str1);
+        const g2 = getGrams(str2);
+        if (g1.size === 0 || g2.size === 0) return 0;
+        let intersect = 0;
+        for (let g of g1) { if (g2.has(g)) intersect++; }
+        let union = g1.size + g2.size - intersect;
+        return union === 0 ? 0 : intersect / union;
+    },
+
     findInIndex: (normContent) => {
         if (!normContent || normContent.length < 5) return null;
         
@@ -291,15 +247,7 @@ const CoreEngine = {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
         }
 
-        // 2. 包含比對 (應對 ST 強加的 XML 外殼標籤，如 <Character_Design> 內部夾帶條目)
-        for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
-            const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length > 15 && normContent.length > 15) {
-                if (normContent.includes(idxContent) || idxContent.includes(normContent)) return CoreEngine.promptIndex[i];
-            }
-        }
-        
-        // 3. 量子重疊率比對 (應對 XML 標籤 + {{char}} 巨集被替換的雙重破壞)
+        // 2. 量子重疊比對 (無視 ST 的巨集替換與前後綴包裝)
         let bestMatch = null;
         let bestScore = 0;
 
@@ -309,9 +257,10 @@ const CoreEngine = {
                 let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
                 let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
                 
-                let score = overlap * 0.85 + lenRatio * 0.15;
-                // 放寬子字串的容錯率，只要子字串(如世界書內容)有 80% 以上在裡面，就判定命中
-                if ((overlap >= 0.80 || score >= 0.60) && score > bestScore) {
+                // 綜合評分：重疊率佔 80% 權重，長度相近度佔 20% 權重
+                let score = overlap * 0.8 + lenRatio * 0.2;
+
+                if (overlap > 0.85 && score > bestScore) {
                     bestScore = score;
                     bestMatch = CoreEngine.promptIndex[i];
                 }
@@ -364,6 +313,7 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
+        // 🌟 核心升級：經由全域指紋庫精準攔截！
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         let matchedIndex = CoreEngine.findInIndex(normContent);
         
@@ -374,22 +324,13 @@ const CoreEngine = {
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        // 🌟 最終啟發式捕捉 (Heuristic Fallback) 應對漏網之魚
-        let rawStr = msg.content ? msg.content.trim() : '';
-        let xmlMatch = rawStr.match(/^<([A-Za-z0-9_]+)>/);
-        if (xmlMatch && !['context', 'Lore', 'details', 'summary'].includes(xmlMatch[1])) {
-            return { cat: '世界書', source: `標籤提示詞(<${xmlMatch[1]}>)`, creator: 'ST格式化引擎', type: 'LOREBOOK' };
-        }
-        if (rawStr.includes('# RULE:')) {
-            return { cat: '預設', source: `規則指令(Rule/Instruct)`, creator: 'ST核心', type: 'DEFAULT' };
-        }
-
+        // 原版兜底防禦
         if (isDynamic) {
             return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
         }
 
         let name = msg.name ? msg.name.toLowerCase() : '';
-        let contentLower = rawStr.toLowerCase();
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
@@ -410,7 +351,7 @@ const CoreEngine = {
             return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
         }
 
-        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無法追溯)', creator: 'ST核心', type: 'DEFAULT' };
+        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
@@ -420,6 +361,7 @@ const CoreEngine = {
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
+    // 🌟 在攔截數據流的當下，即時構建/刷新全局內存指紋字典
     CoreEngine.buildIndex();
 
     try {
@@ -429,6 +371,7 @@ async function interceptAndRestructurePrompt(data) {
         let ledger = []; 
         const processTime = Logger.getTime();
 
+        // 🌟 1. 純結構時序映射 & 歷史紀錄 UID 綁定
         const contextChat = getContext().chat || [];
         let structuralMap = new Array(incomingStream.length).fill(null);
         let uidMap = new Array(incomingStream.length).fill(null);
@@ -478,6 +421,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 🌟 2. 源碼溯源、分類與「全域結構 UID」生成
         let catCounters = {};
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
@@ -502,6 +446,7 @@ async function interceptAndRestructurePrompt(data) {
             msg._isDynamic = isDynamic;
             msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
             
+            // 🌟 天才構想實現：為所有非歷史提示詞生成基於「分類+角色+順序」的絕對結構 UID
             if (!uidMap[i]) {
                 let key = `${msg._attr.cat}_${msg.role}`;
                 catCounters[key] = (catCounters[key] || 0) + 1;
@@ -527,7 +472,10 @@ async function interceptAndRestructurePrompt(data) {
         let matchResults = new Array(state.frozenSequence.length).fill(-1);
         let matchedIncomingIndices = new Set();
         let matchedFrozenIndices = new Set();
+        
+        // 🌟 3. 四重極限對齊算法 (The 4-Pass Quantum Entanglement)
 
+        // 第一重：歷史紀錄絕對 UID 鎖定
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
             if (frozen._uid && frozen._uid.startsWith('chat_')) {
@@ -540,6 +488,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 第二重：完美文本匹配 (針對未修改的靜態提示詞)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -552,6 +501,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 第三重：Jaccard 語義感知 (捕捉小幅/中幅修改)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -564,7 +514,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (incomingPool[j]._isDynamic) continue;
                 if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
-                let sim = CoreEngine.getOverlapRatio(frozen._norm, incomingPool[j]._norm);
+                let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
             if (bestSim > 0.5 && bestMatchIdx !== -1) {
@@ -572,6 +522,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 第四重：終極結構感知 (捕捉被完全重寫的預設提示詞/世界書)
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
@@ -585,6 +536,7 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
+        // 🌟 4. 處理對齊結果與前綴緩存斷點計算
         let totalFrozenLen = state.frozenSequence.reduce((acc, m) => acc + m.content.length, 0) || 1;
         let currentValidLength = 0;
         let firstBreakIndex = -1; 
@@ -652,6 +604,7 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
+        // 🌟 5. 處理剩餘的、需要被追加的新提示詞 (完美實現絕對排序邏輯)
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
         let isChat1 = state.frozenSequence.length === 0;
@@ -862,7 +815,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.8 終極真理溯源版)</b>
+            <b>DeepSeek V4 Pro 絕對防禦矩陣 (v36.6 終極暴風掃描版)</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px;">
@@ -936,7 +889,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V36.8 終極真理溯源版 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V36.6 終極暴風掃描版 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
