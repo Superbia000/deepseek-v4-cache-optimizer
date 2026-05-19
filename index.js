@@ -296,15 +296,15 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
-        let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
-        let contentLower = msg.content ? msg.content.toLowerCase() : '';
-        let nameLower = msg.name ? msg.name.toLowerCase() : '';
-
-        // 🌟 強制捕獲 ST Summary (最高優先級)
-        if (contentLower.startsWith('[summary:') || contentLower.startsWith('summary:') || nameLower === 'summary' || nameLower === 'summarization') {
-            return { cat: '動態', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY' };
+        let name = msg.name ? msg.name.toLowerCase() : '';
+        let contentTrimmed = msg.content ? msg.content.trim() : '';
+        
+        // 🌟 優先攔截 ST 系統摘要 (Summary)
+        if (name.includes('summary') || name.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
+            return { cat: '摘要', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY' };
         }
 
+        let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         let matchedIndex = CoreEngine.findInIndex(normContent, msg._nGrams);
         
         if (matchedIndex) {
@@ -314,7 +314,8 @@ const CoreEngine = {
 
         if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
 
-        if (nameLower.includes('world info') || nameLower.includes('lorebook') || nameLower.includes('wi-')) {
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
+        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
             return { cat: '世界書', source: `世界書(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
@@ -323,17 +324,17 @@ const CoreEngine = {
             return { cat: '世界書', source: '世界書(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
-        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
-        if (msg.name && !defaultNames.includes(nameLower)) return { cat: '其他插件', source: `其他插件(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
-        if (nameLower.includes('author') || nameLower.includes('note')) return { cat: '其他插件', source: `其他插件(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-        if (nameLower.includes('vector') || nameLower.includes('smart context') || nameLower.includes('rag') || contentLower.includes('retrieved context')) return { cat: '其他插件', source: `其他插件(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
+        const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'authors note', 'author\'s note'];
+        if (msg.name && !defaultNames.includes(name)) return { cat: '其他插件', source: `其他插件(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        if (name.includes('author') || name.includes('note')) return { cat: '其他插件', source: `其他插件(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) return { cat: '其他插件', source: `其他插件(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
 
         return { cat: '預設', source: msg.name ? `預設(${msg.name})` : '預設(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
 // ==========================================
-// 🌌 絕對防禦矩陣 (雙軌排序引擎 & 全景日誌)
+// 🌌 絕對防禦矩陣 (雙軌排序引擎 & 摘要修復)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
@@ -408,7 +409,13 @@ async function interceptAndRestructurePrompt(data) {
             msg._origTemplate = CoreEngine.macroMap.get(msg._norm) || msg._norm;
 
             let isDynamic = false;
-            if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && msg.content.includes(userCurrentText)) {
+            let contentTrimmed = msg.content ? msg.content.trim() : '';
+            let nameLower = msg.name ? msg.name.toLowerCase() : '';
+            
+            // 🌟 強制將 Summary 標記為動態，確保它在 Chat 2+ 能被鏡像追加
+            if (nameLower.includes('summary') || nameLower.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
+                isDynamic = true;
+            } else if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && msg.content.includes(userCurrentText)) {
                 isDynamic = true;
             } else if (msg._origTemplate.includes('{{') && msg._origTemplate.includes('}}')) {
                 if (!state.promptTracker[msg._origTemplate]) {
@@ -422,13 +429,8 @@ async function interceptAndRestructurePrompt(data) {
                 }
             }
 
-            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
-            
-            // 🌟 強制賦予 Summary 動態屬性，啟動幽靈防禦機制
-            if (msg._attr.type === 'SUMMARY') {
-                isDynamic = true;
-            }
             msg._isDynamic = isDynamic;
+            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
             
             if (msg._attr.type === 'OTHER_PLUGIN') {
                 otherPluginActions.add(`[${msg._attr.creator}] 處理/注入了提示詞節點: ${msg._attr.source}`);
@@ -542,11 +544,10 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
 
-        // 🌟 語義與結構感知匹配時，嚴格排除動態節點 (包含 Summary)，強制作為幽靈保留
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
-            if (frozen._isDynamic) continue; 
+            if (frozen._isDynamic) continue;
             
             if (!frozen._nGrams) frozen._nGrams = CoreEngine.getGrams(frozen._norm); 
             
@@ -566,7 +567,7 @@ async function interceptAndRestructurePrompt(data) {
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
-            if (frozen._isDynamic) continue; 
+            if (frozen._isDynamic) continue;
             
             let indices = incomingUidMap.get(frozen._uid);
             if (indices) {
@@ -591,7 +592,7 @@ async function interceptAndRestructurePrompt(data) {
 
             if (frozen._origTemplate && state.promptTracker[frozen._origTemplate]?.isDynamic) {
                 frozen._isDynamic = true;
-                if (frozen._attr.type !== 'DYNAMIC' && frozen._attr.type !== 'SUMMARY') {
+                if (frozen._attr.type !== 'DYNAMIC') {
                     frozen._attr.cat = '動態'; frozen._attr.source = '動態提示詞(舊版保留)'; frozen._attr.type = 'DYNAMIC';
                 }
             }
@@ -619,7 +620,6 @@ async function interceptAndRestructurePrompt(data) {
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                 }
             } else if (frozen._isDynamic) {
-                // 🌟 動態幽靈防禦機制觸發：舊版 Summary 與動態提示詞將被強制原位保留
                 nextFrozen.push(frozen);
                 if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
@@ -661,11 +661,10 @@ async function interceptAndRestructurePrompt(data) {
 
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
-        let chat1TopPrompts = []; 
-        let summaryNodes = [];
+        let chat1SystemPrompts = []; 
+        let summaryPrompts = []; // 🌟 專門存放抽取的摘要
         let isChat1 = state.frozenSequence.length === 0;
 
-        // 🌟 對象分流器
         remainingPool.forEach(msg => {
             if (msg._attr.type === 'USER_CURRENT') { 
                 currentUser.push(msg); 
@@ -684,28 +683,38 @@ async function interceptAndRestructurePrompt(data) {
                 detailedMods.push(`[新增] 載入了歷史訊息: ${msg._attr.source}`);
             }
             else if (msg._attr.type === 'SUMMARY') {
-                // 獨立分流 Summary
-                summaryNodes.push(msg);
-                detailedMods.push(`[新增] 載入了系統摘要: ${msg._attr.source}`);
+                // 🌟 摘要特化處理
+                if (isChat1) {
+                    summaryPrompts.push(msg);
+                    detailedMods.push(`[新增] 抽取了系統摘要: ${msg._attr.source}`);
+                } else {
+                    allDynamic.push(msg);
+                    detailedMods.push(`[新增] 載入了系統摘要(動態追加): ${msg._attr.source}`);
+                }
             }
             else {
-                // 處理常規動態與靜態提示詞
-                chat1TopPrompts.push(msg); 
-                
-                if (msg._isDynamic) {
-                    allDynamic.push(msg);
-                    detailedMods.push(`[新增] 載入了動態提示詞: ${msg._attr.source}`);
-                } else if (msg._attr.type === 'DEFAULT') { 
-                    newDefault.push(msg); 
-                    detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`); 
-                }
-                else if (msg._attr.type === 'LOREBOOK') { 
-                    newLorebook.push(msg); 
-                    detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`); 
-                }
-                else { 
-                    newOther.push(msg); 
-                    detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`); 
+                if (isChat1) {
+                    chat1SystemPrompts.push(msg);
+                    if (msg._isDynamic) detailedMods.push(`[新增] 載入了動態提示詞: ${msg._attr.source}`);
+                    else if (msg._attr.type === 'DEFAULT') detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`);
+                    else if (msg._attr.type === 'LOREBOOK') detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`);
+                    else detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`);
+                } else {
+                    if (msg._isDynamic) {
+                        allDynamic.push(msg);
+                        detailedMods.push(`[新增] 載入了動態提示詞: ${msg._attr.source}`);
+                    } else if (msg._attr.type === 'DEFAULT') { 
+                        newDefault.push(msg); 
+                        detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`); 
+                    }
+                    else if (msg._attr.type === 'LOREBOOK') { 
+                        newLorebook.push(msg); 
+                        detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`); 
+                    }
+                    else { 
+                        newOther.push(msg); 
+                        detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`); 
+                    }
                 }
             }
         });
@@ -718,24 +727,23 @@ async function interceptAndRestructurePrompt(data) {
             });
         };
 
-        // 🌟 雙軌排序引擎 (Dual-Track Sorting Engine) 支援 Summary 隔離
+        // 🌟 雙軌排序引擎 (Dual-Track Sorting Engine)
         if (isChat1) {
-            // 對話 1：完美保留所有 System/Prompt 的原始相對順序 -> 插入 Summary -> 歷史對話 -> 玩家輸入 -> 預填充
-            appendToFrozen(chat1TopPrompts, '新增', '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(summaryNodes, '新增', '即時凍結', '絕對凍結(對話1)');
+            // 對話 1：完美保留所有 System/Prompt 的原始相對順序，並將摘要安全下放
+            appendToFrozen(chat1SystemPrompts, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(summaryPrompts, '新增', '即時凍結', '絕對凍結(對話1)'); // 摘要被安全放置於歷史之前
             appendToFrozen(newHistory, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(aiLastReply, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話1)');
         } else {
-            // 對話 2+：嚴格分類追加，並將 Summary 視為動態節點鏡像追加至末端
+            // 對話 2+：嚴格分類追加，摘要作為動態提示詞被鏡像追加
             appendToFrozen(newHistory, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(aiLastReply, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newLorebook, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newOther, '新增', '追加凍結', '絕對凍結(對話2+)');
-            appendToFrozen(allDynamic, '新增', '鏡像追加', '絕對凍結(對話2+)');
-            appendToFrozen(summaryNodes, '新增', '鏡像追加', '絕對凍結(對話2+)');
+            appendToFrozen(allDynamic, '新增', '鏡像追加', '絕對凍結(對話2+)'); // 摘要會在這裡被追加
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話2+)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話2+)');
         }
