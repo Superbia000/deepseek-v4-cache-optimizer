@@ -296,18 +296,26 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
+        let name = msg.name ? msg.name.toLowerCase() : '';
+        let contentLower = msg.content ? msg.content.toLowerCase() : '';
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         let matchedIndex = CoreEngine.findInIndex(normContent, msg._nGrams);
         
         if (matchedIndex) {
-            if (isDynamic) return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
+            if (isDynamic) {
+                let dSource = matchedIndex.source;
+                if (name.includes('summary') || contentLower.startsWith('[summary:')) dSource = '總結/Summary';
+                return { cat: '動態', source: `動態(${dSource})`, creator: matchedIndex.creator, type: 'DYNAMIC' };
+            }
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
+        if (isDynamic) {
+            let dSource = '動態提示詞';
+            if (name.includes('summary') || contentLower.startsWith('[summary:')) dSource = '動態(總結/Summary)';
+            return { cat: '動態', source: dSource, creator: 'ST核心/插件', type: 'DYNAMIC' };
+        }
 
-        let name = msg.name ? msg.name.toLowerCase() : '';
-        let contentLower = msg.content ? msg.content.toLowerCase() : '';
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
@@ -327,7 +335,7 @@ const CoreEngine = {
 };
 
 // ==========================================
-// 🌌 絕對防禦矩陣 (雙軌排序引擎 & 全景日誌)
+// 🌌 絕對防禦矩陣 (雙軌排序引擎 & 動態鏡像修復)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
@@ -402,6 +410,10 @@ async function interceptAndRestructurePrompt(data) {
             msg._origTemplate = CoreEngine.macroMap.get(msg._norm) || msg._norm;
 
             let isDynamic = false;
+            let contentLower = msg.content.toLowerCase();
+            let nameLower = msg.name ? msg.name.toLowerCase() : '';
+
+            // 🌟 深度修復：精準捕獲總結 (Summary) 與動態變數
             if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && msg.content.includes(userCurrentText)) {
                 isDynamic = true;
             } else if (msg._origTemplate.includes('{{') && msg._origTemplate.includes('}}')) {
@@ -413,6 +425,13 @@ async function interceptAndRestructurePrompt(data) {
                         state.promptTracker[msg._origTemplate].lastRes = msg._norm;
                     }
                     isDynamic = state.promptTracker[msg._origTemplate].isDynamic;
+                }
+            }
+            
+            // 強制將 ST 的總結功能標記為動態，防止其破壞頂部緩存
+            if (!isDynamic) {
+                if (nameLower.includes('summary') || nameLower.includes('summarization') || contentLower.startsWith('[summary:')) {
+                    isDynamic = true;
                 }
             }
 
@@ -607,6 +626,7 @@ async function interceptAndRestructurePrompt(data) {
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                 }
             } else if (frozen._isDynamic) {
+                // 🌟 動態幽靈保留：舊的動態提示詞（如舊總結）永遠保留在原地，不被刪除
                 nextFrozen.push(frozen);
                 if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
@@ -684,6 +704,7 @@ async function interceptAndRestructurePrompt(data) {
                     newOther.push(msg); 
                     detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`); 
                 }
+                // 對話 1 專用：保留 ST 原始順序
                 chat1SystemPrompts.push(msg); 
             }
         });
@@ -698,14 +719,14 @@ async function interceptAndRestructurePrompt(data) {
 
         // 🌟 雙軌排序引擎 (Dual-Track Sorting Engine)
         if (isChat1) {
-            // 對話 1：完美保留所有 System/Prompt 的原始相對順序，僅將對話與輸入置底
+            // 對話 1：完美保留所有 System/Prompt 的原始相對順序 (包含初次出現的動態提示詞)
             appendToFrozen(chat1SystemPrompts, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newHistory, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(aiLastReply, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話1)');
         } else {
-            // 對話 2+：嚴格分類追加，確保前面凍結的 Token 不被破壞
+            // 對話 2+：嚴格分類追加，動態提示詞 (如更新後的總結) 會被鏡像追加到最末端
             appendToFrozen(newHistory, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(aiLastReply, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '新增', '追加凍結', '絕對凍結(對話2+)');
