@@ -150,14 +150,16 @@ const CoreEngine = {
 
     getGrams: (str) => {
         let grams = new Set();
+        if (typeof str !== 'string') return grams;
         let len = str.length;
-        if (len < 3) { grams.add(str); return grams; }
+        if (len < 3) { if (len > 0) grams.add(str); return grams; }
         for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
         return grams;
     },
 
+    // 🌟 修復 JSON 序列化導致的 Set 丟失問題
     getOverlapRatioFast: (g1, g2) => {
-        if (g1.size === 0 || g2.size === 0) return 0;
+        if (!g1 || !g2 || !(g1 instanceof Set) || !(g2 instanceof Set) || g1.size === 0 || g2.size === 0) return 0;
         let intersect = 0;
         let smaller = g1.size < g2.size ? g1 : g2;
         let larger = g1.size < g2.size ? g2 : g1;
@@ -166,7 +168,7 @@ const CoreEngine = {
     },
 
     getSimilarityFast: (g1, g2) => {
-        if (g1.size === 0 || g2.size === 0) return 0;
+        if (!g1 || !g2 || !(g1 instanceof Set) || !(g2 instanceof Set) || g1.size === 0 || g2.size === 0) return 0;
         let intersect = 0;
         for (let g of g1) { if (g2.has(g)) intersect++; }
         let union = g1.size + g2.size - intersect;
@@ -549,7 +551,10 @@ async function interceptAndRestructurePrompt(data) {
             let frozen = state.frozenSequence[i];
             if (frozen._isDynamic) continue;
             
-            if (!frozen._nGrams) frozen._nGrams = CoreEngine.getGrams(frozen._norm); 
+            // 🌟 修復 JSON 序列化導致的 Set 丟失問題
+            if (!frozen._nGrams || !(frozen._nGrams instanceof Set)) {
+                frozen._nGrams = CoreEngine.getGrams(frozen._norm || ''); 
+            }
             
             let bestMatchIdx = -1; let bestSim = 0;
             for (let j = 0; j < incomingPool.length; j++) {
