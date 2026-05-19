@@ -30,12 +30,10 @@ const MAX_LOG_ENTRIES = 500;
 
 const Logger = {
     _uiViewer: null,
-    // 嚴格遵守 HH:MM:SS 格式 (瀏覽器本地時區)
     getTime: () => {
         const now = new Date();
         return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
     },
-    // 嚴格限制 30 個字元
     truncate: (text) => {
         if (!text) return '';
         const clean = text.replace(/[\n\r]/g, ' ');
@@ -290,7 +288,6 @@ const CoreEngine = {
         }
     },
 
-    // 🌟 精準溯源分類 (源頭中的源頭)
     classify: (msg, structuralTag, isDynamic) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件', creator: 'DS Cache', type: 'PLUGIN' };
         if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶輸入', creator: '用戶', type: 'USER_CURRENT' };
@@ -330,7 +327,7 @@ const CoreEngine = {
 };
 
 // ==========================================
-// 🌌 絕對防禦矩陣 (O(N) 極速匹配引擎 & 全景日誌)
+// 🌌 絕對防禦矩陣 (雙軌排序引擎 & 全景日誌)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
@@ -343,7 +340,6 @@ async function interceptAndRestructurePrompt(data) {
         let incomingPool = [];
         let ledger = []; 
         
-        // 🌟 日誌系統專用變數
         const processTime = Logger.getTime();
         const chatTurn = getContext().chat ? getContext().chat.length : 0;
         let otherPluginActions = new Set();
@@ -423,7 +419,6 @@ async function interceptAndRestructurePrompt(data) {
             msg._isDynamic = isDynamic;
             msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
             
-            // 🌟 偵測其他插件與系統動作
             if (msg._attr.type === 'OTHER_PLUGIN') {
                 otherPluginActions.add(`[${msg._attr.creator}] 處理/注入了提示詞節點: ${msg._attr.source}`);
             } else if (msg._attr.type === 'LOREBOOK') {
@@ -440,7 +435,6 @@ async function interceptAndRestructurePrompt(data) {
             incomingPool.push(msg);
         }
 
-        // 🌟 日誌輸出函數 (全景 Markdown)
         const printLog = (isPluginDisabled) => {
             if (Settings.logLevel < LogLevels.STANDARD) return;
 
@@ -483,7 +477,6 @@ async function interceptAndRestructurePrompt(data) {
             Logger.write(mdLog, LogLevels.DETAILED);
         };
 
-        // 🌟 插件停用時的處理 (依然完整記錄)
         if (!Settings.enabled) {
             incomingPool.forEach((msg, idx) => {
                 ledger.push({
@@ -655,17 +648,44 @@ async function interceptAndRestructurePrompt(data) {
 
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
+        let chat1SystemPrompts = []; 
         let isChat1 = state.frozenSequence.length === 0;
 
         remainingPool.forEach(msg => {
-            if (msg._attr.type === 'USER_CURRENT') { currentUser.push(msg); detailedMods.push(`[新增] 用戶發送了第 ${chatTurn} 輪的新訊息`); }
-            else if (msg._attr.type === 'PREFILL') { currentPrefill.push(msg); detailedMods.push(`[新增] 觸發了預填充 (Prefill)`); }
-            else if (msg._attr.type === 'AI_LAST_REPLY') aiLastReply.push(msg);
-            else if (msg._isDynamic) allDynamic.push(msg); 
-            else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
-            else if (msg._attr.type === 'DEFAULT') { newDefault.push(msg); detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`); }
-            else if (msg._attr.type === 'LOREBOOK') { newLorebook.push(msg); detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`); }
-            else { newOther.push(msg); detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`); }
+            if (msg._attr.type === 'USER_CURRENT') { 
+                currentUser.push(msg); 
+                detailedMods.push(`[新增] 用戶發送了第 ${chatTurn} 輪的新訊息`); 
+            }
+            else if (msg._attr.type === 'PREFILL') { 
+                currentPrefill.push(msg); 
+                detailedMods.push(`[新增] 觸發了預填充 (Prefill)`); 
+            }
+            else if (msg._attr.type === 'AI_LAST_REPLY') {
+                aiLastReply.push(msg);
+                detailedMods.push(`[新增] 載入了AI回覆: ${msg._attr.source}`);
+            }
+            else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') {
+                newHistory.push(msg);
+                detailedMods.push(`[新增] 載入了歷史訊息: ${msg._attr.source}`);
+            }
+            else {
+                if (msg._isDynamic) {
+                    allDynamic.push(msg);
+                    detailedMods.push(`[新增] 載入了動態提示詞: ${msg._attr.source}`);
+                } else if (msg._attr.type === 'DEFAULT') { 
+                    newDefault.push(msg); 
+                    detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`); 
+                }
+                else if (msg._attr.type === 'LOREBOOK') { 
+                    newLorebook.push(msg); 
+                    detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`); 
+                }
+                else { 
+                    newOther.push(msg); 
+                    detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`); 
+                }
+                chat1SystemPrompts.push(msg); 
+            }
         });
 
         const appendToFrozen = (arr, gen, actionName, funcName) => {
@@ -676,16 +696,16 @@ async function interceptAndRestructurePrompt(data) {
             });
         };
 
+        // 🌟 雙軌排序引擎 (Dual-Track Sorting Engine)
         if (isChat1) {
-            appendToFrozen(newDefault, '新增', '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(newLorebook, '新增', '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(newOther, '新增', '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(allDynamic, '新增', '即時凍結', '絕對凍結(對話1)');
+            // 對話 1：完美保留所有 System/Prompt 的原始相對順序，僅將對話與輸入置底
+            appendToFrozen(chat1SystemPrompts, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(newHistory, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(aiLastReply, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話1)');
         } else {
+            // 對話 2+：嚴格分類追加，確保前面凍結的 Token 不被破壞
             appendToFrozen(newHistory, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(aiLastReply, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '新增', '追加凍結', '絕對凍結(對話2+)');
@@ -707,7 +727,6 @@ async function interceptAndRestructurePrompt(data) {
             return clean;
         }));
 
-        // 🌟 執行日誌輸出
         printLog(false);
 
     } catch (err) {
