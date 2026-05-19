@@ -7,17 +7,8 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 let Settings = {};
 
 function initSettings() {
-    const defaultSettings = {
-        enabled: true,
-        instantNotify: true,
-        logLevel: 3,
-        chats: {} 
-    };
-
-    if (!extension_settings.ds_cache_v36_absolute) {
-        extension_settings.ds_cache_v36_absolute = defaultSettings;
-    }
-    // 深度合併，確保新增的預設值能被載入
+    const defaultSettings = { enabled: true, instantNotify: true, logLevel: 3, chats: {} };
+    if (!extension_settings.ds_cache_v36_absolute) extension_settings.ds_cache_v36_absolute = defaultSettings;
     Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v36_absolute);
 }
 
@@ -25,22 +16,26 @@ function safeSave() {
     try { 
         extension_settings.ds_cache_v36_absolute = Settings;
         if (typeof saveSettingsDebounced === 'function') saveSettingsDebounced(); 
-    } 
-    catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
+    } catch (e) { console.warn("[DS Cache] 存檔失敗", e); }
 }
 
 // ==========================================
-// 深度日誌系統 (Markdown Logger Engine)
+// 深度日誌系統 (GPU 加速 & 批次渲染)
 // ==========================================
 const LogLevels = { OFF: 0, BASIC: 1, STANDARD: 2, DETAILED: 3, EXTREME: 4 };
 let rawMarkdownLogs = [];
+let logQueue = [];
+let logRenderTimer = null;
+const MAX_LOG_ENTRIES = 500; 
 
 const Logger = {
     _uiViewer: null,
+    // 嚴格遵守 HH:MM:SS 格式 (瀏覽器本地時區)
     getTime: () => {
         const now = new Date();
-        return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}.${now.getMilliseconds().toString().padStart(3,'0')}`;
+        return `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}:${now.getSeconds().toString().padStart(2,'0')}`;
     },
+    // 嚴格限制 30 個字元
     truncate: (text) => {
         if (!text) return '';
         const clean = text.replace(/[\n\r]/g, ' ');
@@ -48,13 +43,15 @@ const Logger = {
     },
     write: (markdownText, level = LogLevels.STANDARD) => {
         if (Settings.logLevel < level) return;
-        const time = Logger.getTime();
-        const entry = `**[${time}]** ${markdownText}\n`;
+        const entry = `${markdownText}\n`;
+        
         rawMarkdownLogs.push(entry);
-        Logger.updateUI(entry);
+        if (rawMarkdownLogs.length > MAX_LOG_ENTRIES) rawMarkdownLogs.shift();
+        
+        Logger.queueUIUpdate(entry);
         if (level === LogLevels.EXTREME) console.log(`[DS Cache EXTREME]`, markdownText);
     },
-    updateUI: (newEntry) => {
+    queueUIUpdate: (newEntry) => {
         if (!Logger._uiViewer) return;
         let html = newEntry.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/^- (.*)/gm, '<li>$1</li>');
         if (html.includes('|')) {
@@ -76,11 +73,29 @@ const Logger = {
             if (inTable) tableHtml += '</table></div>';
             html = tableHtml;
         }
-        const div = document.createElement('div');
-        div.innerHTML = html;
-        div.className = 'ds-ui-log-entry';
-        Logger._uiViewer.appendChild(div);
-        Logger._uiViewer.scrollTop = Logger._uiViewer.scrollHeight;
+        
+        logQueue.push(html);
+        
+        if (!logRenderTimer) {
+            logRenderTimer = requestAnimationFrame(() => {
+                const fragment = document.createDocumentFragment();
+                logQueue.forEach(h => {
+                    const div = document.createElement('div');
+                    div.className = 'ds-ui-log-entry';
+                    div.innerHTML = h;
+                    fragment.appendChild(div);
+                });
+                Logger._uiViewer.appendChild(fragment);
+                
+                while (Logger._uiViewer.childElementCount > MAX_LOG_ENTRIES) {
+                    Logger._uiViewer.removeChild(Logger._uiViewer.firstChild);
+                }
+                
+                Logger._uiViewer.scrollTop = Logger._uiViewer.scrollHeight;
+                logQueue = [];
+                logRenderTimer = null;
+            });
+        }
     },
     clear: () => { rawMarkdownLogs = []; if (Logger._uiViewer) Logger._uiViewer.innerHTML = ''; if (typeof toastr !== 'undefined') toastr.success("日誌已清空", "DeepSeek Cache"); },
     copy: () => { navigator.clipboard.writeText(rawMarkdownLogs.join('\n')).then(() => { if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿", "DeepSeek Cache"); }); },
@@ -118,34 +133,65 @@ function resetCurrentChatCache() {
         Settings.chats[chatInfo.key].promptTracker = {};
         safeSave(); renderChatsUI();
         if (typeof toastr !== 'undefined') toastr.success(`已重置當前聊天 (${chatInfo.character}) 的凍結池。<br>下一次對話將重新構建緩存序列。`, "DeepSeek Cache", {escapeHtml: false});
-        Logger.write(`🔄 用戶手動重置了當前聊天 (${chatInfo.character}) 的凍結池`, LogLevels.BASIC);
+        Logger.write(`**[${Logger.getTime()}]** 🔄 用戶手動重置了當前聊天 (${chatInfo.character}) 的凍結池`, LogLevels.BASIC);
     }
 }
 
 // ==========================================
-// 🛡️ 核心引擎：編譯器劫持與 100% 精準分類 (保持原樣)
+// 🛡️ 核心引擎：極速演算法與精準溯源
 // ==========================================
 const CoreEngine = {
     macroMap: new Map(), 
     promptIndex: [], 
+    lastScanTime: 0,
 
     normalize: (text) => {
         if (!text) return '';
         return text.replace(/[\s\n\r\t]/g, '').replace(/\\n/g, '').trim();
     },
 
+    getGrams: (str) => {
+        let grams = new Set();
+        let len = str.length;
+        if (len < 3) { grams.add(str); return grams; }
+        for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
+        return grams;
+    },
+
+    getOverlapRatioFast: (g1, g2) => {
+        if (g1.size === 0 || g2.size === 0) return 0;
+        let intersect = 0;
+        let smaller = g1.size < g2.size ? g1 : g2;
+        let larger = g1.size < g2.size ? g2 : g1;
+        for (let g of smaller) { if (larger.has(g)) intersect++; }
+        return intersect / smaller.size; 
+    },
+
+    getSimilarityFast: (g1, g2) => {
+        if (g1.size === 0 || g2.size === 0) return 0;
+        let intersect = 0;
+        for (let g of g1) { if (g2.has(g)) intersect++; }
+        let union = g1.size + g2.size - intersect;
+        return union === 0 ? 0 : intersect / union;
+    },
+
     buildIndex: () => {
+        const now = Date.now();
+        if (now - CoreEngine.lastScanTime < 2000) return; 
+        CoreEngine.lastScanTime = now;
+
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
         const addToIndex = (norm, cat, source, creator, type) => {
             if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
-            CoreEngine.promptIndex.push({ contentNorm: norm, cat, source, creator, type });
+            CoreEngine.promptIndex.push({ contentNorm: norm, nGrams: CoreEngine.getGrams(norm), cat, source, creator, type });
         };
 
-        const deepScan = (obj, depth = 0, visited = new Set(), currentBookName = "未知世界書") => {
-            if (depth > 10 || !obj || typeof obj !== 'object' || visited.has(obj)) return;
+        const deepScan = (obj, depth = 0, visited = new WeakSet(), currentBookName = "未知世界書") => {
+            if (depth > 10 || !obj || typeof obj !== 'object') return;
+            if (visited.has(obj)) return;
             visited.add(obj);
 
             if (typeof obj.content === 'string' && (Array.isArray(obj.key) || obj.uid !== undefined || obj.comment !== undefined || obj.constant !== undefined)) {
@@ -153,29 +199,26 @@ const CoreEngine = {
                     let entryName = obj.comment || obj.name || obj.title;
                     if (!entryName && Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(', ');
                     if (!entryName) entryName = '未命名條目';
-                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書[${currentBookName}] - ${entryName}`, '世界書系統', 'LOREBOOK');
+                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書(${entryName})`, '世界書系統', 'LOREBOOK');
                 }
             }
             
             if (typeof obj.content === 'string' && (obj.name || obj.identifier) && (obj.role || obj.type === 'prompt')) {
                 let pName = obj.name || obj.identifier;
-                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設提示詞(${pName})`, obj.role || 'ST核心', 'DEFAULT');
+                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設(${pName})`, obj.role || 'ST核心', 'DEFAULT');
             }
 
-            if (typeof obj.description === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.description), '角色', `設定(${obj.name})`, '核心設定', 'DEFAULT');
-            if (typeof obj.personality === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.personality), '角色', `性格(${obj.name})`, '核心設定', 'DEFAULT');
-            if (typeof obj.scenario === 'string' && obj.scenario.length > 0) addToIndex(CoreEngine.normalize(obj.scenario), '角色', `場景(Scenario)`, '核心設定', 'DEFAULT');
-            if (typeof obj.first_mes === 'string' && obj.first_mes.length > 0) addToIndex(CoreEngine.normalize(obj.first_mes), '角色', `初次對話(First Mes)`, '核心設定', 'DEFAULT');
-            if (typeof obj.mes_example === 'string' && obj.mes_example.length > 0) addToIndex(CoreEngine.normalize(obj.mes_example), '角色', `對話範例(Mes Example)`, '核心設定', 'DEFAULT');
-
-            if (typeof obj.persona_description === 'string' && obj.persona_description.length > 0) {
-                addToIndex(CoreEngine.normalize(obj.persona_description), '用戶', `用戶設定(Persona)`, '用戶', 'DEFAULT');
-            }
+            if (typeof obj.description === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.description), '角色', `預設(設定-${obj.name})`, '核心設定', 'DEFAULT');
+            if (typeof obj.personality === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.personality), '角色', `預設(性格-${obj.name})`, '核心設定', 'DEFAULT');
+            if (typeof obj.scenario === 'string' && obj.scenario.length > 0) addToIndex(CoreEngine.normalize(obj.scenario), '角色', `預設(場景)`, '核心設定', 'DEFAULT');
+            if (typeof obj.first_mes === 'string' && obj.first_mes.length > 0) addToIndex(CoreEngine.normalize(obj.first_mes), '角色', `預設(初次對話)`, '核心設定', 'DEFAULT');
+            if (typeof obj.mes_example === 'string' && obj.mes_example.length > 0) addToIndex(CoreEngine.normalize(obj.mes_example), '角色', `預設(對話範例)`, '核心設定', 'DEFAULT');
+            if (typeof obj.persona_description === 'string' && obj.persona_description.length > 0) addToIndex(CoreEngine.normalize(obj.persona_description), '用戶', `預設(用戶設定)`, '用戶', 'DEFAULT');
 
             for (let key in obj) {
                 try {
                     let val = obj[key];
-                    if (val && typeof val === 'object' && !(val instanceof Element)) {
+                    if (val && typeof val === 'object' && !(val instanceof Element) && !(val instanceof Node)) {
                         let nextBookName = currentBookName;
                         if (obj === window.world_info?.entries || obj === window.world_info?.books || obj === window.extension_settings?.world_info?.entries) {
                             nextBookName = key;
@@ -187,51 +230,10 @@ const CoreEngine = {
         };
 
         const roots = [window.world_info, window.settings, window.extension_settings, window.power_user, window.prompt_manager, window.characters, getContext()];
-        roots.forEach(root => { if (root) deepScan(root, 0, new Set(), "全域世界書"); });
+        roots.forEach(root => { if (root) deepScan(root, 0, new WeakSet(), "全域世界書"); });
     },
 
-    getOverlapRatio: (str1, str2) => {
-        if (str1 === str2) return 1;
-        if (!str1 || !str2) return 0;
-        const getGrams = (str) => {
-            let grams = new Set();
-            let len = str.length;
-            if (len < 3) { grams.add(str); return grams; }
-            for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
-            return grams;
-        };
-        const g1 = getGrams(str1);
-        const g2 = getGrams(str2);
-        if (g1.size === 0 || g2.size === 0) return 0;
-        
-        let intersect = 0;
-        let smaller = g1.size < g2.size ? g1 : g2;
-        let larger = g1.size < g2.size ? g2 : g1;
-        
-        for (let g of smaller) { if (larger.has(g)) intersect++; }
-        return intersect / smaller.size; 
-    },
-
-    getSimilarity: (str1, str2) => {
-        if (str1 === str2) return 1;
-        if (!str1 || !str2) return 0;
-        const getGrams = (str) => {
-            let grams = new Set();
-            let len = str.length;
-            if (len < 3) { grams.add(str); return grams; }
-            for (let i = 0; i <= len - 3; i++) grams.add(str.substring(i, i + 3));
-            return grams;
-        };
-        const g1 = getGrams(str1);
-        const g2 = getGrams(str2);
-        if (g1.size === 0 || g2.size === 0) return 0;
-        let intersect = 0;
-        for (let g of g1) { if (g2.has(g)) intersect++; }
-        let union = g1.size + g2.size - intersect;
-        return union === 0 ? 0 : intersect / union;
-    },
-
-    findInIndex: (normContent) => {
+    findInIndex: (normContent, nGrams) => {
         if (!normContent || normContent.length < 5) return null;
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
             if (CoreEngine.promptIndex[i].contentNorm === normContent) return CoreEngine.promptIndex[i];
@@ -239,14 +241,14 @@ const CoreEngine = {
         let bestMatch = null;
         let bestScore = 0;
         for (let i = 0; i < CoreEngine.promptIndex.length; i++) {
-            const idxContent = CoreEngine.promptIndex[i].contentNorm;
-            if (idxContent.length > 10 && normContent.length > 10) {
-                let overlap = CoreEngine.getOverlapRatio(idxContent, normContent);
-                let lenRatio = Math.min(idxContent.length, normContent.length) / Math.max(idxContent.length, normContent.length);
+            const idxItem = CoreEngine.promptIndex[i];
+            if (idxItem.contentNorm.length > 10 && normContent.length > 10) {
+                let overlap = CoreEngine.getOverlapRatioFast(idxItem.nGrams, nGrams);
+                let lenRatio = Math.min(idxItem.contentNorm.length, normContent.length) / Math.max(idxItem.contentNorm.length, normContent.length);
                 let score = overlap * 0.8 + lenRatio * 0.2;
                 if (overlap > 0.85 && score > bestScore) {
                     bestScore = score;
-                    bestMatch = CoreEngine.promptIndex[i];
+                    bestMatch = idxItem;
                 }
             }
         }
@@ -288,57 +290,47 @@ const CoreEngine = {
         }
     },
 
+    // 🌟 精準溯源分類 (源頭中的源頭)
     classify: (msg, structuralTag, isDynamic) => {
-        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件修改的提示詞', creator: 'DS Cache', type: 'PLUGIN' };
-
-        if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶當前輸入', creator: '用戶', type: 'USER_CURRENT' };
+        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件', creator: 'DS Cache', type: 'PLUGIN' };
+        if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶輸入', creator: '用戶', type: 'USER_CURRENT' };
         if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
-        if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI上一次回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
+        if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
-        let matchedIndex = CoreEngine.findInIndex(normContent);
+        let matchedIndex = CoreEngine.findInIndex(normContent, msg._nGrams);
         
         if (matchedIndex) {
-            if (isDynamic) {
-                return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
-            }
+            if (isDynamic) return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
             return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        if (isDynamic) {
-            return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
-        }
+        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
 
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `世界書提示詞(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+            return { cat: '世界書', source: `世界書(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
         }
         if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書提示詞(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
+            return { cat: '世界書', source: '世界書(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
         const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'summary', 'summarization', 'authors note', 'author\'s note'];
-        if (msg.name && !defaultNames.includes(name)) {
-            return { cat: '其他插件', source: `其他插件提示詞(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('author') || name.includes('note')) {
-            return { cat: '其他插件', source: `其他插件提示詞(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-        }
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) {
-            return { cat: '其他插件', source: `其他插件提示詞(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
-        }
+        if (msg.name && !defaultNames.includes(name)) return { cat: '其他插件', source: `其他插件(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        if (name.includes('author') || name.includes('note')) return { cat: '其他插件', source: `其他插件(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) return { cat: '其他插件', source: `其他插件(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
 
-        return { cat: '預設', source: msg.name ? `預設提示詞(${msg.name})` : '預設提示詞(無名)', creator: 'ST核心', type: 'DEFAULT' };
+        return { cat: '預設', source: msg.name ? `預設(${msg.name})` : '預設(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
 // ==========================================
-// 🌌 絕對防禦矩陣 (The Absolute Engine)
+// 🌌 絕對防禦矩陣 (O(N) 極速匹配引擎 & 全景日誌)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
@@ -350,7 +342,12 @@ async function interceptAndRestructurePrompt(data) {
         let incomingStream = data.chat;
         let incomingPool = [];
         let ledger = []; 
+        
+        // 🌟 日誌系統專用變數
         const processTime = Logger.getTime();
+        const chatTurn = getContext().chat ? getContext().chat.length : 0;
+        let otherPluginActions = new Set();
+        let detailedMods = [];
 
         const contextChat = getContext().chat || [];
         let structuralMap = new Array(incomingStream.length).fill(null);
@@ -405,6 +402,7 @@ async function interceptAndRestructurePrompt(data) {
         for (let i = 0; i < incomingStream.length; i++) {
             const msg = incomingStream[i];
             msg._norm = CoreEngine.normalize(msg.content);
+            msg._nGrams = CoreEngine.getGrams(msg._norm); 
             msg._origTemplate = CoreEngine.macroMap.get(msg._norm) || msg._norm;
 
             let isDynamic = false;
@@ -425,6 +423,13 @@ async function interceptAndRestructurePrompt(data) {
             msg._isDynamic = isDynamic;
             msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
             
+            // 🌟 偵測其他插件與系統動作
+            if (msg._attr.type === 'OTHER_PLUGIN') {
+                otherPluginActions.add(`[${msg._attr.creator}] 處理/注入了提示詞節點: ${msg._attr.source}`);
+            } else if (msg._attr.type === 'LOREBOOK') {
+                otherPluginActions.add(`[世界書系統] 掃描並注入了關聯條目: ${msg._attr.source}`);
+            }
+
             if (!uidMap[i]) {
                 let key = `${msg._attr.cat}_${msg.role}`;
                 catCounters[key] = (catCounters[key] || 0) + 1;
@@ -435,6 +440,50 @@ async function interceptAndRestructurePrompt(data) {
             incomingPool.push(msg);
         }
 
+        // 🌟 日誌輸出函數 (全景 Markdown)
+        const printLog = (isPluginDisabled) => {
+            if (Settings.logLevel < LogLevels.STANDARD) return;
+
+            let mdLog = `**[${processTime}]** ### ${isPluginDisabled ? '🛑 [插件已停止] 原始提示詞序列分析' : '🛡️ 絕對防禦矩陣處理報告 (量子糾纏)'}\n\n`;
+
+            if (otherPluginActions.size > 0) {
+                mdLog += `#### 🧩 其他插件與系統動作偵測\n`;
+                otherPluginActions.forEach(act => mdLog += `- ${act}\n`);
+                mdLog += `\n`;
+            }
+
+            if (detailedMods.length > 0) {
+                mdLog += `#### 📝 詳細修改與操作紀錄\n`;
+                detailedMods.forEach(mod => mdLog += `- ${mod}\n`);
+                mdLog += `\n`;
+            }
+
+            mdLog += `| 時間 | 原始排序 | 最終排序 | 對話輪數 | 角色 | 分類 | 原始來源 | 生成/出現 | 修改/創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
+
+            ledger.forEach(entry => {
+                if (entry.status === '已刪除') entry.finalIdx = '-';
+                else if (!isPluginDisabled) {
+                    let idx = state.frozenSequence.indexOf(entry.ref);
+                    entry.finalIdx = idx !== -1 ? idx + 1 : '-';
+                }
+            });
+
+            ledger.sort((a, b) => {
+                if (a.finalIdx === '-' && b.finalIdx === '-') return 0;
+                if (a.finalIdx === '-') return 1;
+                if (b.finalIdx === '-') return -1;
+                return a.finalIdx - b.finalIdx;
+            });
+
+            ledger.forEach(l => {
+                mdLog += `| ${l.time} | ${l.origIdx} | ${l.finalIdx} | 第 ${chatTurn} 輪 | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+            });
+
+            Logger.write(mdLog, LogLevels.DETAILED);
+        };
+
+        // 🌟 插件停用時的處理 (依然完整記錄)
         if (!Settings.enabled) {
             incomingPool.forEach((msg, idx) => {
                 ledger.push({
@@ -443,8 +492,19 @@ async function interceptAndRestructurePrompt(data) {
                     attr: msg._attr, gen: '原始載入', creator: msg._attr.creator, action: '未處理', func: '插件已停用', status: '未凍結'
                 });
             });
+            printLog(true);
             return; 
         }
+
+        let incomingUidMap = new Map();
+        let incomingNormMap = new Map();
+        incomingPool.forEach((msg, j) => {
+            if (!incomingUidMap.has(msg._uid)) incomingUidMap.set(msg._uid, []);
+            incomingUidMap.get(msg._uid).push(j);
+            
+            if (!incomingNormMap.has(msg._norm)) incomingNormMap.set(msg._norm, []);
+            incomingNormMap.get(msg._norm).push(j);
+        });
 
         let nextFrozen = [];
         let matchResults = new Array(state.frozenSequence.length).fill(-1);
@@ -454,9 +514,24 @@ async function interceptAndRestructurePrompt(data) {
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
             if (frozen._uid && frozen._uid.startsWith('chat_')) {
-                for (let j = 0; j < incomingPool.length; j++) {
-                    if (matchedIncomingIndices.has(j)) continue;
-                    if (incomingPool[j]._uid === frozen._uid) {
+                let indices = incomingUidMap.get(frozen._uid);
+                if (indices) {
+                    for (let j of indices) {
+                        if (!matchedIncomingIndices.has(j)) {
+                            matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            if (matchedFrozenIndices.has(i)) continue;
+            let frozen = state.frozenSequence[i];
+            let indices = incomingNormMap.get(frozen._norm);
+            if (indices) {
+                for (let j of indices) {
+                    if (!matchedIncomingIndices.has(j) && incomingPool[j].role === frozen.role) {
                         matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
                     }
                 }
@@ -466,28 +541,16 @@ async function interceptAndRestructurePrompt(data) {
         for (let i = 0; i < state.frozenSequence.length; i++) {
             if (matchedFrozenIndices.has(i)) continue;
             let frozen = state.frozenSequence[i];
-            for (let j = 0; j < incomingPool.length; j++) {
-                if (matchedIncomingIndices.has(j)) continue;
-                if (incomingPool[j].role !== frozen.role) continue;
-                if (incomingPool[j]._norm === frozen._norm) {
-                    matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
-                }
-            }
-        }
-
-        for (let i = 0; i < state.frozenSequence.length; i++) {
-            if (matchedFrozenIndices.has(i)) continue;
-            let frozen = state.frozenSequence[i];
             if (frozen._isDynamic) continue;
+            
+            if (!frozen._nGrams) frozen._nGrams = CoreEngine.getGrams(frozen._norm); 
             
             let bestMatchIdx = -1; let bestSim = 0;
             for (let j = 0; j < incomingPool.length; j++) {
                 if (matchedIncomingIndices.has(j)) continue;
-                if (incomingPool[j].role !== frozen.role) continue;
-                if (incomingPool[j]._isDynamic) continue;
-                if (incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
+                if (incomingPool[j].role !== frozen.role || incomingPool[j]._isDynamic || incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
-                let sim = CoreEngine.getSimilarity(frozen._norm, incomingPool[j]._norm);
+                let sim = CoreEngine.getSimilarityFast(frozen._nGrams, incomingPool[j]._nGrams);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
             if (bestSim > 0.5 && bestMatchIdx !== -1) {
@@ -500,10 +563,12 @@ async function interceptAndRestructurePrompt(data) {
             let frozen = state.frozenSequence[i];
             if (frozen._isDynamic) continue;
             
-            for (let j = 0; j < incomingPool.length; j++) {
-                if (matchedIncomingIndices.has(j)) continue;
-                if (incomingPool[j]._uid === frozen._uid && incomingPool[j]._attr.cat === frozen._attr.cat) {
-                    matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+            let indices = incomingUidMap.get(frozen._uid);
+            if (indices) {
+                for (let j of indices) {
+                    if (!matchedIncomingIndices.has(j) && incomingPool[j]._attr.cat === frozen._attr.cat) {
+                        matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+                    }
                 }
             }
         }
@@ -535,9 +600,11 @@ async function interceptAndRestructurePrompt(data) {
                 } else {
                     if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                     syncMessages.push(`<span style="color:#ffaa00;">[內容修改]</span> ${matched._attr.source}`);
+                    detailedMods.push(`[修改] 偵測到歷史節點被修改: ${frozen._attr.source}`);
                     
                     frozen.content = matched.content; 
                     frozen._norm = matched._norm; 
+                    frozen._nGrams = matched._nGrams;
                     frozen._origTemplate = matched._origTemplate;
                     frozen._uid = matched._uid;
                     frozen._attr = matched._attr;
@@ -553,16 +620,14 @@ async function interceptAndRestructurePrompt(data) {
             } else {
                 if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                 syncMessages.push(`<span style="color:#ff4444;">[節點刪除]</span> ${frozen._attr.source}`);
+                detailedMods.push(`[刪除] 偵測到歷史節點被移除或失效: ${frozen._attr.source}`);
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
             }
         }
 
         let cacheDrop = 0;
-        if (firstBreakIndex !== -1) {
-            cacheDrop = ((totalFrozenLen - firstBreakIndex) / totalFrozenLen) * 100;
-        }
+        if (firstBreakIndex !== -1) cacheDrop = ((totalFrozenLen - firstBreakIndex) / totalFrozenLen) * 100;
 
-        // 🌟 重構：極度詳細與易明的 Toastr 彈窗
         if (syncMessages.length > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
             let dropText = cacheDrop > 0 
                 ? `<div style="margin-top:8px; padding:6px; background:rgba(255,68,68,0.1); border-left:3px solid #ff4444; border-radius:4px;">
@@ -593,14 +658,14 @@ async function interceptAndRestructurePrompt(data) {
         let isChat1 = state.frozenSequence.length === 0;
 
         remainingPool.forEach(msg => {
-            if (msg._attr.type === 'USER_CURRENT') currentUser.push(msg);
-            else if (msg._attr.type === 'PREFILL') currentPrefill.push(msg);
+            if (msg._attr.type === 'USER_CURRENT') { currentUser.push(msg); detailedMods.push(`[新增] 用戶發送了第 ${chatTurn} 輪的新訊息`); }
+            else if (msg._attr.type === 'PREFILL') { currentPrefill.push(msg); detailedMods.push(`[新增] 觸發了預填充 (Prefill)`); }
             else if (msg._attr.type === 'AI_LAST_REPLY') aiLastReply.push(msg);
             else if (msg._isDynamic) allDynamic.push(msg); 
             else if (msg._attr.type === 'USER_HISTORY' || msg._attr.type === 'AI_HISTORY') newHistory.push(msg);
-            else if (msg._attr.type === 'DEFAULT') newDefault.push(msg);
-            else if (msg._attr.type === 'LOREBOOK') newLorebook.push(msg);
-            else newOther.push(msg);
+            else if (msg._attr.type === 'DEFAULT') { newDefault.push(msg); detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`); }
+            else if (msg._attr.type === 'LOREBOOK') { newLorebook.push(msg); detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`); }
+            else { newOther.push(msg); detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`); }
         });
 
         const appendToFrozen = (arr, gen, actionName, funcName) => {
@@ -642,34 +707,8 @@ async function interceptAndRestructurePrompt(data) {
             return clean;
         }));
 
-        if (Settings.logLevel >= LogLevels.DETAILED) {
-            let mdLog = `### 🛡️ 絕對防禦矩陣處理報告 (量子糾纏)\n\n`;
-            mdLog += `| 時間 | 最終排序 | 原始排序 | 角色 | 分類 | 原始來源 | 生成方式 | 創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
-            
-            ledger.forEach(entry => {
-                if (entry.status === '已刪除') entry.finalIdx = '-';
-                else {
-                    let idx = nextFrozen.indexOf(entry.ref);
-                    entry.finalIdx = idx !== -1 ? idx + 1 : '-';
-                }
-            });
-
-            ledger.sort((a, b) => {
-                if (a.finalIdx === '-' && b.finalIdx === '-') return 0;
-                if (a.finalIdx === '-') return 1;
-                if (b.finalIdx === '-') return -1;
-                return a.finalIdx - b.finalIdx;
-            });
-
-            ledger.forEach(l => {
-                mdLog += `| ${l.time} | ${l.finalIdx} | ${l.origIdx} | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
-            });
-
-            Logger.write(mdLog, LogLevels.DETAILED);
-        } else if (Settings.logLevel >= LogLevels.STANDARD) {
-            Logger.write(`✅ 處理完成。凍結池: ${state.frozenSequence.length} 節點`, LogLevels.STANDARD);
-        }
+        // 🌟 執行日誌輸出
+        printLog(false);
 
     } catch (err) {
         console.error('[DS Cache] 攔截器發生錯誤:', err);
@@ -678,7 +717,7 @@ async function interceptAndRestructurePrompt(data) {
 }
 
 // ==========================================
-// 🌟 UI 渲染與設置 (極致暗黑美學重構)
+// 🌟 UI 渲染與設置 (GPU 加速 & 事件代理)
 // ==========================================
 function addMenuEntry() {
     const menu = document.getElementById('extensionsMenu');
@@ -690,7 +729,6 @@ function addMenuEntry() {
     item.tabIndex = 0;
     item.setAttribute('role', 'listitem');
     item.title = '重置當前聊天凍結池 (DeepSeek Cache)';
-    // 美化擴充菜單按鈕
     item.innerHTML = `<div class="fa-fw fa-solid fa-bolt extensionsMenuExtensionButton" style="color: #00e5ff; text-shadow: 0 0 5px rgba(0,229,255,0.5);"></div><span style="font-weight:bold; color:#e0e0e0;">重置 DS 緩存池</span>`;
     
     item.addEventListener('click', () => {
@@ -702,15 +740,13 @@ function addMenuEntry() {
     menu.appendChild(item);
 }
 
-// 渲染存檔樹狀結構 (角色 -> 聊天)
 function renderChatsUI() {
     const container = $('#ds-ui-chat-list-container');
     if (container.length === 0) return;
-    container.empty();
     
     const keys = Object.keys(Settings.chats);
     if (keys.length === 0) {
-        container.append(`<div style="padding: 20px; text-align: center; color: #666; font-size: 13px; font-style: italic;">尚無接管的存檔數據，開始聊天以建立緩存池。</div>`);
+        container.html(`<div style="padding: 20px; text-align: center; color: #666; font-size: 13px; font-style: italic;">尚無接管的存檔數據，開始聊天以建立緩存池。</div>`);
         return;
     }
 
@@ -725,7 +761,6 @@ function renderChatsUI() {
     let html = '';
 
     for (const [charName, chats] of Object.entries(groupedChats)) {
-        // 判斷該角色下是否有當前正在進行的聊天
         const hasCurrent = chats.some(c => c.key === currentChatKey);
         
         html += `
@@ -755,48 +790,9 @@ function renderChatsUI() {
         html += `</div></div>`;
     }
     
-    container.append(html);
-
-    // 綁定折疊事件
-    $('.ds-ui-char-title').on('click', function() {
-        const content = $(this).parent().next('.ds-ui-char-content');
-        const icon = $(this).find('i.fa-solid');
-        content.slideToggle(200);
-        if (icon.hasClass('fa-folder')) {
-            icon.removeClass('fa-folder').addClass('fa-folder-open');
-        } else {
-            icon.removeClass('fa-folder-open').addClass('fa-folder');
-        }
-    });
-
-    // 綁定刪除單一聊天事件
-    $('.ds-ui-delete-chat-btn').on('click', function(e) {
-        e.stopPropagation();
-        const key = $(this).data('key');
-        if (confirm('確定要清除此聊天的凍結池嗎？\n(這不會刪除您的聊天記錄，僅重置 DeepSeek 緩存排序)')) {
-            delete Settings.chats[key];
-            safeSave();
-            renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success("已清除該聊天的凍結池", "DeepSeek Cache");
-        }
-    });
-
-    // 綁定刪除角色所有聊天事件
-    $('.ds-ui-delete-char-btn').on('click', function(e) {
-        e.stopPropagation();
-        const charName = $(this).data('char');
-        if (confirm(`確定要清除角色「${charName}」的所有緩存池嗎？\n(這不會刪除任何聊天記錄)`)) {
-            Object.keys(Settings.chats).forEach(k => {
-                if (Settings.chats[k].character === charName) delete Settings.chats[k];
-            });
-            safeSave();
-            renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success(`已清除 ${charName} 的所有凍結池`, "DeepSeek Cache");
-        }
-    });
+    container.html(html);
 }
 
-// 創建極致美觀的自定義 Switch 開關
 function createToggle(id, title, desc, checked) {
     return `
     <div class="ds-ui-setting-row">
@@ -815,35 +811,32 @@ async function setupUI() {
     if (!$('#ds-ui-style').length) {
         $('head').append(`
             <style id="ds-ui-style">
-                /* 核心變量與基礎樣式 */
                 :root { --ds-cyan: #00e5ff; --ds-cyan-dim: rgba(0, 229, 255, 0.15); --ds-bg: rgba(15, 15, 20, 0.6); --ds-border: rgba(255, 255, 255, 0.08); }
-                .ds-ui-panel { background: var(--ds-bg); backdrop-filter: blur(10px); border: 1px solid var(--ds-border); border-radius: 8px; padding: 12px; margin-bottom: 15px; }
+                .ds-ui-panel { background: var(--ds-bg); backdrop-filter: blur(10px); border: 1px solid var(--ds-border); border-radius: 8px; padding: 12px; margin-bottom: 15px; transform: translateZ(0); }
                 .ds-ui-header { font-size: 14px; font-weight: bold; color: #e0e0e0; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
-                .ds-ui-header i { transition: transform 0.3s ease; }
+                .ds-ui-header i { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); will-change: transform; }
                 .ds-ui-header.collapsed i { transform: rotate(-90deg); }
-                .ds-ui-content { overflow: hidden; transition: max-height 0.3s ease; }
+                .ds-ui-content { overflow: hidden; will-change: height, opacity; transform: translateZ(0); }
                 
-                /* 自定義 Switch 開關 */
-                .ds-ui-setting-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; margin-bottom: 8px; border: 1px solid transparent; transition: 0.2s; }
+                .ds-ui-setting-row { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 6px; margin-bottom: 8px; border: 1px solid transparent; transition: background-color 0.2s, border-color 0.2s; }
                 .ds-ui-setting-row:hover { border-color: var(--ds-cyan-dim); background: rgba(0,0,0,0.4); }
                 .ds-ui-setting-text { flex: 1; padding-right: 15px; }
                 .ds-ui-setting-title { font-size: 14px; font-weight: bold; color: var(--ds-cyan); margin-bottom: 4px; }
                 .ds-ui-setting-desc { font-size: 11px; color: #999; line-height: 1.4; }
                 .ds-ui-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
                 .ds-ui-switch input { opacity: 0; width: 0; height: 0; }
-                .ds-ui-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .3s; border-radius: 22px; border: 1px solid #555; }
-                .ds-ui-slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: #aaa; transition: .3s; border-radius: 50%; }
+                .ds-ui-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: background-color 0.3s; border-radius: 22px; border: 1px solid #555; transform: translateZ(0); }
+                .ds-ui-slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: #aaa; transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s; border-radius: 50%; will-change: transform; }
                 .ds-ui-switch input:checked + .ds-ui-slider { background-color: rgba(0, 229, 255, 0.2); border-color: var(--ds-cyan); }
-                .ds-ui-switch input:checked + .ds-ui-slider:before { transform: translateX(18px); background-color: var(--ds-cyan); box-shadow: 0 0 8px var(--ds-cyan); }
+                .ds-ui-switch input:checked + .ds-ui-slider:before { transform: translate3d(18px, 0, 0); background-color: var(--ds-cyan); box-shadow: 0 0 8px var(--ds-cyan); }
 
-                /* 存檔樹狀結構 */
-                .ds-ui-char-folder { margin-bottom: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid var(--ds-border); overflow: hidden; }
-                .ds-ui-char-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.02); cursor: pointer; transition: 0.2s; }
+                .ds-ui-char-folder { margin-bottom: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid var(--ds-border); overflow: hidden; transform: translateZ(0); }
+                .ds-ui-char-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: rgba(255,255,255,0.02); cursor: pointer; transition: background-color 0.2s; }
                 .ds-ui-char-header:hover { background: rgba(255,255,255,0.05); }
                 .ds-ui-char-header.active { border-bottom: 1px solid var(--ds-border); }
                 .ds-ui-char-title { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: bold; color: #ddd; }
                 .ds-ui-badge { background: #333; color: #aaa; font-size: 10px; padding: 2px 6px; border-radius: 10px; }
-                .ds-ui-chat-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px 8px 30px; border-bottom: 1px solid rgba(255,255,255,0.02); transition: 0.2s; }
+                .ds-ui-chat-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px 8px 30px; border-bottom: 1px solid rgba(255,255,255,0.02); transition: background-color 0.2s; }
                 .ds-ui-chat-item:last-child { border-bottom: none; }
                 .ds-ui-chat-item:hover { background: rgba(0, 229, 255, 0.05); }
                 .ds-ui-chat-current { background: rgba(0, 229, 255, 0.08); border-left: 3px solid var(--ds-cyan); padding-left: 27px; }
@@ -852,21 +845,19 @@ async function setupUI() {
                 .ds-ui-chat-current .ds-ui-chat-name { color: #fff; font-weight: bold; }
                 .ds-ui-chat-nodes { font-size: 10px; color: #777; }
                 
-                /* 按鈕與日誌 */
-                .ds-ui-icon-btn { background: transparent; border: none; color: #777; cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 4px; transition: 0.2s; }
+                .ds-ui-icon-btn { background: transparent; border: none; color: #777; cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 4px; transition: color 0.2s, background-color 0.2s; }
                 .ds-ui-icon-btn:hover { color: var(--ds-cyan); background: var(--ds-cyan-dim); }
                 .ds-ui-delete-char-btn:hover, .ds-ui-delete-chat-btn:hover { color: #ff4444; background: rgba(255, 68, 68, 0.15); }
-                .ds-ui-btn-danger { background: rgba(255, 68, 68, 0.1); color: #ff4444; border: 1px solid rgba(255, 68, 68, 0.3); padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: 0.2s; }
+                .ds-ui-btn-danger { background: rgba(255, 68, 68, 0.1); color: #ff4444; border: 1px solid rgba(255, 68, 68, 0.3); padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: background-color 0.2s, box-shadow 0.2s; }
                 .ds-ui-btn-danger:hover { background: rgba(255, 68, 68, 0.2); box-shadow: 0 0 8px rgba(255, 68, 68, 0.4); }
                 
-                .ds-ui-log-viewer { width: 100%; height: 300px; background: #080808; color: #ccc; font-family: 'Consolas', monospace; font-size: 11px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px inset rgba(255,255,255,0.05); }
+                .ds-ui-log-viewer { width: 100%; height: 350px; background: #080808; color: #ccc; font-family: 'Consolas', monospace; font-size: 11px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px inset rgba(255,255,255,0.05); transform: translateZ(0); will-change: scroll-position; }
                 .ds-ui-log-entry { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.1); }
                 .ds-ui-log-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
                 .ds-ui-log-table th { background: #1a1a1a; color: var(--ds-cyan); padding: 6px; text-align: left; border-bottom: 1px solid var(--ds-cyan); position: sticky; top: 0; }
                 .ds-ui-log-table td { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
                 .ds-ui-log-table tr:hover td { background: rgba(0, 229, 255, 0.05); color: #fff; }
                 
-                /* 自定義滾動條 */
                 .ds-ui-log-viewer::-webkit-scrollbar, #ds-ui-chat-list-container::-webkit-scrollbar { width: 6px; height: 6px; }
                 .ds-ui-log-viewer::-webkit-scrollbar-track, #ds-ui-chat-list-container::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
                 .ds-ui-log-viewer::-webkit-scrollbar-thumb, #ds-ui-chat-list-container::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
@@ -883,7 +874,6 @@ async function setupUI() {
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px; background: #0d0d11;">
             
-            <!-- 模塊 1：核心防禦設定 (預設折疊) -->
             <div class="ds-ui-panel">
                 <div class="ds-ui-header collapsed" onclick="$(this).toggleClass('collapsed').next().slideToggle(200)">
                     <i class="fa-solid fa-chevron-down"></i> ⚙️ 核心防禦設定
@@ -908,7 +898,6 @@ async function setupUI() {
                 </div>
             </div>
 
-            <!-- 模塊 2：存檔與緩存管理 (預設折疊) -->
             <div class="ds-ui-panel">
                 <div class="ds-ui-header collapsed" onclick="$(this).toggleClass('collapsed').next().slideToggle(200)">
                     <i class="fa-solid fa-chevron-down"></i> 📂 存檔與緩存管理
@@ -918,11 +907,10 @@ async function setupUI() {
                         <span style="font-size: 11px; color: #888;">管理各個角色與聊天的獨立緩存池</span>
                         <button id="ds-cache-factory-reset" class="ds-ui-btn-danger"><i class="fa-solid fa-skull"></i> 摧毀所有存檔</button>
                     </div>
-                    <div id="ds-ui-chat-list-container" style="max-height: 280px; overflow-y: auto; padding-right: 4px;"></div>
+                    <div id="ds-ui-chat-list-container" style="max-height: 280px; overflow-y: auto; padding-right: 4px; transform: translateZ(0);"></div>
                 </div>
             </div>
             
-            <!-- 模塊 3：深度日誌系統 (預設折疊) -->
             <div class="ds-ui-panel" style="margin-bottom: 0;">
                 <div class="ds-ui-header collapsed" onclick="$(this).toggleClass('collapsed').next().slideToggle(200)">
                     <i class="fa-solid fa-chevron-down"></i> 📝 深度日誌系統
@@ -943,12 +931,10 @@ async function setupUI() {
     $('#extensions_settings').append(html);
     Logger._uiViewer = document.getElementById('ds-cache-log-viewer');
 
-    // 綁定設定變更事件 (自動保存)
     $('#ds-opt-enabled').on('change', function() { Settings.enabled = $(this).is(':checked'); safeSave(); });
     $('#ds-opt-instantNotify').on('change', function() { Settings.instantNotify = $(this).is(':checked'); safeSave(); });
     $('#ds-opt-logLevel').on('change', function () { Settings.logLevel = parseInt($(this).val()); safeSave(); });
     
-    // 全域重置按鈕
     $('#ds-cache-factory-reset').on('click', () => { 
         if (confirm("⚠️ 終極警告：\n這將徹底摧毀所有角色卡、所有存檔的 DeepSeek 快取連續性！\n(不會刪除聊天記錄，但下次對話將全部重新計算 Token)\n\n確定要執行核彈級清除嗎？")) { 
             Settings.chats = {}; safeSave(); renderChatsUI(); 
@@ -956,11 +942,45 @@ async function setupUI() {
         } 
     });
 
-    // 日誌按鈕
     $('#ds-log-copy').on('click', Logger.copy);
     $('#ds-log-export').on('click', Logger.export);
     $('#ds-log-clear').on('click', Logger.clear);
     
+    const $chatContainer = $('#ds-ui-chat-list-container');
+    
+    $chatContainer.on('click', '.ds-ui-char-title', function() {
+        const content = $(this).parent().next('.ds-ui-char-content');
+        const icon = $(this).find('i.fa-solid');
+        content.slideToggle(200);
+        if (icon.hasClass('fa-folder')) {
+            icon.removeClass('fa-folder').addClass('fa-folder-open');
+        } else {
+            icon.removeClass('fa-folder-open').addClass('fa-folder');
+        }
+    });
+
+    $chatContainer.on('click', '.ds-ui-delete-chat-btn', function(e) {
+        e.stopPropagation();
+        const key = $(this).data('key');
+        if (confirm('確定要清除此聊天的凍結池嗎？\n(這不會刪除您的聊天記錄，僅重置 DeepSeek 緩存排序)')) {
+            delete Settings.chats[key];
+            safeSave(); renderChatsUI();
+            if (typeof toastr !== 'undefined') toastr.success("已清除該聊天的凍結池", "DeepSeek Cache");
+        }
+    });
+
+    $chatContainer.on('click', '.ds-ui-delete-char-btn', function(e) {
+        e.stopPropagation();
+        const charName = $(this).data('char');
+        if (confirm(`確定要清除角色「${charName}」的所有緩存池嗎？\n(這不會刪除任何聊天記錄)`)) {
+            Object.keys(Settings.chats).forEach(k => {
+                if (Settings.chats[k].character === charName) delete Settings.chats[k];
+            });
+            safeSave(); renderChatsUI();
+            if (typeof toastr !== 'undefined') toastr.success(`已清除 ${charName} 的所有凍結池`, "DeepSeek Cache");
+        }
+    });
+
     renderChatsUI();
 }
 
@@ -979,7 +999,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V6.0.0 絕對防禦矩陣 (Pro) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V6.0.0 絕對防禦矩陣 (全景日誌版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
