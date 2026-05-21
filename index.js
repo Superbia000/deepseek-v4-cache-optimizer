@@ -157,7 +157,6 @@ const CoreEngine = {
         return grams;
     },
 
-    // 🌟 修復 JSON 序列化導致的 Set 丟失問題
     getOverlapRatioFast: (g1, g2) => {
         if (!g1 || !g2 || !(g1 instanceof Set) || !(g2 instanceof Set) || g1.size === 0 || g2.size === 0) return 0;
         let intersect = 0;
@@ -301,7 +300,6 @@ const CoreEngine = {
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentTrimmed = msg.content ? msg.content.trim() : '';
         
-        // 🌟 優先攔截 ST 系統摘要 (Summary)
         if (name.includes('summary') || name.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
             return { cat: '摘要', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY' };
         }
@@ -336,7 +334,7 @@ const CoreEngine = {
 };
 
 // ==========================================
-// 🌌 絕對防禦矩陣 (雙軌排序引擎 & 摘要修復)
+// 🌌 絕對防禦矩陣 (雙軌排序引擎 & 尾部追加優化)
 // ==========================================
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
@@ -414,7 +412,6 @@ async function interceptAndRestructurePrompt(data) {
             let contentTrimmed = msg.content ? msg.content.trim() : '';
             let nameLower = msg.name ? msg.name.toLowerCase() : '';
             
-            // 🌟 強制將 Summary 標記為動態，確保它在 Chat 2+ 能被鏡像追加
             if (nameLower.includes('summary') || nameLower.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
                 isDynamic = true;
             } else if (userCurrentText.length > 3 && structuralMap[i] !== 'USER_CURRENT' && msg.content.includes(userCurrentText)) {
@@ -551,7 +548,6 @@ async function interceptAndRestructurePrompt(data) {
             let frozen = state.frozenSequence[i];
             if (frozen._isDynamic) continue;
             
-            // 🌟 修復 JSON 序列化導致的 Set 丟失問題
             if (!frozen._nGrams || !(frozen._nGrams instanceof Set)) {
                 frozen._nGrams = CoreEngine.getGrams(frozen._norm || ''); 
             }
@@ -589,6 +585,7 @@ async function interceptAndRestructurePrompt(data) {
         let firstBreakIndex = -1; 
         let breakNodeName = "";
         let syncMessages = [];
+        let appendOnlyDeltas = []; // 🌟 用於存放抽離出來的尾部追加內容
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
@@ -607,22 +604,73 @@ async function interceptAndRestructurePrompt(data) {
                 if (frozen._norm === matched._norm) {
                     nextFrozen.push(frozen);
                     if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
+                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾顛(完美匹配)', status: '已凍結' });
                 } else {
-                    if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
-                    syncMessages.push(`<span style="color:#ffaa00;">[內容修改]</span> ${matched._attr.source}`);
-                    detailedMods.push(`[修改] 偵測到歷史節點被修改: ${frozen._attr.source}`);
+                    // 🌟 深度思考：判斷是否為「僅尾部追加內容」
+                    const origStr = frozen.content || '';
+                    const newStr = matched.content || '';
+                    const isUserOrAIReply = ['USER_CURRENT', 'USER_HISTORY', 'AI_LAST_REPLY', 'AI_HISTORY', 'PREFILL'].includes(frozen._attr.type);
                     
-                    frozen.content = matched.content; 
-                    frozen._norm = matched._norm; 
-                    frozen._nGrams = matched._nGrams;
-                    frozen._origTemplate = matched._origTemplate;
-                    frozen._uid = matched._uid;
-                    frozen._attr = matched._attr;
-                    
-                    nextFrozen.push(frozen);
-                    let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
-                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
+                    let isAppendOnly = false;
+                    let addedText = '';
+
+                    if (!isUserOrAIReply && origStr.trim().length > 0 && newStr.trim().length > 0) {
+                        const cleanOrig = origStr.replace(/\r/g, '');
+                        const cleanNew = newStr.replace(/\r/g, '');
+                        if (cleanNew.startsWith(cleanOrig)) {
+                            const cleanSuffix = cleanNew.substring(cleanOrig.length);
+                            let rawSplitIdx = newStr.indexOf(origStr);
+                            addedText = rawSplitIdx !== -1 ? newStr.substring(rawSplitIdx + origStr.length) : cleanSuffix;
+                            if (addedText.trim().length > 0) {
+                                isAppendOnly = true;
+                            }
+                        }
+                    }
+
+                    if (isAppendOnly) {
+                        // 🌟 原位保持不變（完美保住前面的緩存鎖定！）
+                        nextFrozen.push(frozen);
+                        if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
+
+                        // 🌟 抽離尾部追加部分，構造新虛擬節點，準備送到底部追加
+                        let deltaMsg = {
+                            role: matched.role,
+                            content: addedText,
+                            name: matched.name,
+                            _norm: CoreEngine.normalize(addedText),
+                            _nGrams: CoreEngine.getGrams(CoreEngine.normalize(addedText)),
+                            _origTemplate: addedText,
+                            _attr: {
+                                cat: matched._attr.cat,
+                                source: `${matched._attr.source} (追加內容)`,
+                                creator: matched._attr.creator,
+                                type: matched._attr.type
+                            },
+                            _uid: matched._uid + '_delta',
+                            _origIdx: matched._origIdx,
+                            _isDSPlugin: true 
+                        };
+                        appendOnlyDeltas.push(deltaMsg);
+
+                        detailedMods.push(`[追加] 偵測到提示詞尾部追加內容: ${frozen._attr.source}，已安全抽離追加部分，原提示詞保持凍結`);
+                        ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(尾部追加保護)', status: '已凍結' });
+                    } else {
+                        // 🌟 內容確實有刪除或非尾部的修改 -> 必須原位完整同步
+                        if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
+                        syncMessages.push(`<span style="color:#ffaa00;">[內容修改]</span> ${matched._attr.source}`);
+                        detailedMods.push(`[修改] 偵測到歷史節點被修改: ${frozen._attr.source}`);
+                        
+                        frozen.content = matched.content; 
+                        frozen._norm = matched._norm; 
+                        frozen._nGrams = matched._nGrams;
+                        frozen._origTemplate = matched._origTemplate;
+                        frozen._uid = matched._uid;
+                        frozen._attr = matched._attr;
+                        
+                        nextFrozen.push(frozen);
+                        let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
+                        ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
+                    }
                 }
             } else if (frozen._isDynamic) {
                 nextFrozen.push(frozen);
@@ -664,10 +712,13 @@ async function interceptAndRestructurePrompt(data) {
             );
         }
 
+        // 🌟 將抽離出的尾部追加節點併入 remainingPool，它會被自動排序並追加至底部
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
+        remainingPool.push(...appendOnlyDeltas);
+
         let newHistory = [], newDefault = [], newLorebook = [], newOther = [], allDynamic = [], currentUser = [], currentPrefill = [], aiLastReply = [];
         let chat1SystemPrompts = []; 
-        let summaryPrompts = []; // 🌟 專門存放抽取的摘要
+        let summaryPrompts = []; 
         let isChat1 = state.frozenSequence.length === 0;
 
         remainingPool.forEach(msg => {
@@ -688,7 +739,6 @@ async function interceptAndRestructurePrompt(data) {
                 detailedMods.push(`[新增] 載入了歷史訊息: ${msg._attr.source}`);
             }
             else if (msg._attr.type === 'SUMMARY') {
-                // 🌟 摘要特化處理
                 if (isChat1) {
                     summaryPrompts.push(msg);
                     detailedMods.push(`[新增] 抽取了系統摘要: ${msg._attr.source}`);
@@ -732,23 +782,20 @@ async function interceptAndRestructurePrompt(data) {
             });
         };
 
-        // 🌟 雙軌排序引擎 (Dual-Track Sorting Engine)
         if (isChat1) {
-            // 對話 1：完美保留所有 System/Prompt 的原始相對順序，並將摘要安全下放
             appendToFrozen(chat1SystemPrompts, '新增', '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(summaryPrompts, '新增', '即時凍結', '絕對凍結(對話1)'); // 摘要被安全放置於歷史之前
+            appendToFrozen(summaryPrompts, '新增', '即時凍結', '絕對凍結(對話1)'); 
             appendToFrozen(newHistory, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(aiLastReply, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話1)');
         } else {
-            // 對話 2+：嚴格分類追加，摘要作為動態提示詞被鏡像追加
             appendToFrozen(newHistory, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(aiLastReply, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newDefault, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newLorebook, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newOther, '新增', '追加凍結', '絕對凍結(對話2+)');
-            appendToFrozen(allDynamic, '新增', '鏡像追加', '絕對凍結(對話2+)'); // 摘要會在這裡被追加
+            appendToFrozen(allDynamic, '新增', '鏡像追加', '絕對凍結(對話2+)'); 
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話2+)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話2+)');
         }
