@@ -182,47 +182,65 @@ const CoreEngine = {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
-        const addToIndex = (norm, cat, source, creator, type) => {
+        const addToIndex = (norm, cat, source, creator, type, bookName, entryName) => {
             if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
-            CoreEngine.promptIndex.push({ contentNorm: norm, nGrams: CoreEngine.getGrams(norm), cat, source, creator, type });
+            CoreEngine.promptIndex.push({ contentNorm: norm, nGrams: CoreEngine.getGrams(norm), cat, source, creator, type, bookName, entryName });
         };
 
-        const deepScan = (obj, depth = 0, visited = new WeakSet(), currentBookName = "未知世界書") => {
+        const deepScan = (obj, depth = 0, visited = new WeakSet(), bookName = "未知世界書", charName = "") => {
             if (depth > 10 || !obj || typeof obj !== 'object') return;
             if (visited.has(obj)) return;
             visited.add(obj);
 
+            const hasEntriesArr = Array.isArray(obj.entries);
+
+            // Detect if this object is a world book container by checking for structural signatures:
+            // A world book has: a 'name' string + an 'entries' array whose first element has uid/key.
+            if (typeof obj.name === 'string' && hasEntriesArr && obj.entries.length > 0) {
+                const first = obj.entries[0];
+                if (first && typeof first === 'object' && (first.uid !== undefined || Array.isArray(first.key))) {
+                    bookName = obj.name;
+                }
+            }
+
+            // Detect if this object is a character (has name + data) to feed charName into world book labeling.
+            if (typeof obj.name === 'string' && typeof obj.data === 'object' && !charName) {
+                charName = obj.name;
+            }
+
+            // Check if this is a world book entry (individual entry object).
             if (typeof obj.content === 'string' && (Array.isArray(obj.key) || obj.uid !== undefined || obj.comment !== undefined || obj.constant !== undefined)) {
-                if (!obj.role && obj.type !== 'prompt') { 
+                if (!obj.role && obj.type !== 'prompt') {
+                    let effectiveBookName = bookName;
+                    if (effectiveBookName === '未知世界書' && charName) effectiveBookName = `${charName}(角色內嵌世界書)`;
                     let entryName = obj.comment || obj.name || obj.title;
                     if (!entryName && Array.isArray(obj.key) && obj.key.length > 0) entryName = obj.key.join(', ');
                     if (!entryName) entryName = '未命名條目';
-                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書(${entryName})`, '世界書系統', 'LOREBOOK');
+                    addToIndex(CoreEngine.normalize(obj.content), '世界書', `世界書(${effectiveBookName}: ${entryName})`, '世界書系統', 'LOREBOOK', effectiveBookName, entryName);
                 }
             }
-            
+
+            // Check if this is a preset prompt template (has name/identifier + role/type).
             if (typeof obj.content === 'string' && (obj.name || obj.identifier) && (obj.role || obj.type === 'prompt')) {
                 let pName = obj.name || obj.identifier;
-                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設(${pName})`, obj.role || 'ST核心', 'DEFAULT');
+                let pClass = obj.role === 'system' ? '系統' : (obj.role || '提示詞');
+                addToIndex(CoreEngine.normalize(obj.content), '預設', `預設(${pClass}-${pName})`, obj.role || 'ST核心', 'DEFAULT');
             }
 
-            if (typeof obj.description === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.description), '角色', `預設(設定-${obj.name})`, '核心設定', 'DEFAULT');
-            if (typeof obj.personality === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.personality), '角色', `預設(性格-${obj.name})`, '核心設定', 'DEFAULT');
-            if (typeof obj.scenario === 'string' && obj.scenario.length > 0) addToIndex(CoreEngine.normalize(obj.scenario), '角色', `預設(場景)`, '核心設定', 'DEFAULT');
-            if (typeof obj.first_mes === 'string' && obj.first_mes.length > 0) addToIndex(CoreEngine.normalize(obj.first_mes), '角色', `預設(初次對話)`, '核心設定', 'DEFAULT');
-            if (typeof obj.mes_example === 'string' && obj.mes_example.length > 0) addToIndex(CoreEngine.normalize(obj.mes_example), '角色', `預設(對話範例)`, '核心設定', 'DEFAULT');
+            // Character core properties — index them with the character name for traceability.
+            if (typeof obj.description === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.description), '角色', `預設(角色描述-${obj.name})`, '核心設定', 'DEFAULT');
+            if (typeof obj.personality === 'string' && obj.name) addToIndex(CoreEngine.normalize(obj.personality), '角色', `預設(性格描述-${obj.name})`, '核心設定', 'DEFAULT');
+            if (typeof obj.scenario === 'string' && obj.scenario.length > 0) addToIndex(CoreEngine.normalize(obj.scenario), '角色', `預設(場景-${obj.name || '未知角色'})`, '核心設定', 'DEFAULT');
+            if (typeof obj.first_mes === 'string' && obj.first_mes.length > 0) addToIndex(CoreEngine.normalize(obj.first_mes), '角色', `預設(初次對話-${obj.name || '未知角色'})`, '核心設定', 'DEFAULT');
+            if (typeof obj.mes_example === 'string' && obj.mes_example.length > 0) addToIndex(CoreEngine.normalize(obj.mes_example), '角色', `預設(對話範例-${obj.name || '未知角色'})`, '核心設定', 'DEFAULT');
             if (typeof obj.persona_description === 'string' && obj.persona_description.length > 0) addToIndex(CoreEngine.normalize(obj.persona_description), '用戶', `預設(用戶設定)`, '用戶', 'DEFAULT');
 
             for (let key in obj) {
                 try {
                     let val = obj[key];
                     if (val && typeof val === 'object' && !(val instanceof Element) && !(val instanceof Node)) {
-                        let nextBookName = currentBookName;
-                        if (obj === window.world_info?.entries || obj === window.world_info?.books || obj === window.extension_settings?.world_info?.entries) {
-                            nextBookName = key;
-                        }
-                        deepScan(val, depth + 1, visited, nextBookName);
+                        deepScan(val, depth + 1, visited, bookName, charName);
                     }
                 } catch (e) {}
             }
@@ -251,7 +269,10 @@ const CoreEngine = {
                 }
             }
         }
-        return bestMatch;
+        if (bestMatch) {
+            return { contentNorm: bestMatch.contentNorm, nGrams: bestMatch.nGrams, cat: bestMatch.cat, source: bestMatch.source, creator: bestMatch.creator, type: bestMatch.type, bookName: bestMatch.bookName, entryName: bestMatch.entryName };
+        }
+        return null;
     },
 
     patchSTEngine: () => {
@@ -299,35 +320,65 @@ const CoreEngine = {
 
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentTrimmed = msg.content ? msg.content.trim() : '';
-        
+
         if (name.includes('summary') || name.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
             return { cat: '摘要', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY' };
         }
 
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         let matchedIndex = CoreEngine.findInIndex(normContent, msg._nGrams);
-        
+
         if (matchedIndex) {
-            if (isDynamic) return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
-            return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
+            if (isDynamic) {
+                let dynSource = matchedIndex.source + '(動態)';
+                return { cat: '動態', source: dynSource, creator: matchedIndex.creator, type: 'DYNAMIC', bookName: matchedIndex.bookName, entryName: matchedIndex.entryName };
+            }
+            return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type, bookName: matchedIndex.bookName, entryName: matchedIndex.entryName };
         }
 
         if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
 
-        let contentLower = msg.content ? msg.content.toLowerCase() : '';
-        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
-            const match = msg.name.match(/\((.*?)\)/);
-            const entryName = match ? match[1] : msg.name;
-            return { cat: '世界書', source: `世界書(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
+        // Fallback LOREBOOK detection from msg.name — try to extract book name and entry name.
+        if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-') || name.includes('wi ') || name.includes('worldinfo')) {
+            let bookName = '未知世界書';
+            let entryName = '未知條目';
+            const nameRaw = msg.name || '';
+            const bracketMatch = nameRaw.match(/\((.*?)\)/);
+            if (bracketMatch) entryName = bracketMatch[1];
+            const colonMatch = nameRaw.match(/(?:WI|World\s*Info|Lorebook)\s*[-:]\s*([^(:]+)/i);
+            if (colonMatch) bookName = colonMatch[1].trim();
+            const bookSectionMatch = nameRaw.match(/\(([^)]+):\s*([^)]+)\)/);
+            if (bookSectionMatch) { bookName = bookSectionMatch[1].trim(); entryName = bookSectionMatch[2].trim(); }
+            return { cat: '世界書', source: `世界書(${bookName}: ${entryName})`, creator: '世界書系統', type: 'LOREBOOK', bookName, entryName };
         }
-        if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            return { cat: '世界書', source: '世界書(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
+
+        // Fallback detection for preset prompts based on common ST naming conventions.
+        const presetNameMap = {
+            'main': '主提示詞', 'nsfw': 'NSFW提示詞', 'jailbreak': '越獄提示詞',
+            'description': '角色描述', 'personality': '性格描述', 'scenario': '場景',
+            'first message': '初次對話', 'first_mes': '初次對話', 'mes example': '對話範例',
+            'world info': '世界書', 'lorebook': '世界書', 'author': '作者註釋',
+            'chat history': '對話歷史', 'example': '對話範例', 'greeting': '初次對話',
+            'sysprompt': '系統提示詞', 'system': '系統提示詞', 'post-history': '對話後置',
+            'pre-history': '對話前置', 'authors note': '作者註釋', 'author\'s note': '作者註釋',
+            'vector': '向量檢索', 'smart context': '智能上下文', 'rag': 'RAG檢索',
+        };
+
+        if (msg.name) {
+            let nameLower = msg.name.toLowerCase();
+            for (const [key, label] of Object.entries(presetNameMap)) {
+                if (nameLower.includes(key)) {
+                    return { cat: '預設', source: `預設(${label})`, creator: 'ST核心', type: 'DEFAULT' };
+                }
+            }
         }
 
         const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'authors note', 'author\'s note'];
-        if (msg.name && !defaultNames.includes(name)) return { cat: '其他插件', source: `其他插件(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        if (msg.name && !defaultNames.includes(name)) {
+            return { cat: '其他插件', source: `其他插件(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        }
         if (name.includes('author') || name.includes('note')) return { cat: '其他插件', source: `其他插件(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) return { cat: '其他插件', source: `其他插件(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentTrimmed.includes('retrieved context')) return { cat: '其他插件', source: `其他插件(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
 
         return { cat: '預設', source: msg.name ? `預設(${msg.name})` : '預設(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
@@ -434,7 +485,9 @@ async function interceptAndRestructurePrompt(data) {
             if (msg._attr.type === 'OTHER_PLUGIN') {
                 otherPluginActions.add(`[${msg._attr.creator}] 處理/注入了提示詞節點: ${msg._attr.source}`);
             } else if (msg._attr.type === 'LOREBOOK') {
-                otherPluginActions.add(`[世界書系統] 掃描並注入了關聯條目: ${msg._attr.source}`);
+                const bn = msg._attr.bookName || '未知世界書';
+                const en = msg._attr.entryName || '未知條目';
+                otherPluginActions.add(`[世界書系統] 掃描並注入了世界書條目 → 世界書: **${bn}** / 條目: **${en}**`);
             }
 
             if (!uidMap[i]) {
@@ -746,7 +799,11 @@ async function interceptAndRestructurePrompt(data) {
                     chat1SystemPrompts.push(msg);
                     if (msg._isDynamic) detailedMods.push(`[新增] 載入了動態提示詞: ${msg._attr.source}`);
                     else if (msg._attr.type === 'DEFAULT') detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`);
-                    else if (msg._attr.type === 'LOREBOOK') detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`);
+                    else if (msg._attr.type === 'LOREBOOK') {
+                        const bnLb1 = msg._attr.bookName || '未知世界書';
+                        const enLb1 = msg._attr.entryName || '未知條目';
+                        detailedMods.push(`[新增] 觸發了新的世界書條目 → 世界書: "${bnLb1}" / 條目: "${enLb1}"`);
+                    }
                     else detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`);
                 } else {
                     if (msg._isDynamic) {
@@ -756,9 +813,11 @@ async function interceptAndRestructurePrompt(data) {
                         newDefault.push(msg); 
                         detailedMods.push(`[新增] 載入了預設提示詞: ${msg._attr.source}`); 
                     }
-                    else if (msg._attr.type === 'LOREBOOK') { 
-                        newLorebook.push(msg); 
-                        detailedMods.push(`[新增] 觸發了新的世界書條目: ${msg._attr.source}`); 
+                    else if (msg._attr.type === 'LOREBOOK') {
+                        newLorebook.push(msg);
+                        const bnLb = msg._attr.bookName || '未知世界書';
+                        const enLb = msg._attr.entryName || '未知條目';
+                        detailedMods.push(`[新增] 觸發了新的世界書條目 → 世界書: "${bnLb}" / 條目: "${enLb}"`);
                     }
                     else { 
                         newOther.push(msg); 
