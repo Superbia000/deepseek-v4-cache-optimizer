@@ -2,9 +2,11 @@ import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
 
 // ==========================================
-// 🧠 ST API 中繼層 – 透過 getContext() 取得內部建置器
+// 🧠 ST API 中繼層
 // ==========================================
 function getSTContext() { try { return getContext(); } catch (e) { return null; } }
+
+// ==========================================
 
 // ==========================================
 // 狀態與設定 (Settings & State)
@@ -183,52 +185,69 @@ const CoreEngine = {
     },
 
     // ==========================================
-    // 📋 提示詞註冊表 – 從 ST 內部 API 取得所有預設提示詞名稱
+    // 📋 提示詞註冊表 – 從 ST 內部 API: oai_settings.prompts, 角色卡, persona
     // ==========================================
     buildPromptRegistry: () => {
         CoreEngine.promptRegistry.clear();
         CoreEngine.promptIdToName.clear();
 
         const ctx = getSTContext();
-        if (!ctx?.chatCompletionSettings) return;
+        if (!ctx) return;
 
-        // ST 的 oai_settings.prompts 陣列儲存所有使用者定義的提示詞
-        const prompts = ctx.chatCompletionSettings.prompts;
-        if (!Array.isArray(prompts) || prompts.length === 0) return;
+        // ── 來源1: oai_settings.prompts（使用者定義提示詞） ──
+        const prompts = ctx.chatCompletionSettings?.prompts;
+        if (Array.isArray(prompts) && prompts.length > 0) {
+            for (const prompt of prompts) {
+                if (!prompt?.content || typeof prompt.content !== 'string') continue;
+                const name = prompt.name || '';
+                const identifier = prompt.identifier || '';
+                const norm = CoreEngine.normalize(prompt.content);
+                if (norm.length < 2) continue;
 
-        for (const prompt of prompts) {
-            if (!prompt?.content || typeof prompt.content !== 'string') continue;
-            const name = prompt.name || prompt.identifier || '';
-            const norm = CoreEngine.normalize(prompt.content);
-            if (norm.length < 2) continue;
+                if (identifier && name) {
+                    CoreEngine.promptIdToName.set(identifier, name);
+                }
 
-            // 記錄辨識碼→名稱對照
-            if (prompt.identifier && name) {
-                CoreEngine.promptIdToName.set(prompt.identifier, name);
+                CoreEngine.promptRegistry.set(norm, {
+                    name: name || `未命名(${identifier || '?'})`,
+                    identifier: identifier,
+                    role: prompt.role || 'system',
+                    content: prompt.content,
+                });
             }
-
-            // 以標準化內容為 key（可能重疊，後者覆蓋前者）
-            CoreEngine.promptRegistry.set(norm, {
-                name: name || `未命名(${prompt.identifier || '?'})`,
-                identifier: prompt.identifier || '',
-                role: prompt.role || 'system',
-                content: prompt.content,
-            });
         }
 
-        // 也掃描 ST 核心提示詞 (main, nsfw, jailbreak, enhanceDefinitions 等)
-        const defaultPrompts = ctx.chatCompletionSettings?.defaultPrompts;
-        if (defaultPrompts && typeof defaultPrompts === 'object') {
-            for (const [key, content] of Object.entries(defaultPrompts)) {
-                if (typeof content !== 'string' || !content.trim()) continue;
-                const norm = CoreEngine.normalize(content);
+        // ── 來源2: 角色卡資料 (description, personality, scenario, first_mes, mes_example) ──
+        const char = ctx.characters?.[ctx.characterId];
+        if (char?.data) {
+            const charSys = [
+                { key: 'charDescription', label: '角色描述', content: char.data.description },
+                { key: 'charPersonality', label: '性格描述', content: char.data.personality },
+                { key: 'scenario', label: '場景', content: char.data.scenario },
+                { key: 'first_mes', label: '初次對話', content: char.data.first_mes },
+                { key: 'mes_example', label: '對話範例', content: char.data.mes_example },
+            ];
+            for (const sp of charSys) {
+                if (!sp.content || typeof sp.content !== 'string' || !sp.content.trim()) continue;
+                const norm = CoreEngine.normalize(sp.content);
                 if (norm.length < 2 || CoreEngine.promptRegistry.has(norm)) continue;
                 CoreEngine.promptRegistry.set(norm, {
-                    name: `系統-${key}`,
-                    identifier: key,
-                    role: 'system',
-                    content: content,
+                    name: `角色-${sp.label}`, identifier: sp.key, role: 'system', content: sp.content,
                 });
+                CoreEngine.promptIdToName.set(sp.key, `角色-${sp.label}`);
+            }
+        }
+
+        // ── 來源3: Persona 描述 (用戶設定) ──
+        const pd = typeof window.power_user?.persona_description === 'string'
+            ? window.power_user.persona_description.trim() : '';
+        if (pd.length > 0) {
+            const norm = CoreEngine.normalize(pd);
+            if (norm.length >= 2 && !CoreEngine.promptRegistry.has(norm)) {
+                CoreEngine.promptRegistry.set(norm, {
+                    name: '用戶設定(Persona)', identifier: 'personaDescription', role: 'system', content: pd,
+                });
+                CoreEngine.promptIdToName.set('personaDescription', '用戶設定(Persona)');
             }
         }
     },
@@ -558,8 +577,12 @@ const CoreEngine = {
             }
         }
 
-        // ── 最終 fallback ──
-        return { cat: '預設', source: msgName ? `預設(${msgName})` : '預設(系統訊息)', creator: 'ST核心', type: 'DEFAULT' };
+        // ── 最終 fallback：嘗試從內容第一行推導名稱 ──
+        if (msgName) return { cat: '預設', source: `預設(${msgName})`, creator: 'ST核心', type: 'DEFAULT' };
+        // 嘗試從內容推導: 取第一非空行的前30字
+        const firstLine = (contentTrimmed || '').split(/\n|\r\n|\r/).find(l => l.trim()) || '';
+        const fallbackName = firstLine.length > 2 ? firstLine.substring(0, 40).trim() : '系統訊息';
+        return { cat: '預設', source: `預設(${fallbackName})`, creator: 'ST核心', type: 'DEFAULT' };
     },
 };
 
@@ -1368,7 +1391,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V6.5.0 絕對防禦矩陣 (ST-API 精準溯源版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V6.6.0 絕對防禦矩陣 (ST-API 精準溯源 · 全源註冊表版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
