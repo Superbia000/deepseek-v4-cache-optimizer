@@ -7,7 +7,7 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 let Settings = {};
 
 function initSettings() {
-    const defaultSettings = { enabled: true, instantNotify: true, logLevel: 3, chats: {}, lastCacheHitRate: null, lastCacheableChars: 0, lastTotalChars: 0, lastCacheBreakReason: '' };
+    const defaultSettings = { enabled: true, instantNotify: true, logLevel: 3, chats: {} };
     if (!extension_settings.ds_cache_v36_absolute) extension_settings.ds_cache_v36_absolute = defaultSettings;
     Settings = Object.assign({}, defaultSettings, extension_settings.ds_cache_v36_absolute);
 }
@@ -138,46 +138,10 @@ function resetCurrentChatCache() {
 // ==========================================
 // 🛡️ 核心引擎：極速演算法與精準溯源
 // ==========================================
-const StabilityTier = {
-    PERMANENT: 0,    // Never changes: character card core, once-per-chat system prompts
-    STABLE: 1,       // Rarely changes: always-active lorebook, jailbreak prompts
-    SEMI_STABLE: 2,  // Sometimes changes: triggered lorebook entries, scenario
-    VOLATILE: 3,     // Often changes: summaries, author's notes, RAG results
-    NEW: 4           // Always new: current user message, prefill, new AI reply
-};
-
 const CoreEngine = {
     macroMap: new Map(), 
     promptIndex: [], 
     lastScanTime: 0,
-    // World Book content index and name registry
-    wbBookIndex: new Map(),       // normalizedContent -> [{bookName, entryName, uid, isConstant}]
-    wbNameIndex: new Map(),       // normalizedEntryName -> [{bookName, uid, entryName}]
-    _wbIndexTime: 0,              // last WB index build timestamp
-    presetNameMap: {              // ST internal name -> Display Name mapping
-        'main': '系统主提示词',
-        'nsfw': 'NSFW 成人提示词',
-        'jailbreak': '越狱提示词',
-        'description': '角色设定',
-        'personality': '角色性格',
-        'scenario': '场景',
-        'first_mes': '初次对话',
-        'greeting': '问候语',
-        'mes_example': '对话范例',
-        'enhanced definitions': '增强角色定义',
-        'enhanceddef': '增强角色定义',
-        'persona description': '用户设定',
-        'post-history': '后历史指令',
-        'pre-history': '前历史指令',
-        'authors note': '作者附注',
-        'author's note': '作者附注',
-        'summary': '对话摘要',
-        'summarization': '对话摘要',
-        'vector': '向量检索上下文',
-        'smart context': '智能上下文',
-        'world info': '世界书',
-        'lorebook': 'Lorebook',
-    },
 
     normalize: (text) => {
         if (!text) return '';
@@ -218,10 +182,10 @@ const CoreEngine = {
         CoreEngine.promptIndex = [];
         let seenNorms = new Set();
 
-        const addToIndex = (norm, cat, source, creator, type, extraInfo = {}) => {
+        const addToIndex = (norm, cat, source, creator, type) => {
             if (!norm || norm.length < 2 || seenNorms.has(norm)) return;
             seenNorms.add(norm);
-            CoreEngine.promptIndex.push({ contentNorm: norm, nGrams: CoreEngine.getGrams(norm), cat, source, creator, type, extraInfo });
+            CoreEngine.promptIndex.push({ contentNorm: norm, nGrams: CoreEngine.getGrams(norm), cat, source, creator, type });
         };
 
         const deepScan = (obj, depth = 0, visited = new WeakSet(), currentBookName = "未知世界書") => {
@@ -266,182 +230,6 @@ const CoreEngine = {
 
         const roots = [window.world_info, window.settings, window.extension_settings, window.power_user, window.prompt_manager, window.characters, getContext()];
         roots.forEach(root => { if (root) deepScan(root, 0, new WeakSet(), "全域世界書"); });
-        // 🌟 同步建立世界書精準索引
-        CoreEngine.buildWBIndex();
-    },
-
-    // 🌟 掃描 ST 世界書結構，建立精準的 content → {bookName, entryName, uid} 索引
-    buildWBIndex: () => {
-        if (!window.world_info) return;
-        const now = Date.now();
-        if (now - (CoreEngine._wbIndexTime || 0) < 5000) return; // 5s cooldown
-        CoreEngine._wbIndexTime = now;
-
-        CoreEngine.wbBookIndex = new Map();
-        CoreEngine.wbNameIndex = new Map();
-        let seenContents = new Set();
-
-        const indexEntry = (content, bookName, entryName, uid, keys, isConstant) => {
-            if (!content || typeof content !== 'string') return;
-            const norm = CoreEngine.normalize(content);
-            if (!norm || norm.length < 3 || seenContents.has(norm)) return;
-            seenContents.add(norm);
-
-            const info = {
-                bookName: bookName || '全域世界書',
-                entryName: entryName || '未命名條目',
-                uid: String(uid ?? ''),
-                keys: Array.isArray(keys) ? keys : [],
-                isConstant: !!isConstant,
-                norm: norm
-            };
-
-            if (!CoreEngine.wbBookIndex.has(norm)) {
-                CoreEngine.wbBookIndex.set(norm, []);
-            }
-            CoreEngine.wbBookIndex.get(norm).push(info);
-
-            // By entry name for reverse lookup
-            if (entryName) {
-                const nameKey = CoreEngine.normalize(entryName);
-                if (!CoreEngine.wbNameIndex.has(nameKey)) {
-                    CoreEngine.wbNameIndex.set(nameKey, []);
-                }
-                CoreEngine.wbNameIndex.get(nameKey).push({ bookName, uid, entryName });
-            }
-        };
-
-        try {
-            const wi = window.world_info;
-            // New format: organized by books
-            if (wi.books && typeof wi.books === 'object') {
-                for (const [bookName, book] of Object.entries(wi.books)) {
-                    if (book && book.entries && Array.isArray(book.entries)) {
-                        for (const entry of book.entries) {
-                            indexEntry(
-                                entry.content || entry.text,
-                                bookName,
-                                entry.comment || entry.name || (entry.key?.length > 0 ? entry.key.join(', ') : null) || '未命名條目',
-                                entry.uid,
-                                entry.key,
-                                entry.constant
-                            );
-                        }
-                    }
-                }
-            }
-            // Legacy format
-            if (wi.entries && typeof wi.entries === 'object') {
-                for (const [uid, entry] of Object.entries(wi.entries)) {
-                    if (entry && typeof entry === 'object') {
-                        indexEntry(
-                            entry.content || entry.text,
-                            '全域世界書',
-                            entry.comment || entry.name || (entry.key?.length > 0 ? entry.key.join(', ') : null) || '未命名條目',
-                            uid,
-                            entry.key,
-                            entry.constant
-                        );
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn('[DS Cache] 世界書索引建立失敗:', e);
-        }
-    },
-
-    // 🌟 精準世界書查詢: 從 msg 內容或名稱中提取所屬世界書資訊
-    lookupWBInfo: (msg) => {
-        if (!msg || !CoreEngine.wbBookIndex) return null;
-        const norm = msg._norm || CoreEngine.normalize(msg.content || '');
-        if (!norm || norm.length < 5) return null;
-
-        const nameLower = (msg.name || '').toLowerCase();
-        const contentLower = (msg.content || '').toLowerCase();
-
-        // Method 1: Name-based lookup (fastest)
-        if (nameLower.includes('world info') || nameLower.includes('lorebook') || nameLower.includes('wi-')) {
-            const nameMatch = msg.name.match(/\(([^)]+)\)/);
-            let extractedName = nameMatch ? nameMatch[1].trim() : null;
-            if (!extractedName) extractedName = msg.name.replace(/^(?:World Info|Lorebook|WI)\s*/i, '').trim();
-
-            if (extractedName && CoreEngine.wbNameIndex) {
-                const nameKey = CoreEngine.normalize(extractedName);
-                if (CoreEngine.wbNameIndex.has(nameKey)) {
-                    const entries = CoreEngine.wbNameIndex.get(nameKey);
-                    // Prefer exact match on content if multiple books have same entry name
-                    for (const e of entries) {
-                        if (CoreEngine.wbBookIndex.has(norm)) {
-                            const bookEntries = CoreEngine.wbBookIndex.get(norm);
-                            const match = bookEntries.find(be => be.uid === e.uid);
-                            if (match) return match;
-                        }
-                    }
-                    return entries[0]; // fallback to first match
-                }
-                // Entry name found but no reverse match => construct partial info
-                return { bookName: '未知世界書', entryName: extractedName, uid: '', keys: [], isConstant: false, norm: '' };
-            }
-            return { bookName: '未知世界書', entryName: nameLower.replace(/world info|lorebook|wi[-:]?/g, '').trim() || '未命名', uid: '', keys: [], isConstant: false, norm: '' };
-        }
-
-        // Method 2: Content-based lookup (more reliable)
-        if (CoreEngine.wbBookIndex.has(norm)) {
-            const entries = CoreEngine.wbBookIndex.get(norm);
-            return entries[0]; // Return first match (usually the only one)
-        }
-
-        // Method 3: Fuzzy content matching for dynamic/partial content
-        // Only attempt for longer content to avoid false positives
-        if (norm.length > 30) {
-            const msgGrams = CoreEngine.getGrams(norm);
-            let bestMatch = null;
-            let bestOverlap = 0;
-            for (const [wbNorm, wbEntries] of CoreEngine.wbBookIndex.entries()) {
-                if (wbNorm.length < 10) continue;
-                // Quick length check first
-                if (Math.abs(wbNorm.length - norm.length) / Math.max(wbNorm.length, norm.length) > 0.5) continue;
-                const wbGrams = CoreEngine.getGrams(wbNorm);
-                const overlap = CoreEngine.getOverlapRatioFast(msgGrams, wbGrams);
-                if (overlap > 0.8 && overlap > bestOverlap) {
-                    bestOverlap = overlap;
-                    bestMatch = wbEntries[0];
-                }
-            }
-            return bestMatch;
-        }
-
-        return null;
-    },
-
-    // 🌟 預設提示詞真實名稱提取
-    getRealName: (msg, classification) => {
-        if (!msg || !classification) return '';
-
-        // WB entries: use book/entry name
-        if (classification.type === 'LOREBOOK') {
-            if (classification.wbBookName && classification.wbEntryName) {
-                return `\u{1F4D6}${classification.wbBookName}/${classification.wbEntryName}`;
-            }
-            return classification.source || '世界書條目';
-        }
-
-        // Use msg.name if available and meaningful
-        const nameRaw = msg.name || '';
-        const nameLower = nameRaw.toLowerCase().trim();
-        if (nameLower && CoreEngine.presetNameMap) {
-            if (CoreEngine.presetNameMap[nameLower]) {
-                return CoreEngine.presetNameMap[nameLower];
-            }
-        }
-
-        // Use msg.name directly if non-empty (probably a plugin-assigned name)
-        if (nameRaw && !['system', 'user', 'assistant', ''].includes(nameLower)) {
-            return nameRaw;
-        }
-
-        // Fallback to classification-based name
-        return classification.source || classification.cat || '未知';
     },
 
     findInIndex: (normContent, nGrams) => {
@@ -502,55 +290,46 @@ const CoreEngine = {
     },
 
     classify: (msg, structuralTag, isDynamic) => {
-        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件', creator: 'DS Cache', type: 'PLUGIN', stability: StabilityTier.PERMANENT, realName: 'DS緩存插件', wbBookName: null, wbEntryName: null };
-        if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: msg.name && msg.name.toLowerCase() !== 'user' ? msg.name : '用戶輸入', creator: '用戶', type: 'USER_CURRENT', stability: StabilityTier.NEW, realName: msg.name || '用戶輸入', wbBookName: null, wbEntryName: null };
-        if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL', stability: StabilityTier.NEW, realName: '預填充(先導)', wbBookName: null, wbEntryName: null };
-        if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI回覆', creator: '大模型', type: 'AI_LAST_REPLY', stability: StabilityTier.STABLE, realName: 'AI回覆(最新)', wbBookName: null, wbEntryName: null };
-        if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY', stability: StabilityTier.STABLE, realName: '用戶歷史訊息', wbBookName: null, wbEntryName: null };
-        if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY', stability: StabilityTier.STABLE, realName: 'AI歷史回覆', wbBookName: null, wbEntryName: null };
+        if (msg._isDSPlugin) return { cat: '本插件', source: '本插件', creator: 'DS Cache', type: 'PLUGIN' };
+        if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶輸入', creator: '用戶', type: 'USER_CURRENT' };
+        if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
+        if (structuralTag === 'AI_LAST_REPLY') return { cat: 'AI', source: 'AI回覆', creator: '大模型', type: 'AI_LAST_REPLY' };
+        if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
+        if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
         let name = msg.name ? msg.name.toLowerCase() : '';
         let contentTrimmed = msg.content ? msg.content.trim() : '';
         
         if (name.includes('summary') || name.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
-            return { cat: '摘要', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY', stability: StabilityTier.VOLATILE, realName: '系統摘要(Summary)', wbBookName: null, wbEntryName: null };
+            return { cat: '摘要', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY' };
         }
 
         let normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         let matchedIndex = CoreEngine.findInIndex(normContent, msg._nGrams);
         
         if (matchedIndex) {
-            if (isDynamic) return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC', stability: StabilityTier.VOLATILE, realName: `${matchedIndex.source}(動態)`, wbBookName: matchedIndex.extraInfo?.wbBookName || null, wbEntryName: matchedIndex.extraInfo?.wbEntryName || null };
-            const stab = matchedIndex.type === 'LOREBOOK' ? StabilityTier.SEMI_STABLE : StabilityTier.STABLE;
-            const wbInfo = matchedIndex.extraInfo?.wbBookName ? { wbBookName: matchedIndex.extraInfo.wbBookName, wbEntryName: matchedIndex.extraInfo.wbEntryName } : CoreEngine.lookupWBInfo(msg) || {};
-            return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type, stability: stab, realName: matchedIndex.type === 'LOREBOOK' ? (wbInfo.wbBookName ? `\u{1F4D6}${wbInfo.wbBookName}/${wbInfo.wbEntryName}` : matchedIndex.source) : CoreEngine.getRealName(msg, { type: matchedIndex.type, source: matchedIndex.source, cat: matchedIndex.cat }), wbBookName: wbInfo.wbBookName || null, wbEntryName: wbInfo.wbEntryName || null };
+            if (isDynamic) return { cat: '動態', source: `${matchedIndex.source}(動態)`, creator: matchedIndex.creator, type: 'DYNAMIC' };
+            return { cat: matchedIndex.cat, source: matchedIndex.source, creator: matchedIndex.creator, type: matchedIndex.type };
         }
 
-        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC', stability: StabilityTier.VOLATILE, realName: msg.name || '動態提示詞', wbBookName: null, wbEntryName: null };
+        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
 
         let contentLower = msg.content ? msg.content.toLowerCase() : '';
         if (name.includes('world info') || name.includes('lorebook') || name.includes('wi-')) {
             const match = msg.name.match(/\((.*?)\)/);
             const entryName = match ? match[1] : msg.name;
-            const wbInfo3 = CoreEngine.lookupWBInfo(msg) || {};
-            const wbSrc3 = wbInfo3.bookName ? `\u{1F4D6}${wbInfo3.bookName}/${wbInfo3.entryName}` : `世界書(${entryName})`;
-            return { cat: '世界書', source: wbSrc3, creator: '世界書系統', type: 'LOREBOOK', stability: StabilityTier.SEMI_STABLE, realName: wbSrc3, wbBookName: wbInfo3.bookName || null, wbEntryName: wbInfo3.entryName || entryName };
+            return { cat: '世界書', source: `世界書(${entryName})`, creator: '世界書系統', type: 'LOREBOOK' };
         }
         if (contentLower.startsWith('world info:') || contentLower.startsWith('lorebook:')) {
-            const wbInfo4 = CoreEngine.lookupWBInfo(msg) || {};
-            const wbSrc4 = wbInfo4.bookName ? `\u{1F4D6}${wbInfo4.bookName}/${wbInfo4.entryName}` : '世界書(內容探測)';
-            return { cat: '世界書', source: wbSrc4, creator: '世界書系統', type: 'LOREBOOK', stability: StabilityTier.SEMI_STABLE, realName: wbSrc4, wbBookName: wbInfo4.bookName || null, wbEntryName: wbInfo4.entryName || null };
+            return { cat: '世界書', source: '世界書(內容探測)', creator: '世界書系統', type: 'LOREBOOK' };
         }
 
         const defaultNames = ['system', 'user', 'assistant', 'character', 'example', 'scenario', 'greeting', 'main', 'nsfw', 'jailbreak', 'description', 'personality', 'post-history', 'pre-history', 'authors note', 'author\'s note'];
-        if (msg.name && !defaultNames.includes(name)) return { cat: '其他插件', source: `其他插件(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN', stability: StabilityTier.VOLATILE, realName: msg.name, wbBookName: null, wbEntryName: null };
-        if (name.includes('author') || name.includes('note')) return { cat: '其他插件', source: `其他插件(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN', stability: StabilityTier.VOLATILE, realName: "Author's Note", wbBookName: null, wbEntryName: null };
-        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) return { cat: '其他插件', source: `其他插件(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN', stability: StabilityTier.VOLATILE, realName: msg.name || '向量檢索 RAG', wbBookName: null, wbEntryName: null };
+        if (msg.name && !defaultNames.includes(name)) return { cat: '其他插件', source: `其他插件(${msg.name})`, creator: msg.name, type: 'OTHER_PLUGIN' };
+        if (name.includes('author') || name.includes('note')) return { cat: '其他插件', source: `其他插件(Author's Note)`, creator: '用戶', type: 'OTHER_PLUGIN' };
+        if (name.includes('vector') || name.includes('smart context') || name.includes('rag') || contentLower.includes('retrieved context')) return { cat: '其他插件', source: `其他插件(向量檢索 RAG)`, creator: 'RAG系統', type: 'OTHER_PLUGIN' };
 
-        const isCoreCharField = name.includes('description') || name.includes('personality') || name.includes('scenario') || name.includes('first_mes') || name.includes('greeting') || name.includes('mes_example');
-        const stab2 = isCoreCharField ? StabilityTier.PERMANENT : StabilityTier.STABLE;
-        const defaultRealName = isCoreCharField ? (CoreEngine.presetNameMap[nameLower] || msg.name || '角色卡欄位') : (CoreEngine.presetNameMap[nameLower] || msg.name || '預設提示詞');
-        return { cat: '預設', source: msg.name ? `預設(${msg.name})` : '預設(無名)', creator: 'ST核心', type: 'DEFAULT', stability: stab2, realName: defaultRealName, wbBookName: null, wbEntryName: null };
+        return { cat: '預設', source: msg.name ? `預設(${msg.name})` : '預設(無名)', creator: 'ST核心', type: 'DEFAULT' };
     }
 };
 
@@ -651,9 +430,6 @@ async function interceptAndRestructurePrompt(data) {
 
             msg._isDynamic = isDynamic;
             msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
-            msg._realName = msg._attr.realName || CoreEngine.getRealName(msg, msg._attr);
-            msg._wbBookName = msg._attr.wbBookName || null;
-            msg._wbEntryName = msg._attr.wbEntryName || null;
             
             if (msg._attr.type === 'OTHER_PLUGIN') {
                 otherPluginActions.add(`[${msg._attr.creator}] 處理/注入了提示詞節點: ${msg._attr.source}`);
@@ -688,8 +464,8 @@ async function interceptAndRestructurePrompt(data) {
                 mdLog += `\n`;
             }
 
-            mdLog += `| 時間 | 原始排序 | 最終排序 | 對話輪數 | 角色 | 分類 | 詳細來源 | 真實名稱 | 生成/出現 | 修改/創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
-            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
+            mdLog += `| 時間 | 原始排序 | 最終排序 | 對話輪數 | 角色 | 分類 | 原始來源 | 生成/出現 | 修改/創造者 | 處理方式 | 處理功能 | 狀態 | 提示詞內容 |\n`;
+            mdLog += `|---|---|---|---|---|---|---|---|---|---|---|---|---|\n`;
 
             ledger.forEach(entry => {
                 if (entry.status === '已刪除') entry.finalIdx = '-';
@@ -707,29 +483,8 @@ async function interceptAndRestructurePrompt(data) {
             });
 
             ledger.forEach(l => {
-                const srcInfo = l.attr?.wbBookName ? `\u{1F4D6}${l.attr.wbBookName}/${l.attr.wbEntryName}` : l.attr?.source || '';
-                const realName = l.realName || l.attr?.realName || '';
-                mdLog += `| ${l.time} | ${l.origIdx} | ${l.finalIdx} | 第 ${chatTurn} 輪 | ${l.role} | ${l.attr.cat} | ${srcInfo} | ${realName} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                mdLog += `| ${l.time} | ${l.origIdx} | ${l.finalIdx} | 第 ${chatTurn} 輪 | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
             });
-
-            // 🌟 添加緩存命中率摘要
-            if (!isPluginDisabled && Settings.logLevel >= LogLevels.STANDARD) {
-                const hitRate = state.lastCacheHitRate || 0;
-                const cacheableChars = state.lastCacheableChars || 0;
-                const totalChars = state.lastTotalChars || 1;
-                const emoji = hitRate > 95 ? '🟢' : hitRate > 70 ? '🟡' : '🔴';
-                mdLog += `\n---\n\n${emoji} **DeepSeek 緩存命中率: ${hitRate.toFixed(1)}%** | 可緩存: ${cacheableChars} 字元 | 總長: ${totalChars} 字元\n`;
-                if (state.lastCacheBreakReason) {
-                    mdLog += `> 緩存斷點原因: **${state.lastCacheBreakReason}**\n`;
-                }
-                if (hitRate > 95) {
-                    mdLog += `> 🎯 近乎完美！緩存命中率超過 95%，DeepSeek 幾乎無需重新計算。\n`;
-                } else if (hitRate > 70) {
-                    mdLog += `> ⚠️ 部分緩存流失。檢查是否有動態內容或歷史修改導致前綴變化。\n`;
-                } else {
-                    mdLog += `> 🔴 緩存大量流失！確認系統提示詞或角色設定是否穩定。\n`;
-                }
-            }
 
             Logger.write(mdLog, LogLevels.DETAILED);
         };
@@ -739,8 +494,7 @@ async function interceptAndRestructurePrompt(data) {
                 ledger.push({
                     time: processTime, ref: msg, origIdx: msg._origIdx, finalIdx: idx + 1,
                     role: msg.role.charAt(0).toUpperCase() + msg.role.slice(1),
-                    attr: msg._attr, gen: '原始載入', creator: msg._attr.creator, action: '未處理', func: '插件已停用', status: '未凍結',
-                    realName: msg._realName || msg._attr?.realName || ''
+                    attr: msg._attr, gen: '原始載入', creator: msg._attr.creator, action: '未處理', func: '插件已停用', status: '未凍結'
                 });
             });
             printLog(true);
@@ -806,7 +560,7 @@ async function interceptAndRestructurePrompt(data) {
                 let sim = CoreEngine.getSimilarityFast(frozen._nGrams, incomingPool[j]._nGrams);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
             }
-            if (bestSim > 0.75 && bestMatchIdx !== -1) {
+            if (bestSim > 0.5 && bestMatchIdx !== -1) {
                 matchResults[i] = bestMatchIdx; matchedIncomingIndices.add(bestMatchIdx); matchedFrozenIndices.add(i);
             }
         }
@@ -850,7 +604,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (frozen._norm === matched._norm) {
                     nextFrozen.push(frozen);
                     if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結', realName: frozen._realName || frozen._attr?.realName || '' });
+                    ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 } else {
                     // 🌟 量子切片：偵測是否僅為尾部追加 (且不是 User/AI)
                     let isJustAppended = false;
@@ -880,7 +634,7 @@ async function interceptAndRestructurePrompt(data) {
                         // 1. 保留原凍結節點不變 (救回緩存)
                         nextFrozen.push(frozen);
                         if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                        ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(無損追加)', status: '已凍結', realName: frozen._realName || frozen._attr?.realName || '' });
+                        ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(無損追加)', status: '已凍結' });
 
                         syncMessages.push(`<span style="color:#00e5ff;">[無損追加]</span> ${matched._attr.source} (尾部新增已抽取)`);
                         detailedMods.push(`[追加] 偵測到節點尾部新增，已抽取追加內容: ${matched._attr.source}`);
@@ -912,18 +666,18 @@ async function interceptAndRestructurePrompt(data) {
                         
                         nextFrozen.push(frozen);
                         let funcName = frozen._uid === matched._uid ? '量子糾纏(結構感知)' : '量子糾纏(語義感知)';
-                        ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結', realName: frozen._realName || frozen._attr?.realName || '' });
+                        ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '修改', creator: frozen._attr.creator, action: '鏡像同步', func: funcName, status: '已凍結' });
                     }
                 }
             } else if (frozen._isDynamic) {
                 nextFrozen.push(frozen);
                 if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結', realName: frozen._realName || frozen._attr?.realName || '' });
+                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '保留舊動態', func: '動態幽靈(舊版保留)', status: '已凍結' });
             } else {
                 if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                 syncMessages.push(`<span style="color:#ff4444;">[節點刪除]</span> ${frozen._attr.source}`);
                 detailedMods.push(`[刪除] 偵測到歷史節點被移除或失效: ${frozen._attr.source}`);
-                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除', realName: frozen._realName || frozen._attr?.realName || '' });
+                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
             }
         }
 
@@ -1023,70 +777,30 @@ async function interceptAndRestructurePrompt(data) {
             arr.forEach(msg => {
                 nextFrozen.push(msg);
                 const roleStr = msg.role.charAt(0).toUpperCase() + msg.role.slice(1);
-                ledger.push({ time: processTime, ref: msg, origIdx: msg._origIdx, role: roleStr, attr: msg._attr, gen: gen, creator: msg._attr.creator, action: actionName, func: funcName, status: '已凍結', realName: msg._realName || msg._attr?.realName || '' });
+                ledger.push({ time: processTime, ref: msg, origIdx: msg._origIdx, role: roleStr, attr: msg._attr, gen: gen, creator: msg._attr.creator, action: actionName, func: funcName, status: '已凍結' });
             });
         };
 
         if (isChat1) {
-            // 🌟 穩定性排序: 最穩定內容優先，易變內容置後 (最大化 DeepSeek 緩存命中)
-            const stableSys = chat1SystemPrompts.filter(m => (m._attr.stability || 99) <= StabilityTier.STABLE);
-            const volatileSys = chat1SystemPrompts.filter(m => (m._attr.stability || 99) > StabilityTier.STABLE);
-            appendToFrozen(stableSys, '新增', '即時凍結(穩定)', '絕對凍結(對話1-穩定層)');
+            appendToFrozen(chat1SystemPrompts, '新增', '即時凍結', '絕對凍結(對話1)');
+            appendToFrozen(summaryPrompts, '新增', '即時凍結', '絕對凍結(對話1)'); 
             appendToFrozen(newHistory, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(aiLastReply, '新增', '即時凍結', '絕對凍結(對話1)');
-            appendToFrozen(volatileSys, '新增', '動態分離(易變)', '絕對凍結(對話1-易變層)');
-            appendToFrozen(summaryPrompts, '新增', '動態分離(摘要)', '絕對凍結(對話1-易變層)');
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話1)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話1)');
         } else {
-            // 🌟 穩定性排序: 將新增內容按穩定性分層，最大化緩存前綴連續性
-            const stableDefault = newDefault.filter(m => (m._attr.stability || 99) <= StabilityTier.STABLE);
-            const volatileDefault = newDefault.filter(m => (m._attr.stability || 99) > StabilityTier.STABLE);
-            const stableLorebook = newLorebook.filter(m => (m._attr.stability || 99) <= StabilityTier.SEMI_STABLE);
-            const volatileLorebook = newLorebook.filter(m => (m._attr.stability || 99) > StabilityTier.SEMI_STABLE);
-
             appendToFrozen(newHistory, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(aiLastReply, '新增', '追加凍結', '絕對凍結(對話2+)');
-            appendToFrozen(stableDefault, '新增', '追加凍結(穩定)', '絕對凍結(對話2+-穩定層)');
-            appendToFrozen(stableLorebook, '新增', '追加凍結(穩定)', '絕對凍結(對話2+-穩定層)');
+            appendToFrozen(newDefault, '新增', '追加凍結', '絕對凍結(對話2+)');
+            appendToFrozen(newLorebook, '新增', '追加凍結', '絕對凍結(對話2+)');
             appendToFrozen(newOther, '新增', '追加凍結', '絕對凍結(對話2+)');
-            appendToFrozen(volatileDefault, '新增', '動態分離(易變)', '絕對凍結(對話2+-易變層)');
-            appendToFrozen(volatileLorebook, '新增', '動態分離(易變)', '絕對凍結(對話2+-易變層)');
-            appendToFrozen(allDynamic, '新增', '動態分離(底置)', '絕對凍結(對話2+)');
+            appendToFrozen(allDynamic, '新增', '動態分離(底置)', '絕對凍結(對話2+)'); // 尾巴會在這裡被追加
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話2+)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話2+)');
         }
 
-        const oldFrozenLen = state.frozenSequence.length;
         state.frozenSequence = nextFrozen;
         state.updatedAt = Date.now();
-
-        // 🌟 DeepSeek 緩存命中率計算 (僅計算舊凍結池的緩存連續性)
-        let totalPromptChars = nextFrozen.reduce((acc, m) => acc + m.content.length, 0);
-        let cacheableChars = 0;
-        let cacheBreakFound = false;
-        let cacheBreakPoint = -1;
-        let cacheBreakReason = '';
-        for (let i = 0; i < Math.min(oldFrozenLen, ledger.length); i++) {
-            const entry = ledger[i];
-            if (!cacheBreakFound && entry.status === '已凍結' && entry.action !== '保留舊動態') {
-                cacheableChars += (entry.ref?.content?.length || 0);
-            } else if (!cacheBreakFound && (entry.status === '已刪除' || entry.action === '鏡像同步')) {
-                cacheBreakFound = true;
-                cacheBreakPoint = i;
-                cacheBreakReason = entry.attr?.source || '未知';
-            }
-        }
-        // If no explicit break found, everything up to user message is cacheable
-        if (!cacheBreakFound) {
-            cacheBreakPoint = nextFrozen.length;
-        }
-        let cacheHitRate = totalPromptChars > 0 ? ((cacheableChars / totalPromptChars) * 100).toFixed(1) : 0;
-        state.lastCacheHitRate = parseFloat(cacheHitRate);
-        state.lastCacheableChars = cacheableChars;
-        state.lastTotalChars = totalPromptChars;
-        state.lastCacheBreakReason = cacheBreakReason;
-
         safeSave();
 
         data.chat.length = 0;
@@ -1257,7 +971,7 @@ async function setupUI() {
     const html = `
     <div class="inline-drawer" id="ds-v36-opt-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b><i class="fa-solid fa-shield-halved" style="color:#00e5ff; margin-right:5px;"></i> DeepSeek V4 Pro 絕對防禦矩陣 <span id="ds-cache-hit-badge" style="font-size:11px; margin-left:8px; padding:2px 8px; border-radius:10px; background:#333; color:#aaa;">--</span></b>
+            <b><i class="fa-solid fa-shield-halved" style="color:#00e5ff; margin-right:5px;"></i> DeepSeek V4 Pro 絕對防禦矩陣</b>
             <div class="inline-drawer-icon fa-solid fa-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content" style="padding:15px 10px; background: #0d0d11;">
@@ -1370,31 +1084,6 @@ async function setupUI() {
     });
 
     renderChatsUI();
-
-    // 🌟 緩存命中率即時顯示更新
-    function updateCacheHitBadge() {
-        const badge = document.getElementById('ds-cache-hit-badge');
-        if (!badge) return;
-        const chatState = getChatState(getChatKey());
-        const hitRate = chatState.lastCacheHitRate;
-        if (hitRate !== undefined && hitRate !== null) {
-            const color = hitRate > 95 ? '#00e5ff' : hitRate > 70 ? '#ffaa00' : '#ff4444';
-            const bg = hitRate > 95 ? 'rgba(0,229,255,0.15)' : hitRate > 70 ? 'rgba(255,170,0,0.15)' : 'rgba(255,68,68,0.15)';
-            badge.textContent = hitRate.toFixed(0) + '% 命中';
-            badge.style.color = color;
-            badge.style.background = bg;
-            badge.style.border = '1px solid ' + color;
-        } else {
-            badge.textContent = '等待首次';
-            badge.style.color = '#888';
-            badge.style.background = '#222';
-            badge.style.border = '1px solid #444';
-        }
-    }
-
-    // 每秒檢查一次緩存命中率
-    setInterval(updateCacheHitBadge, 3000);
-    updateCacheHitBadge();
 }
 
 jQuery(async () => {
@@ -1412,7 +1101,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V2.0.0 絕對防禦矩陣 (穩定性排序 + 緩存命中追蹤) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ V6.0.0 絕對防禦矩陣 (全景日誌版) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
