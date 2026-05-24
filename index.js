@@ -197,10 +197,17 @@ const Logger = {
 // ==========================================
 function getChatKey() {
     const context = getContext();
-    let chatId = context.chatId || "default_chat";
+    // 🌟 使用穩定標識：角色名 + 群組ID，不依賴 chatId（chatId 在首條訊息後可能改變）
     let character = context.name2 || "未分類角色";
-    if (context.groupId) character = "群聊: " + (context.groupName || context.groupId);
-    return { key: `chat_${chatId}`, label: `${chatId}`, character: character };
+    let chatId = context.chatId || "";
+    if (context.groupId) {
+        character = "群聊: " + (context.groupName || context.groupId);
+        chatId = context.groupId;
+    }
+    // 優先使用角色名作為穩定鍵，chatId 作為後備
+    const stableKey = character !== "未分類角色" ? character : (chatId || "default_chat");
+    const key = `chat_${stableKey.replace(/[^a-zA-Z0-9一-鿿_-]/g, '_')}`;
+    return { key, label: `${chatId || stableKey}`, character: character };
 }
 
 function getChatState(chatKeyInfo) {
@@ -1158,27 +1165,25 @@ async function interceptAndRestructurePrompt(data) {
                     if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
                     ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '量子糾纏(完美匹配)', status: '已凍結' });
                 } else {
-                    // 🌟 量子切片：偵測是否僅為尾部追加 (且不是 User/AI)
+                    // 🌟 量子切片：偵測是否僅為尾部追加
                     let isJustAppended = false;
                     let appendedContent = "";
 
-                    if (frozen.role !== 'user' && frozen.role !== 'assistant') {
-                        if (matched._norm.startsWith(frozen._norm) && matched._norm.length > frozen._norm.length) {
-                            let origIdx = 0;
-                            let newIdx = 0;
-                            let origClean = frozen.content.replace(/[\s\n\r\t]/g, '');
-                            
-                            while (origIdx < origClean.length && newIdx < matched.content.length) {
-                                if (matched.content[newIdx].replace(/[\s\n\r\t]/g, '') === origClean[origIdx]) {
-                                    origIdx++;
-                                }
-                                newIdx++;
+                    if (matched._norm.startsWith(frozen._norm) && matched._norm.length > frozen._norm.length) {
+                        let origIdx = 0;
+                        let newIdx = 0;
+                        let origClean = frozen.content.replace(/[\s\n\r\t]/g, '');
+
+                        while (origIdx < origClean.length && newIdx < matched.content.length) {
+                            if (matched.content[newIdx].replace(/[\s\n\r\t]/g, '') === origClean[origIdx]) {
+                                origIdx++;
                             }
-                            
-                            if (origIdx === origClean.length) {
-                                isJustAppended = true;
-                                appendedContent = matched.content.substring(newIdx).trim();
-                            }
+                            newIdx++;
+                        }
+
+                        if (origIdx === origClean.length) {
+                            isJustAppended = true;
+                            appendedContent = matched.content.substring(newIdx).trim();
                         }
                     }
 
@@ -1236,7 +1241,11 @@ async function interceptAndRestructurePrompt(data) {
         let cacheDrop = 0;
         if (firstBreakIndex !== -1) cacheDrop = ((totalFrozenLen - firstBreakIndex) / totalFrozenLen) * 100;
 
-        if (syncMessages.length > 0 && Settings.instantNotify && typeof toastr !== 'undefined') {
+        if (syncMessages.length > 0) {
+            // 🌟 始終輸出到 console（即使 toastr 不可用）
+            console.log(`[DS Cache] 🔄 量子糾纏同步觸發: ${syncMessages.length} 項變更, 緩存流失: ${cacheDrop.toFixed(2)}%`);
+
+            if (Settings.instantNotify && typeof toastr !== 'undefined') {
             let dropText = cacheDrop > 0 
                 ? `<div style="margin-top:8px; padding:6px; background:rgba(255,68,68,0.1); border-left:3px solid #ff4444; border-radius:4px;">
                      預估緩存流失率：<b style="color:#ff4444; font-size:14px;">${cacheDrop.toFixed(2)}%</b><br>
@@ -1259,6 +1268,7 @@ async function interceptAndRestructurePrompt(data) {
                 </div>`, 
                 'DeepSeek 緩存優化器', {timeOut: 12000, escapeHtml: false}
             );
+            }
         }
 
         let remainingPool = incomingPool.filter((_, idx) => !matchedIncomingIndices.has(idx));
