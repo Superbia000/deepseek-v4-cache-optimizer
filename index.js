@@ -1,39 +1,39 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
-import { promptManager } from '../../../openai.js';
-import { world_info } from '../../../world-info.js';
 
 // ==========================================
-// 🧠 ST API 中繼層
+// 🧠 ST API 中繼層 — 全部使用動態 import() 避免載入時序問題
 // ==========================================
 function getSTContext() { try { return getContext(); } catch (e) { return null; } }
 
 /**
- * 安全取得 promptManager 的提示詞陣列
- * ST 1.18.0+ 使用 PromptManager 來管理所有提示詞
- * @returns {Array|null}
+ * 使用動態 import 安全讀取 promptManager 的提示詞陣列
+ * @returns {Promise<Array|null>}
  */
-function getSTPromptList() {
+async function getSTPromptList() {
     try {
-        if (promptManager && promptManager.serviceSettings?.prompts) {
-            return promptManager.serviceSettings.prompts;
+        // 動態導入，僅在需要時加載
+        const openaiMod = await import('../../../openai.js');
+        if (openaiMod?.promptManager?.serviceSettings?.prompts) {
+            return openaiMod.promptManager.serviceSettings.prompts;
         }
-        // fallback: 嘗試從 oai_settings 取得
-        if (typeof window.oai_settings?.prompts !== 'undefined') {
-            return window.oai_settings.prompts;
+        // fallback: oai_settings 可能也有
+        if (openaiMod?.oai_settings?.prompts) {
+            return openaiMod.oai_settings.prompts;
         }
-    } catch (e) { /* ignore */ }
+    } catch (e) { console.debug('[DS Cache] 無法動態導入 openai.js:', e.message); }
     return null;
 }
 
 /**
- * 安全取得 world_info 中的所有條目
- * ST 1.18.0+ 的 world_info 結構: { [bookName]: { entries: { [uid]: entryObj } }, ... }
- * @returns {Map<string, {worldBookName, entryName, uid, entry}>}
+ * 使用動態 import 安全讀取 world_info 中的所有條目
+ * @returns {Promise<Map<string, {worldBookName, entryName, uid, entry}>>}
  */
-function getSTWorldInfoEntries() {
+async function getSTWorldInfoEntries() {
     const result = new Map();
     try {
+        const wiMod = await import('../../../world-info.js');
+        const world_info = wiMod?.world_info;
         if (!world_info || typeof world_info !== 'object') return result;
         for (const [bookName, bookData] of Object.entries(world_info)) {
             if (!bookData?.entries || typeof bookData.entries !== 'object') continue;
@@ -41,25 +41,18 @@ function getSTWorldInfoEntries() {
                 if (!entry?.content || typeof entry.content !== 'string') continue;
                 const norm = CoreEngine.normalize(entry.content);
                 if (norm.length < 2) continue;
-                // 條目名稱：comment > 第一個 key > uid
                 let entryName = entry.comment || '';
                 if (!entryName && Array.isArray(entry.key) && entry.key.length > 0) {
                     entryName = entry.key[0];
                 }
                 if (!entryName) entryName = `Entry_${uid}`;
-                // 用 worldBookName::entryNorm 作為合併鍵
                 const mapKey = `${bookName}::${norm}`;
                 if (!result.has(mapKey)) {
-                    result.set(mapKey, {
-                        worldBookName: bookName,
-                        entryName: entryName,
-                        uid: uid,
-                        entry: entry,
-                    });
+                    result.set(mapKey, { worldBookName: bookName, entryName, uid, entry });
                 }
             }
         }
-    } catch (e) { console.warn('[DS Cache] 讀取世界書資料失敗', e); }
+    } catch (e) { console.debug('[DS Cache] 無法動態導入 world-info.js:', e.message); }
     return result;
 }
 
@@ -242,14 +235,14 @@ const CoreEngine = {
     },
 
     // ==========================================
-    // 📋 提示詞註冊表 – 直接從 ST 內部模組讀取
+    // 📋 提示詞註冊表 – 動態導入 ST 內部模組
     // ==========================================
-    buildPromptRegistry: () => {
+    buildPromptRegistry: async () => {
         CoreEngine.promptRegistry.clear();
         CoreEngine.promptIdToName.clear();
 
         // ── 來源1: promptManager.serviceSettings.prompts（所有提示詞，含使用者定義） ──
-        const prompts = getSTPromptList();
+        const prompts = await getSTPromptList();
         if (Array.isArray(prompts) && prompts.length > 0) {
             for (const prompt of prompts) {
                 if (!prompt?.content || typeof prompt.content !== 'string') continue;
@@ -307,12 +300,13 @@ const CoreEngine = {
         // ── 來源3: 角色卡資料 ──
         try {
             const ctx = getSTContext();
-            if (ctx?.character) {
-                const charDesc = ctx.character?.data?.description || ctx.character?.description;
-                const charPers = ctx.character?.data?.personality || ctx.character?.personality;
-                const charScen = ctx.character?.data?.scenario || ctx.character?.scenario;
-                const charFirst = ctx.character?.data?.first_mes || ctx.character?.first_mes;
-                const charExample = ctx.character?.data?.mes_example || ctx.character?.mes_example;
+            const character = ctx?.characters?.[ctx?.characterId];
+            if (character) {
+                const charDesc = character?.data?.description || character?.description;
+                const charPers = character?.data?.personality || character?.personality;
+                const charScen = character?.data?.scenario || character?.scenario;
+                const charFirst = character?.data?.first_mes || character?.first_mes;
+                const charExample = character?.data?.mes_example || character?.mes_example;
                 const charSysEntries = [
                     { key: 'charDescription', label: '角色描述', content: charDesc },
                     { key: 'charPersonality', label: '性格描述', content: charPers },
@@ -352,10 +346,10 @@ const CoreEngine = {
     // ==========================================
     // 📚 世界書註冊表 – 直接從 ST import 的 world_info 讀取
     // ==========================================
-    buildWorldInfoRegistry: () => {
+    buildWorldInfoRegistry: async () => {
         CoreEngine.worldInfoRegistry.clear();
 
-        const wiEntries = getSTWorldInfoEntries();
+        const wiEntries = await getSTWorldInfoEntries();
         if (wiEntries.size === 0) return;
 
         for (const [mapKey, wiData] of wiEntries) {
@@ -378,12 +372,12 @@ const CoreEngine = {
     // ==========================================
     // 🔄 整合建置 – 每次處理時呼叫
     // ==========================================
-    buildRegistries: () => {
+    buildRegistries: async () => {
         const now = Date.now();
         if (now - CoreEngine.lastRegistryBuildTime < 3000) return;
         CoreEngine.lastRegistryBuildTime = now;
-        CoreEngine.buildPromptRegistry();
-        CoreEngine.buildWorldInfoRegistry();
+        await CoreEngine.buildPromptRegistry();
+        await CoreEngine.buildWorldInfoRegistry();
     },
 
     // ==========================================
@@ -655,7 +649,7 @@ const CoreEngine = {
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
-    CoreEngine.buildRegistries();
+    await CoreEngine.buildRegistries();
 
     try {
         const state = getChatState(getChatKey());
