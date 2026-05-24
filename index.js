@@ -1,7 +1,7 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
-import { promptManager } from '../../openai.js';
-import { world_info } from '../../world-info.js';
+import { promptManager } from '../../../openai.js';
+import { world_info } from '../../../world-info.js';
 
 // ==========================================
 // 🧠 ST API 中繼層
