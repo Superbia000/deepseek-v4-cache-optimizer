@@ -33,26 +33,56 @@ async function getSTWorldInfoEntries() {
     const result = new Map();
     try {
         const wiMod = await import('../../../world-info.js');
-        const world_info = wiMod?.world_info;
-        if (!world_info || typeof world_info !== 'object') return result;
-        for (const [bookName, bookData] of Object.entries(world_info)) {
-            if (!bookData?.entries || typeof bookData.entries !== 'object') continue;
-            for (const [uid, entry] of Object.entries(bookData.entries)) {
-                if (!entry?.content || typeof entry.content !== 'string') continue;
-                const norm = CoreEngine.normalize(entry.content);
-                if (norm.length < 2) continue;
-                let entryName = entry.comment || '';
-                if (!entryName && Array.isArray(entry.key) && entry.key.length > 0) {
-                    entryName = entry.key[0];
-                }
-                if (!entryName) entryName = `Entry_${uid}`;
-                const mapKey = `${bookName}::${norm}`;
-                if (!result.has(mapKey)) {
-                    result.set(mapKey, { worldBookName: bookName, entryName, uid, entry });
+        const wi = wiMod?.world_info;
+        const cache = wiMod?.worldInfoCache;
+
+        console.debug(`[DS Cache] 📚 world_info keys: ${wi ? Object.keys(wi).join(', ') : 'null'}, cache: ${!!cache}`);
+
+        // 方法1: 從 worldInfoCache 讀取（ST 1.18.0 的延遲加載快取）
+        if (cache && typeof cache.get === 'function') {
+            const worldNames = Array.isArray(wiMod?.world_names) ? wiMod.world_names : [];
+            console.debug(`[DS Cache] 📚 world_names: ${worldNames.join(', ')}`);
+            for (const worldName of worldNames) {
+                try {
+                    const worldData = cache.get(worldName);
+                    if (worldData?.entries && typeof worldData.entries === 'object') {
+                        for (const [uid, entry] of Object.entries(worldData.entries)) {
+                            if (!entry?.content || typeof entry.content !== 'string') continue;
+                            const norm = CoreEngine.normalize(entry.content);
+                            if (norm.length < 2) continue;
+                            let entryName = entry.comment || '';
+                            if (!entryName && Array.isArray(entry.key) && entry.key.length > 0) entryName = entry.key[0];
+                            if (!entryName) entryName = `Entry_${uid}`;
+                            const mapKey = `${worldName}::${norm}`;
+                            if (!result.has(mapKey)) {
+                                result.set(mapKey, { worldBookName: worldName, entryName, uid, entry });
+                            }
+                        }
+                    }
+                } catch (e) { /* skip failed world */ }
+            }
+        }
+
+        // 方法2: 從 world_info 直接讀取（已加載的世界書）
+        if (result.size === 0 && wi && typeof wi === 'object') {
+            for (const [bookName, bookData] of Object.entries(wi)) {
+                if (bookName === 'globalSelect') continue; // 跳過元數據
+                if (!bookData?.entries || typeof bookData.entries !== 'object') continue;
+                for (const [uid, entry] of Object.entries(bookData.entries)) {
+                    if (!entry?.content || typeof entry.content !== 'string') continue;
+                    const norm = CoreEngine.normalize(entry.content);
+                    if (norm.length < 2) continue;
+                    let entryName = entry.comment || '';
+                    if (!entryName && Array.isArray(entry.key) && entry.key.length > 0) entryName = entry.key[0];
+                    if (!entryName) entryName = `Entry_${uid}`;
+                    const mapKey = `${bookName}::${norm}`;
+                    if (!result.has(mapKey)) {
+                        result.set(mapKey, { worldBookName: bookName, entryName, uid, entry });
+                    }
                 }
             }
         }
-    } catch (e) { console.debug('[DS Cache] 無法動態導入 world-info.js:', e.message); }
+    } catch (e) { console.debug('[DS Cache] 無法讀取世界書:', e.message); }
     return result;
 }
 
@@ -344,18 +374,17 @@ const CoreEngine = {
     },
 
     // ==========================================
-    // 📚 世界書註冊表 – 直接從 ST import 的 world_info 讀取
+    // 📚 世界書註冊表 – 從 worldInfoCache + world_info 讀取
     // ==========================================
     buildWorldInfoRegistry: async () => {
         CoreEngine.worldInfoRegistry.clear();
 
         const wiEntries = await getSTWorldInfoEntries();
-        if (wiEntries.size === 0) return;
+        console.debug(`[DS Cache] 📚 從世界書讀取到 ${wiEntries.size} 個條目`);
 
         for (const [mapKey, wiData] of wiEntries) {
             const entryNorm = CoreEngine.normalize(wiData.entry.content);
             if (entryNorm.length < 2) continue;
-            // 按 entryNorm 建立索引供快速精確查找
             if (!CoreEngine.worldInfoRegistry.has(entryNorm)) {
                 CoreEngine.worldInfoRegistry.set(entryNorm, {
                     worldBookName: wiData.worldBookName,
@@ -367,6 +396,7 @@ const CoreEngine = {
                 });
             }
         }
+        console.debug(`[DS Cache] 📚 世界書註冊表: ${CoreEngine.worldInfoRegistry.size} 個條目`);
     },
 
     // ==========================================
@@ -498,7 +528,7 @@ const CoreEngine = {
         if (wiMatch) {
             return {
                 cat: '世界書',
-                source: `世界書(${wiMatch.worldBookName}: ${wiMatch.entryName})`,
+                source: `${wiMatch.worldBookName}(${wiMatch.entryName})`,
                 creator: '世界書系統',
                 type: 'LOREBOOK',
                 bookName: wiMatch.worldBookName,
@@ -544,7 +574,7 @@ const CoreEngine = {
                     bestScore = score;
                     bestMatch = {
                         cat: '世界書',
-                        source: `世界書(${regData.worldBookName}: ${regData.entryName})`,
+                        source: `${regData.worldBookName}(${regData.entryName})`,
                         creator: '世界書系統',
                         type: 'LOREBOOK',
                         bookName: regData.worldBookName,
@@ -558,6 +588,37 @@ const CoreEngine = {
             if (bestMatch) return bestMatch;
         }
 
+        return null;
+    },
+
+    // ==========================================
+    // 🔍 世界書條目模糊匹配（內容被 macro 展開後的精確匹配 fallback）
+    // ==========================================
+    _findWorldBookFuzzy: (msgNorm, nGrams) => {
+        if (!msgNorm || msgNorm.length < 20 || !nGrams || nGrams.size < 8) return null;
+        let bestMatch = null, bestScore = 0;
+        for (const [entryNorm, wiData] of CoreEngine.worldInfoRegistry) {
+            if (entryNorm.length < 15) continue;
+            const regGrams = CoreEngine.getGrams(entryNorm);
+            const overlap = CoreEngine.getOverlapRatioFast(regGrams, nGrams);
+            if (overlap > bestScore) {
+                bestScore = overlap;
+                bestMatch = {
+                    cat: '世界書',
+                    source: `${wiData.worldBookName}(${wiData.entryName})`,
+                    creator: '世界書系統',
+                    type: 'LOREBOOK',
+                    bookName: wiData.worldBookName,
+                    entryName: wiData.entryName,
+                    entryUid: wiData.uid,
+                    isWorldBook: true,
+                };
+            }
+        }
+        if (bestScore > 0.55 && bestMatch) {
+            console.debug(`[DS Cache] 🔍 世界書模糊匹配: score=${bestScore.toFixed(3)} → ${bestMatch.bookName}(${bestMatch.entryName})`);
+            return bestMatch;
+        }
         return null;
     },
 
@@ -654,9 +715,24 @@ const CoreEngine = {
             return { cat: '摘要', source: `預設(系統摘要) [ID: ${sid}]`, creator: 'ST核心', type: 'SUMMARY' };
         }
 
-        // ── chatHistory-N → 歷史訊息 ──
-        if (sidLower.startsWith('chathistory-')) {
-            return { cat: '聊天', source: '歷史訊息', creator: '用戶/角色', type: 'AI_HISTORY' };
+        // ── chatHistory 歷史訊息 ──
+        // 🌟 先檢查內容是否為世界書條目（世界書可被注入到 chatHistory 深度中）
+        if (sidLower.startsWith('chathistory-') || sidLower === 'chathistory') {
+            const msgNorm = msg._norm || CoreEngine.normalize(msg.content || '');
+            // 精確匹配世界書
+            if (msgNorm.length > 20 && CoreEngine.worldInfoRegistry.size > 0 && CoreEngine.worldInfoRegistry.has(msgNorm)) {
+                const wiMatch = CoreEngine.worldInfoRegistry.get(msgNorm);
+                return {
+                    cat: '世界書', source: `${wiMatch.worldBookName}(${wiMatch.entryName})`,
+                    creator: '世界書系統', type: 'LOREBOOK',
+                    bookName: wiMatch.worldBookName, entryName: wiMatch.entryName, entryUid: wiMatch.uid, isWorldBook: true,
+                };
+            }
+            // 模糊匹配世界書
+            const wiFuzzy = CoreEngine._findWorldBookFuzzy(msgNorm, msg._nGrams);
+            if (wiFuzzy) return wiFuzzy;
+            // 非世界書 → 確認為歷史訊息
+            return { cat: '聊天', source: '歷史訊息', creator: '用戶/角色', type: msg.role === 'user' ? 'USER_HISTORY' : 'AI_HISTORY' };
         }
 
         // ── 世界書系統標記 ──
@@ -668,8 +744,34 @@ const CoreEngine = {
         // ── 從 promptIdToName 查表取得顯示名稱 ──
         if (sid && CoreEngine.promptIdToName.has(sid)) {
             const displayName = CoreEngine.promptIdToName.get(sid);
-            // 判別是否為世界書相關標記
             const isWorldBookMarker = displayName.includes('World Info') || displayName.includes('世界書');
+
+            // 🌟 第二階段：檢查內容是否匹配世界書條目（精確 + 模糊）
+            const msgNorm = msg._norm || CoreEngine.normalize(msg.content || '');
+            if (!isWorldBookMarker && msgNorm.length > 10 && CoreEngine.worldInfoRegistry.size > 0) {
+                // 精確匹配
+                if (CoreEngine.worldInfoRegistry.has(msgNorm)) {
+                    const wiMatch = CoreEngine.worldInfoRegistry.get(msgNorm);
+                    return {
+                        cat: '世界書',
+                        source: `${wiMatch.worldBookName}(${wiMatch.entryName})`,
+                        creator: '世界書系統',
+                        type: 'LOREBOOK',
+                        bookName: wiMatch.worldBookName,
+                        entryName: wiMatch.entryName,
+                        entryUid: wiMatch.uid,
+                        isWorldBook: true,
+                        promptName: displayName,
+                        promptId: sid,
+                    };
+                }
+                // 模糊匹配（內容被 macro 展開後可能不完全相同）
+                const wiFuzzy = CoreEngine._findWorldBookFuzzy(msgNorm, msg._nGrams);
+                if (wiFuzzy) {
+                    return { ...wiFuzzy, promptName: displayName, promptId: sid };
+                }
+            }
+
             return {
                 cat: isWorldBookMarker ? '世界書' : '預設',
                 source: `預設(${displayName})`,
@@ -705,6 +807,21 @@ const CoreEngine = {
 
         // ── 有未知 identifier → 來自其他插件或自訂提示詞 ──
         if (sid && sid.length > 0) {
+            // 🌟 精確+模糊匹配世界書條目內容
+            const msgNorm = msg._norm || CoreEngine.normalize(msg.content || '');
+            if (msgNorm.length > 10 && CoreEngine.worldInfoRegistry.size > 0) {
+                if (CoreEngine.worldInfoRegistry.has(msgNorm)) {
+                    const wiMatch = CoreEngine.worldInfoRegistry.get(msgNorm);
+                    return {
+                        cat: '世界書', source: `${wiMatch.worldBookName}(${wiMatch.entryName})`,
+                        creator: '世界書系統', type: 'LOREBOOK',
+                        bookName: wiMatch.worldBookName, entryName: wiMatch.entryName,
+                        entryUid: wiMatch.uid, isWorldBook: true, promptId: sid,
+                    };
+                }
+                const wiFuzzy = CoreEngine._findWorldBookFuzzy(msgNorm, msg._nGrams);
+                if (wiFuzzy) return { ...wiFuzzy, promptId: sid };
+            }
             return { cat: '其他插件', source: `其他插件(ID: ${sid})`, creator: sid, type: 'OTHER_PLUGIN', promptId: sid };
         }
 
@@ -742,14 +859,16 @@ async function interceptAndRestructurePrompt(data) {
                     for (let msg of item.collection) {
                         if (msg.content || msg.tool_calls) {
                             if (chatIdx < data.chat.length) {
-                                positionToIdentifier.set(chatIdx, item.identifier);
+                                // 🌟 優先使用內層 Message 的 identifier（如 chatHistory-N），
+                                // 外層 MessageCollection 的 identifier 作為 fallback
+                                positionToIdentifier.set(chatIdx, msg.identifier || item.identifier);
                                 chatIdx++;
                             }
                         }
                     }
                 } else if (item.content || item.tool_calls) {
                     if (chatIdx < data.chat.length) {
-                        positionToIdentifier.set(chatIdx, item.identifier || item.identifier_ || '');
+                        positionToIdentifier.set(chatIdx, item.identifier || msg.identifier || '');
                         chatIdx++;
                     }
                 }
@@ -765,15 +884,6 @@ async function interceptAndRestructurePrompt(data) {
     }
 
     try {
-        const state = getChatState(getChatKey());
-        let incomingStream = data.chat;
-        let incomingPool = [];
-        let ledger = [];
-
-        const processTime = Logger.getTime();
-        const chatTurn = getContext().chat ? getContext().chat.length : 0;
-        let otherPluginActions = new Set();
-        let detailedMods = [];
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
         let incomingPool = [];
@@ -876,7 +986,7 @@ async function interceptAndRestructurePrompt(data) {
             } else if (msg._attr.type === 'LOREBOOK') {
                 const bn = msg._attr.bookName || '未知世界書';
                 const en = msg._attr.entryName || '未知條目';
-                otherPluginActions.add(`[世界書系統] 注入世界書條目 → 📚 **${bn}** → 📑 **${en}**`);
+                otherPluginActions.add(`[世界書系統] 注入世界書條目 → 📚 ${bn} → 📑 ${en}`);
             }
 
             if (!uidMap[i]) {
@@ -1194,7 +1304,7 @@ async function interceptAndRestructurePrompt(data) {
                     else if (msg._attr.type === 'LOREBOOK') {
                         const bnLb1 = msg._attr.bookName || '未知世界書';
                         const enLb1 = msg._attr.entryName || '未知條目';
-                        detailedMods.push(`[新增] 觸發了世界書條目 → 📚 "${bnLb1}" → 📑 "${enLb1}"`);
+                        detailedMods.push(`[新增] 觸發了世界書條目 → 📚 ${bnLb1} → 📑 ${enLb1}`);
                     }
                     else detailedMods.push(`[新增] 插件注入了新節點: ${msg._attr.source}`);
                 } else {
