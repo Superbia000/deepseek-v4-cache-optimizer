@@ -1,10 +1,67 @@
 import { extension_settings, getContext } from '../../../extensions.js';
 import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
+import { promptManager } from '../../openai.js';
+import { world_info } from '../../world-info.js';
 
 // ==========================================
 // 🧠 ST API 中繼層
 // ==========================================
 function getSTContext() { try { return getContext(); } catch (e) { return null; } }
+
+/**
+ * 安全取得 promptManager 的提示詞陣列
+ * ST 1.18.0+ 使用 PromptManager 來管理所有提示詞
+ * @returns {Array|null}
+ */
+function getSTPromptList() {
+    try {
+        if (promptManager && promptManager.serviceSettings?.prompts) {
+            return promptManager.serviceSettings.prompts;
+        }
+        // fallback: 嘗試從 oai_settings 取得
+        if (typeof window.oai_settings?.prompts !== 'undefined') {
+            return window.oai_settings.prompts;
+        }
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
+/**
+ * 安全取得 world_info 中的所有條目
+ * ST 1.18.0+ 的 world_info 結構: { [bookName]: { entries: { [uid]: entryObj } }, ... }
+ * @returns {Map<string, {worldBookName, entryName, uid, entry}>}
+ */
+function getSTWorldInfoEntries() {
+    const result = new Map();
+    try {
+        if (!world_info || typeof world_info !== 'object') return result;
+        for (const [bookName, bookData] of Object.entries(world_info)) {
+            if (!bookData?.entries || typeof bookData.entries !== 'object') continue;
+            for (const [uid, entry] of Object.entries(bookData.entries)) {
+                if (!entry?.content || typeof entry.content !== 'string') continue;
+                const norm = CoreEngine.normalize(entry.content);
+                if (norm.length < 2) continue;
+                // 條目名稱：comment > 第一個 key > uid
+                let entryName = entry.comment || '';
+                if (!entryName && Array.isArray(entry.key) && entry.key.length > 0) {
+                    entryName = entry.key[0];
+                }
+                if (!entryName) entryName = `Entry_${uid}`;
+                // 用 worldBookName::entryNorm 作為合併鍵
+                const mapKey = `${bookName}::${norm}`;
+                if (!result.has(mapKey)) {
+                    result.set(mapKey, {
+                        worldBookName: bookName,
+                        entryName: entryName,
+                        uid: uid,
+                        entry: entry,
+                    });
+                }
+            }
+        }
+    } catch (e) { console.warn('[DS Cache] 讀取世界書資料失敗', e); }
+    return result;
+}
 
 // ==========================================
 
@@ -102,13 +159,13 @@ const Logger = {
             });
         }
     },
-    clear: () => { rawMarkdownLogs = []; if (Logger._uiViewer) Logger._uiViewer.innerHTML = ''; if (typeof toastr !== 'undefined') toastr.success("日誌已清空", "DeepSeek Cache"); },
-    copy: () => { navigator.clipboard.writeText(rawMarkdownLogs.join('\n')).then(() => { if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿", "DeepSeek Cache"); }); },
+    clear: () => { rawMarkdownLogs = []; if (Logger._uiViewer) Logger._uiViewer.innerHTML = ''; if (typeof toastr !== 'undefined') toastr.success("日誌已清空", "DeepSeek 緩存優化器"); },
+    copy: () => { navigator.clipboard.writeText(rawMarkdownLogs.join('\n')).then(() => { if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿", "DeepSeek 緩存優化器"); }); },
     export: () => {
         const blob = new Blob([rawMarkdownLogs.join('\n')], { type: 'text/markdown' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = `DSCache_Log_${new Date().toISOString().replace(/[:.]/g, '-')}.md`; a.click(); URL.revokeObjectURL(url);
-        if (typeof toastr !== 'undefined') toastr.success("日誌導出成功", "DeepSeek Cache");
+        if (typeof toastr !== 'undefined') toastr.success("日誌導出成功", "DeepSeek 緩存優化器");
     }
 };
 
@@ -137,7 +194,7 @@ function resetCurrentChatCache() {
         Settings.chats[chatInfo.key].frozenSequence = [];
         Settings.chats[chatInfo.key].promptTracker = {};
         safeSave(); renderChatsUI();
-        if (typeof toastr !== 'undefined') toastr.success(`已重置當前聊天 (${chatInfo.character}) 的凍結池。<br>下一次對話將重新構建緩存序列。`, "DeepSeek Cache", {escapeHtml: false});
+        if (typeof toastr !== 'undefined') toastr.success(`已重置當前聊天 (${chatInfo.character}) 的凍結池。<br>下一次對話將重新構建緩存序列。`, "DeepSeek 緩存優化器", {escapeHtml: false});
         Logger.write(`**[${Logger.getTime()}]** 🔄 用戶手動重置了當前聊天 (${chatInfo.character}) 的凍結池`, LogLevels.BASIC);
     }
 }
@@ -185,17 +242,14 @@ const CoreEngine = {
     },
 
     // ==========================================
-    // 📋 提示詞註冊表 – 從 ST 內部 API: oai_settings.prompts, 角色卡, persona
+    // 📋 提示詞註冊表 – 直接從 ST 內部模組讀取
     // ==========================================
     buildPromptRegistry: () => {
         CoreEngine.promptRegistry.clear();
         CoreEngine.promptIdToName.clear();
 
-        const ctx = getSTContext();
-        if (!ctx) return;
-
-        // ── 來源1: oai_settings.prompts（使用者定義提示詞） ──
-        const prompts = ctx.chatCompletionSettings?.prompts;
+        // ── 來源1: promptManager.serviceSettings.prompts（所有提示詞，含使用者定義） ──
+        const prompts = getSTPromptList();
         if (Array.isArray(prompts) && prompts.length > 0) {
             for (const prompt of prompts) {
                 if (!prompt?.content || typeof prompt.content !== 'string') continue;
@@ -204,12 +258,15 @@ const CoreEngine = {
                 const norm = CoreEngine.normalize(prompt.content);
                 if (norm.length < 2) continue;
 
-                if (identifier && name) {
-                    CoreEngine.promptIdToName.set(identifier, name);
+                // 建立 identifier → name 的快速查找表
+                if (identifier) {
+                    CoreEngine.promptIdToName.set(identifier, name || identifier);
                 }
 
+                // 避免重複插入相同內容
+                if (CoreEngine.promptRegistry.has(norm)) continue;
                 CoreEngine.promptRegistry.set(norm, {
-                    name: name || `未命名(${identifier || '?'})`,
+                    name: name || identifier || '未命名',
                     identifier: identifier,
                     role: prompt.role || 'system',
                     content: prompt.content,
@@ -217,103 +274,103 @@ const CoreEngine = {
             }
         }
 
-        // ── 來源2: 角色卡資料 (description, personality, scenario, first_mes, mes_example) ──
-        const char = ctx.characters?.[ctx.characterId];
-        if (char?.data) {
-            const charSys = [
-                { key: 'charDescription', label: '角色描述', content: char.data.description },
-                { key: 'charPersonality', label: '性格描述', content: char.data.personality },
-                { key: 'scenario', label: '場景', content: char.data.scenario },
-                { key: 'first_mes', label: '初次對話', content: char.data.first_mes },
-                { key: 'mes_example', label: '對話範例', content: char.data.mes_example },
-            ];
-            for (const sp of charSys) {
-                if (!sp.content || typeof sp.content !== 'string' || !sp.content.trim()) continue;
-                const norm = CoreEngine.normalize(sp.content);
-                if (norm.length < 2 || CoreEngine.promptRegistry.has(norm)) continue;
-                CoreEngine.promptRegistry.set(norm, {
-                    name: `角色-${sp.label}`, identifier: sp.key, role: 'system', content: sp.content,
-                });
-                CoreEngine.promptIdToName.set(sp.key, `角色-${sp.label}`);
+        // ── 來源2: 系統級 identifier → name 靜態對照 (ST 內建提示詞) ──
+        const staticSysNames = {
+            'main': 'Main Prompt',
+            'nsfw': 'Auxiliary Prompt',
+            'jailbreak': 'Post-History Instructions',
+            'enhanceDefinitions': 'Enhance Definitions',
+            'worldInfoBefore': 'World Info (before)',
+            'worldInfoAfter': 'World Info (after)',
+            'charDescription': 'Char Description',
+            'charPersonality': 'Char Personality',
+            'scenario': 'Scenario',
+            'personaDescription': 'Persona Description',
+            'dialogueExamples': 'Chat Examples',
+            'chatHistory': 'Chat History',
+            'impersonate': 'Impersonation Prompt',
+            'quietPrompt': 'Quiet Prompt',
+            'groupNudge': 'Group Nudge',
+            'bias': 'Bias',
+            'summary': 'Summary',
+            'authorsNote': 'Authors Note',
+            'vectorsMemory': 'Vectors Memory',
+            'vectorsDataBank': 'Vectors DataBank',
+            'smartContext': 'Smart Context',
+        };
+        for (const [id, name] of Object.entries(staticSysNames)) {
+            if (!CoreEngine.promptIdToName.has(id)) {
+                CoreEngine.promptIdToName.set(id, name);
             }
         }
 
-        // ── 來源3: Persona 描述 (用戶設定) ──
-        const pd = typeof window.power_user?.persona_description === 'string'
-            ? window.power_user.persona_description.trim() : '';
-        if (pd.length > 0) {
-            const norm = CoreEngine.normalize(pd);
-            if (norm.length >= 2 && !CoreEngine.promptRegistry.has(norm)) {
-                CoreEngine.promptRegistry.set(norm, {
-                    name: '用戶設定(Persona)', identifier: 'personaDescription', role: 'system', content: pd,
-                });
-                CoreEngine.promptIdToName.set('personaDescription', '用戶設定(Persona)');
+        // ── 來源3: 角色卡資料 ──
+        try {
+            const ctx = getSTContext();
+            if (ctx?.character) {
+                const charDesc = ctx.character?.data?.description || ctx.character?.description;
+                const charPers = ctx.character?.data?.personality || ctx.character?.personality;
+                const charScen = ctx.character?.data?.scenario || ctx.character?.scenario;
+                const charFirst = ctx.character?.data?.first_mes || ctx.character?.first_mes;
+                const charExample = ctx.character?.data?.mes_example || ctx.character?.mes_example;
+                const charSysEntries = [
+                    { key: 'charDescription', label: '角色描述', content: charDesc },
+                    { key: 'charPersonality', label: '性格描述', content: charPers },
+                    { key: 'scenario', label: '場景', content: charScen },
+                    { key: 'first_mes', label: '初次對話', content: charFirst },
+                    { key: 'mes_example', label: '對話範例', content: charExample },
+                ];
+                for (const cse of charSysEntries) {
+                    if (!cse.content || typeof cse.content !== 'string' || !cse.content.trim()) continue;
+                    const norm = CoreEngine.normalize(cse.content);
+                    if (norm.length < 2 || CoreEngine.promptRegistry.has(norm)) continue;
+                    const label = `角色-${cse.label}`;
+                    CoreEngine.promptRegistry.set(norm, {
+                        name: label, identifier: cse.key, role: 'system', content: cse.content,
+                    });
+                    CoreEngine.promptIdToName.set(cse.key, label);
+                }
             }
-        }
+        } catch (e) { /* ignore */ }
+
+        // ── 來源4: Persona 描述 (用戶設定) ──
+        try {
+            const pd = typeof window?.power_user?.persona_description === 'string'
+                ? window.power_user.persona_description.trim() : '';
+            if (pd.length > 0) {
+                const norm = CoreEngine.normalize(pd);
+                if (norm.length >= 2 && !CoreEngine.promptRegistry.has(norm)) {
+                    CoreEngine.promptRegistry.set(norm, {
+                        name: '用戶設定(Persona)', identifier: 'personaDescription', role: 'system', content: pd,
+                    });
+                    CoreEngine.promptIdToName.set('personaDescription', '用戶設定(Persona)');
+                }
+            }
+        } catch (e) { /* ignore */ }
     },
 
     // ==========================================
-    // 📚 世界書註冊表 – 從 ST 內部 API 取得所有世界書條目
+    // 📚 世界書註冊表 – 直接從 ST import 的 world_info 讀取
     // ==========================================
     buildWorldInfoRegistry: () => {
         CoreEngine.worldInfoRegistry.clear();
 
-        const ctx = getSTContext();
-        if (!ctx) return;
+        const wiEntries = getSTWorldInfoEntries();
+        if (wiEntries.size === 0) return;
 
-        // 取得所有選取的世界書名稱
-        const worldNames = typeof ctx.getWorldInfoNames === 'function'
-            ? ctx.getWorldInfoNames()
-            : (Array.isArray(window.world_names) ? window.world_names : []);
-
-        // 從 selected_world_info 取得全域啟用的世界書
-        const selectedWorlds = Array.isArray(window.selected_world_info)
-            ? window.selected_world_info
-            : [];
-
-        // 合併所有需要掃描的世界書名稱
-        const allWorldNames = new Set([...worldNames, ...selectedWorlds]);
-        if (allWorldNames.size === 0) return;
-
-        // 如果 worldInfoCache 存在則先使用它
-        const cache = window.worldInfoCache;
-        const loadFn = ctx.loadWorldInfo;
-
-        for (const worldName of allWorldNames) {
-            try {
-                let worldData = null;
-                // 優先從快取讀取
-                if (cache && typeof cache.get === 'function') {
-                    worldData = cache.get(worldName);
-                }
-                // 快取沒有時從 API 載入（同步方式不可用，使用快取已載入的資料）
-                if (!worldData) continue;
-                if (!worldData?.entries || typeof worldData.entries !== 'object') continue;
-
-                const entries = worldData.entries;
-                for (const [uid, entry] of Object.entries(entries)) {
-                    if (!entry?.content || typeof entry.content !== 'string') continue;
-                    const norm = CoreEngine.normalize(entry.content);
-                    if (norm.length < 2) continue;
-
-                    // 條目名稱優先使用 comment，其次是第一個 key，最後是 UID
-                    let entryName = entry.comment || '';
-                    if (!entryName && Array.isArray(entry.key) && entry.key.length > 0) {
-                        entryName = entry.key[0];
-                    }
-                    if (!entryName) entryName = `Entry_${uid}`;
-
-                    CoreEngine.worldInfoRegistry.set(norm, {
-                        worldBookName: worldName,
-                        entryName: entryName,
-                        uid: uid,
-                        keys: Array.isArray(entry.key) ? entry.key : [],
-                        constant: !!entry.constant,
-                        content: entry.content,
-                    });
-                }
-            } catch (e) {
-                // 單個世界書加載失敗不影響其他
+        for (const [mapKey, wiData] of wiEntries) {
+            const entryNorm = CoreEngine.normalize(wiData.entry.content);
+            if (entryNorm.length < 2) continue;
+            // 按 entryNorm 建立索引供快速精確查找
+            if (!CoreEngine.worldInfoRegistry.has(entryNorm)) {
+                CoreEngine.worldInfoRegistry.set(entryNorm, {
+                    worldBookName: wiData.worldBookName,
+                    entryName: wiData.entryName,
+                    uid: wiData.uid,
+                    keys: Array.isArray(wiData.entry.key) ? wiData.entry.key : [],
+                    constant: !!wiData.entry.constant,
+                    content: wiData.entry.content,
+                });
             }
         }
     },
@@ -500,23 +557,44 @@ const CoreEngine = {
         const msgNameLower = msgName.toLowerCase();
         const contentTrimmed = msg.content ? msg.content.trim() : '';
 
-        // ── 摘要（ST's own summary system） ──
+        // ── 摘要 ──
         if (msgNameLower.includes('summary') || msgNameLower.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
             return { cat: '摘要', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY' };
         }
 
-        // ── 從 ST 的 name 欄位提取已知的擴展提示詞 ──
-        // ST 會在 Message 上設定 name 屬性供特定提示詞使用（如 example_user, example_assistant, character name 等）
-        const stKnownNames = {
+        // ── 從 name 欄位查詢提示詞名稱 ──
+        // data.chat 中的 name = ST prompt identifier (UUID 或系統名)
+        // 用 promptIdToName 查表取得顯示名稱
+        if (msgName && CoreEngine.promptIdToName.has(msgName)) {
+            const displayName = CoreEngine.promptIdToName.get(msgName);
+            // 檢查是否為世界書相關的系統提示詞
+            const wiSystemIds = ['worldInfoBefore', 'worldInfoAfter'];
+            if (wiSystemIds.includes(msgName)) {
+                return { cat: '預設', source: `預設(${displayName})`, creator: 'ST核心', type: 'DEFAULT', promptName: displayName, promptId: msgName };
+            }
+            return { cat: '預設', source: `預設(${displayName})`, creator: 'ST核心', type: 'DEFAULT', promptName: displayName, promptId: msgName };
+        }
+
+        // ── 從 name 欄位匹配已知的系統提示詞名稱慣例 ──
+        const knownSystemIds = {
             'example_user': { cat: '預設', source: '預設(對話範例-用戶)', creator: 'ST核心', type: 'DEFAULT' },
             'example_assistant': { cat: '預設', source: '預設(對話範例-角色)', creator: 'ST核心', type: 'DEFAULT' },
+            'newMainChat': { cat: '預設', source: '預設(新聊天)', creator: 'ST核心', type: 'DEFAULT' },
+            'continueNudge': { cat: '預設', source: '預設(接續)', creator: 'ST核心', type: 'DEFAULT' },
+            'emptyUserMessageReplacement': { cat: '預設', source: '預設(空訊息替代)', creator: 'ST核心', type: 'DEFAULT' },
+            'controlPrompts': { cat: '預設', source: '預設(控制提示詞)', creator: 'ST核心', type: 'DEFAULT' },
         };
-        if (msgName && stKnownNames[msgNameLower]) {
-            const m = stKnownNames[msgNameLower];
+        if (msgName && knownSystemIds[msgNameLower]) {
+            const m = knownSystemIds[msgNameLower];
             return { cat: m.cat, source: m.source, creator: m.creator, type: m.type };
         }
 
-        // ── 嘗試從註冊表查詢 ──
+        // chatHistory-N 格式 (歷史聊天訊息)
+        if (msgNameLower.startsWith('chathistory-')) {
+            return { cat: '歷史', source: '歷史聊天訊息', creator: '用戶/角色', type: 'AI_HISTORY' };
+        }
+
+        // ── 從註冊表進行內容匹配 ──
         const normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
         const nGrams = msg._nGrams;
         const matched = CoreEngine.findInRegistries(normContent, nGrams);
@@ -528,7 +606,6 @@ const CoreEngine = {
                 creator: matched.creator,
                 type: isDynamic ? 'DYNAMIC' : matched.type,
             };
-            // 附加世界書資訊
             if (matched.isWorldBook) {
                 result.bookName = matched.bookName;
                 result.entryName = matched.entryName;
@@ -539,50 +616,36 @@ const CoreEngine = {
             return result;
         }
 
-        // ── 動態提示詞（無法對應到已知模板） ──
+        // ── 動態且無匹配 ──
         if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
 
-        // ── 從 msg.name 使用 ST 內部命名慣例辨識 ──
-        // ST 的擴展提示詞 name 通常格式為: "World Info (bookName: entryName)" 或 "WI-entryName"
+        // ── 從 name 查找世界書命名慣例 ──
         if (msgNameLower.includes('world info') || msgNameLower.includes('lorebook') ||
-            msgNameLower.startsWith('wi-') || msgNameLower.startsWith('wi ') || msgNameLower.includes('worldinfo')) {
+            msgNameLower.startsWith('wi-') || msgNameLower.includes('worldinfo')) {
             let bookName = '未知世界書';
             let entryName = '未知條目';
-            const bracketMatch = msgName.match(/\((.*?)\)/);
-            if (bracketMatch) entryName = bracketMatch[1];
-            const colonMatch = msgName.match(/(?:World\s*Info|Lorebook|WI)\s*[-:]\s*([^(:]+)/i);
-            if (colonMatch) bookName = colonMatch[1].trim();
             const fullMatch = msgName.match(/\(([^)]+):\s*([^)]+)\)/);
             if (fullMatch) { bookName = fullMatch[1].trim(); entryName = fullMatch[2].trim(); }
+            const bracketMatch = msgName.match(/\((.*?)\)/);
+            if (!fullMatch && bracketMatch) entryName = bracketMatch[1];
             return { cat: '世界書', source: `世界書(${bookName}: ${entryName})`, creator: '世界書系統', type: 'LOREBOOK', bookName, entryName };
         }
 
-        // ── 其他擴展提示詞（ST 會用 identifier 或 name 標記） ──
+        // ── 有 name 但無法匹配 → 來自其他插件或未知來源 ──
         if (msgName && msgName.length > 0) {
-            // 嘗試用 identifier 查找 prompt_manager 中的名稱
-            const idToName = CoreEngine.promptIdToName;
-            for (const [id, name] of idToName) {
-                if (msgNameLower.includes(id.toLowerCase())) {
-                    return { cat: '預設', source: `預設(${name})`, creator: 'ST核心', type: 'DEFAULT', promptName: name, promptId: id };
-                }
-            }
-            // 未知但有 name 欄位的提示詞（來自其他插件）
-            const knownSystemNames = ['system', 'user', 'assistant', 'character', 'example_user', 'example_assistant',
-                'main', 'nsfw', 'jailbreak', 'description', 'personality', 'scenario', 'greeting',
-                'impersonate', 'quietPrompt', 'groupNudge', 'bias', 'summary', 'authorsNote',
-                'vectorsMemory', 'vectorsDataBank', 'smartContext', 'personaDescription',
-                'worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'enhanceDefinitions'];
-            if (!knownSystemNames.includes(msgNameLower)) {
-                return { cat: '其他插件', source: `其他插件(${msgName})`, creator: msgName, type: 'OTHER_PLUGIN' };
-            }
+            return { cat: '其他插件', source: `其他插件(${msgName})`, creator: msgName, type: 'OTHER_PLUGIN' };
         }
 
-        // ── 最終 fallback：嘗試從內容第一行推導名稱 ──
-        if (msgName) return { cat: '預設', source: `預設(${msgName})`, creator: 'ST核心', type: 'DEFAULT' };
-        // 嘗試從內容推導: 取第一非空行的前30字
+        // ── 最終 fallback: 空白/無名系統訊息 ──
+        // 嘗試從內容推導
         const firstLine = (contentTrimmed || '').split(/\n|\r\n|\r/).find(l => l.trim()) || '';
-        const fallbackName = firstLine.length > 2 ? firstLine.substring(0, 40).trim() : '系統訊息';
-        return { cat: '預設', source: `預設(${fallbackName})`, creator: 'ST核心', type: 'DEFAULT' };
+        if (firstLine.length > 2 && firstLine.length < 80) {
+            return { cat: '預設', source: `預設(${firstLine.substring(0, 40).trim()})`, creator: 'ST核心', type: 'DEFAULT' };
+        }
+        if (contentTrimmed.length === 0) {
+            return { cat: '預設', source: '預設(空白分隔)', creator: 'ST核心', type: 'DEFAULT' };
+        }
+        return { cat: '預設', source: `預設(系統訊息)`, creator: 'ST核心', type: 'DEFAULT' };
     },
 };
 
@@ -738,12 +801,7 @@ async function interceptAndRestructurePrompt(data) {
             });
 
             ledger.forEach(l => {
-                // 附加世界書資訊到 source 欄位
-                let sourceWithWI = l.attr.source;
-                if (l.attr.bookName && l.attr.entryName) {
-                    sourceWithWI = `📚${l.attr.bookName}→📑${l.attr.entryName}`;
-                }
-                mdLog += `| ${l.time} | ${l.origIdx} | ${l.finalIdx} | 第 ${chatTurn} 輪 | ${l.role} | ${l.attr.cat} | ${sourceWithWI} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
+                mdLog += `| ${l.time} | ${l.origIdx} | ${l.finalIdx} | 第 ${chatTurn} 輪 | ${l.role} | ${l.attr.cat} | ${l.attr.source} | ${l.gen} | ${l.creator} | ${l.action} | ${l.func} | ${l.status} | ${Logger.truncate(l.ref.content)} |\n`;
             });
 
             Logger.write(mdLog, LogLevels.DETAILED);
@@ -1100,7 +1158,7 @@ function addMenuEntry() {
     item.className = 'list-group-item flex-container flexGap5 interactable';
     item.tabIndex = 0;
     item.setAttribute('role', 'listitem');
-    item.title = '重置當前聊天凍結池 (DeepSeek Cache)';
+    item.title = '重置當前聊天凍結池 (DeepSeek 緩存優化器)';
     item.innerHTML = `<div class="fa-fw fa-solid fa-bolt extensionsMenuExtensionButton" style="color: #00e5ff; text-shadow: 0 0 5px rgba(0,229,255,0.5);"></div><span style="font-weight:bold; color:#e0e0e0;">重置 DS 緩存池</span>`;
     
     item.addEventListener('click', () => {
@@ -1310,7 +1368,7 @@ async function setupUI() {
     $('#ds-cache-factory-reset').on('click', () => { 
         if (confirm("⚠️ 終極警告：\n這將徹底摧毀所有角色卡、所有存檔的 DeepSeek 快取連續性！\n(不會刪除聊天記錄，但下次對話將全部重新計算 Token)\n\n確定要執行核彈級清除嗎？")) { 
             Settings.chats = {}; safeSave(); renderChatsUI(); 
-            if (typeof toastr !== 'undefined') toastr.success("已摧毀所有緩存存檔", "DeepSeek Cache");
+            if (typeof toastr !== 'undefined') toastr.success("已摧毀所有緩存存檔", "DeepSeek 緩存優化器");
         } 
     });
 
@@ -1337,7 +1395,7 @@ async function setupUI() {
         if (confirm('確定要清除此聊天的凍結池嗎？\n(這不會刪除您的聊天記錄，僅重置 DeepSeek 緩存排序)')) {
             delete Settings.chats[key];
             safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success("已清除該聊天的凍結池", "DeepSeek Cache");
+            if (typeof toastr !== 'undefined') toastr.success("已清除該聊天的凍結池", "DeepSeek 緩存優化器");
         }
     });
 
@@ -1349,7 +1407,7 @@ async function setupUI() {
                 if (Settings.chats[k].character === charName) delete Settings.chats[k];
             });
             safeSave(); renderChatsUI();
-            if (typeof toastr !== 'undefined') toastr.success(`已清除 ${charName} 的所有凍結池`, "DeepSeek Cache");
+            if (typeof toastr !== 'undefined') toastr.success(`已清除 ${charName} 的所有凍結池`, "DeepSeek 緩存優化器");
         }
     });
 
@@ -1391,7 +1449,7 @@ jQuery(async () => {
             }
         }
 
-        Logger.write('══════ 🛡️ V6.6.0 絕對防禦矩陣 (ST-API 精準溯源 · 全源註冊表版) 就緒 ══════', LogLevels.BASIC);
+        Logger.write('══════ 🛡️ DeepSeek V4 Pro 緩存優化器 v2.0 (ST-API 精準溯源) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
