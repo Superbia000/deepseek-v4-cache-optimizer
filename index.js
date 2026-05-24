@@ -370,14 +370,107 @@ const CoreEngine = {
     },
 
     // ==========================================
-    // 🔄 整合建置 – 每次處理時呼叫
+    // 🔄 從已導入的 promptManager 建立註冊表
     // ==========================================
+    buildRegistriesInternal: async (pm) => {
+        const now = Date.now();
+        if (now - CoreEngine.lastRegistryBuildTime < 3000) return;
+        CoreEngine.lastRegistryBuildTime = now;
+        if (pm) {
+            await CoreEngine.buildPromptRegistryInternal(pm);
+        } else {
+            await CoreEngine.buildPromptRegistry();
+        }
+        await CoreEngine.buildWorldInfoRegistry();
+    },
+
     buildRegistries: async () => {
         const now = Date.now();
         if (now - CoreEngine.lastRegistryBuildTime < 3000) return;
         CoreEngine.lastRegistryBuildTime = now;
         await CoreEngine.buildPromptRegistry();
         await CoreEngine.buildWorldInfoRegistry();
+    },
+
+    // ==========================================
+    // 📋 從已導入的 promptManager 建立提示詞註冊表（不重複動態導入）
+    // ==========================================
+    buildPromptRegistryInternal: async (pm) => {
+        CoreEngine.promptRegistry.clear();
+        CoreEngine.promptIdToName.clear();
+
+        // ── 來源1: promptManager.serviceSettings.prompts ──
+        const prompts = pm?.serviceSettings?.prompts;
+        if (Array.isArray(prompts) && prompts.length > 0) {
+            for (const prompt of prompts) {
+                if (!prompt?.content || typeof prompt.content !== 'string') continue;
+                const name = prompt.name || '';
+                const identifier = prompt.identifier || '';
+                const norm = CoreEngine.normalize(prompt.content);
+                if (norm.length < 2) continue;
+                if (identifier) {
+                    CoreEngine.promptIdToName.set(identifier, name || identifier);
+                    console.debug(`[DS Cache] 📋 註冊提示詞: "${name}" ← id="${identifier}"`);
+                }
+                if (!CoreEngine.promptRegistry.has(norm)) {
+                    CoreEngine.promptRegistry.set(norm, { name: name || identifier || '未命名', identifier, role: prompt.role || 'system', content: prompt.content });
+                }
+            }
+        }
+        console.debug(`[DS Cache] 📋 從 promptManager 註冊了 ${CoreEngine.promptRegistry.size} 個提示詞內容, ${CoreEngine.promptIdToName.size} 個 ID→Name 映射`);
+
+        // ── 來源2: 系統級靜態名稱 ──
+        const staticSysNames = {
+            'main': 'Main Prompt', 'nsfw': 'Auxiliary Prompt', 'jailbreak': 'Post-History Instructions',
+            'enhanceDefinitions': 'Enhance Definitions', 'worldInfoBefore': 'World Info (before)',
+            'worldInfoAfter': 'World Info (after)', 'charDescription': 'Char Description',
+            'charPersonality': 'Char Personality', 'scenario': 'Scenario',
+            'personaDescription': 'Persona Description', 'dialogueExamples': 'Chat Examples',
+            'chatHistory': 'Chat History', 'impersonate': 'Impersonation Prompt',
+            'quietPrompt': 'Quiet Prompt', 'groupNudge': 'Group Nudge', 'bias': 'Bias',
+            'summary': 'Summary', 'authorsNote': 'Authors Note',
+            'vectorsMemory': 'Vectors Memory', 'vectorsDataBank': 'Vectors DataBank',
+            'smartContext': 'Smart Context', 'newMainChat': 'New Chat', 'continueNudge': 'Continue Nudge',
+            'emptyUserMessageReplacement': 'Empty Message Repl', 'controlPrompts': 'Control Prompts',
+        };
+        for (const [id, name] of Object.entries(staticSysNames)) {
+            if (!CoreEngine.promptIdToName.has(id)) CoreEngine.promptIdToName.set(id, name);
+        }
+
+        // ── 來源3: 角色卡資料 ──
+        try {
+            const ctx = getSTContext();
+            const character = ctx?.characters?.[ctx?.characterId];
+            if (character) {
+                const charSysEntries = [
+                    { key: 'charDescription', label: '角色描述', content: character?.data?.description || character?.description },
+                    { key: 'charPersonality', label: '性格描述', content: character?.data?.personality || character?.personality },
+                    { key: 'scenario', label: '場景', content: character?.data?.scenario || character?.scenario },
+                    { key: 'first_mes', label: '初次對話', content: character?.data?.first_mes || character?.first_mes },
+                    { key: 'mes_example', label: '對話範例', content: character?.data?.mes_example || character?.mes_example },
+                ];
+                for (const cse of charSysEntries) {
+                    if (!cse.content || typeof cse.content !== 'string' || !cse.content.trim()) continue;
+                    CoreEngine.promptIdToName.set(cse.key, `角色-${cse.label}`);
+                    const norm = CoreEngine.normalize(cse.content);
+                    if (norm.length >= 2 && !CoreEngine.promptRegistry.has(norm)) {
+                        CoreEngine.promptRegistry.set(norm, { name: `角色-${cse.label}`, identifier: cse.key, role: 'system', content: cse.content });
+                    }
+                }
+            }
+        } catch (e) { /* ignore */ }
+
+        // ── 來源4: Persona ──
+        try {
+            const pd = typeof window?.power_user?.persona_description === 'string' ? window.power_user.persona_description.trim() : '';
+            if (pd.length > 0) {
+                CoreEngine.promptIdToName.set('personaDescription', '用戶設定(Persona)');
+                const norm = CoreEngine.normalize(pd);
+                if (norm.length >= 2 && !CoreEngine.promptRegistry.has(norm)) {
+                    CoreEngine.promptRegistry.set(norm, { name: '用戶設定(Persona)', identifier: 'personaDescription', role: 'system', content: pd });
+                }
+            }
+        } catch (e) { /* ignore */ }
     },
 
     // ==========================================
@@ -537,9 +630,15 @@ const CoreEngine = {
     },
 
     // ==========================================
-    // 🏷️ 分類函數 – 使用 ST 內部資料結構識別每條提示詞
+    // 🏷️ 分類函數 – 使用 ST 結構化 identifier（非內容比對）
     // ==========================================
-    classify: (msg, structuralTag, isDynamic) => {
+    /**
+     * @param {object} msg - chat item
+     * @param {string|null} structuralTag - 結構標籤
+     * @param {boolean} isDynamic - 是否動態
+     * @param {string|null} structuralIdentifier - 從 promptManager.messages 取得的結構化 identifier
+     */
+    classify: (msg, structuralTag, isDynamic, structuralIdentifier) => {
         if (msg._isDSPlugin) return { cat: '本插件', source: '本插件', creator: 'DS Cache', type: 'PLUGIN' };
         if (structuralTag === 'USER_CURRENT') return { cat: '用戶', source: '用戶輸入', creator: '用戶', type: 'USER_CURRENT' };
         if (structuralTag === 'PREFILL') return { cat: 'AI', source: '預填充', creator: '大模型', type: 'PREFILL' };
@@ -547,99 +646,74 @@ const CoreEngine = {
         if (structuralTag === 'USER_HISTORY') return { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' };
         if (structuralTag === 'AI_HISTORY') return { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' };
 
-        const msgName = msg.name || '';
-        const msgNameLower = msgName.toLowerCase();
-        const contentTrimmed = msg.content ? msg.content.trim() : '';
+        const sid = structuralIdentifier || '';
+        const sidLower = sid.toLowerCase();
 
         // ── 摘要 ──
-        if (msgNameLower.includes('summary') || msgNameLower.includes('summarization') || contentTrimmed.startsWith('[Summary:')) {
-            return { cat: '摘要', source: '系統摘要(Summary)', creator: 'ST核心', type: 'SUMMARY' };
+        if (sidLower.includes('summary') || sidLower.includes('summarization')) {
+            return { cat: '摘要', source: `預設(系統摘要) [ID: ${sid}]`, creator: 'ST核心', type: 'SUMMARY' };
         }
 
-        // ── 從 name 欄位查詢提示詞名稱 ──
-        // data.chat 中的 name = ST prompt identifier (UUID 或系統名)
-        // 用 promptIdToName 查表取得顯示名稱
-        if (msgName && CoreEngine.promptIdToName.has(msgName)) {
-            const displayName = CoreEngine.promptIdToName.get(msgName);
-            // 檢查是否為世界書相關的系統提示詞
-            const wiSystemIds = ['worldInfoBefore', 'worldInfoAfter'];
-            if (wiSystemIds.includes(msgName)) {
-                return { cat: '預設', source: `預設(${displayName})`, creator: 'ST核心', type: 'DEFAULT', promptName: displayName, promptId: msgName };
-            }
-            return { cat: '預設', source: `預設(${displayName})`, creator: 'ST核心', type: 'DEFAULT', promptName: displayName, promptId: msgName };
+        // ── chatHistory-N → 歷史訊息 ──
+        if (sidLower.startsWith('chathistory-')) {
+            return { cat: '聊天', source: '歷史訊息', creator: '用戶/角色', type: 'AI_HISTORY' };
         }
 
-        // ── 從 name 欄位匹配已知的系統提示詞名稱慣例 ──
-        const knownSystemIds = {
-            'example_user': { cat: '預設', source: '預設(對話範例-用戶)', creator: 'ST核心', type: 'DEFAULT' },
-            'example_assistant': { cat: '預設', source: '預設(對話範例-角色)', creator: 'ST核心', type: 'DEFAULT' },
-            'newMainChat': { cat: '預設', source: '預設(新聊天)', creator: 'ST核心', type: 'DEFAULT' },
-            'continueNudge': { cat: '預設', source: '預設(接續)', creator: 'ST核心', type: 'DEFAULT' },
-            'emptyUserMessageReplacement': { cat: '預設', source: '預設(空訊息替代)', creator: 'ST核心', type: 'DEFAULT' },
-            'controlPrompts': { cat: '預設', source: '預設(控制提示詞)', creator: 'ST核心', type: 'DEFAULT' },
-        };
-        if (msgName && knownSystemIds[msgNameLower]) {
-            const m = knownSystemIds[msgNameLower];
-            return { cat: m.cat, source: m.source, creator: m.creator, type: m.type };
+        // ── 世界書系統標記 ──
+        if (sid === 'worldInfoBefore' || sid === 'worldInfoAfter') {
+            const label = sid === 'worldInfoBefore' ? 'World Info (before)' : 'World Info (after)';
+            return { cat: '世界書', source: `預設(${label})`, creator: 'ST核心', type: 'LOREBOOK', promptName: label, promptId: sid };
         }
 
-        // chatHistory-N 格式 (歷史聊天訊息)
-        if (msgNameLower.startsWith('chathistory-')) {
-            return { cat: '歷史', source: '歷史聊天訊息', creator: '用戶/角色', type: 'AI_HISTORY' };
-        }
-
-        // ── 從註冊表進行內容匹配 ──
-        const normContent = msg._origTemplate ? CoreEngine.normalize(msg._origTemplate) : msg._norm;
-        const nGrams = msg._nGrams;
-        const matched = CoreEngine.findInRegistries(normContent, nGrams);
-
-        if (matched) {
-            const result = {
-                cat: isDynamic ? '動態' : matched.cat,
-                source: isDynamic ? `${matched.source}(動態)` : matched.source,
-                creator: matched.creator,
-                type: isDynamic ? 'DYNAMIC' : matched.type,
+        // ── 從 promptIdToName 查表取得顯示名稱 ──
+        if (sid && CoreEngine.promptIdToName.has(sid)) {
+            const displayName = CoreEngine.promptIdToName.get(sid);
+            // 判別是否為世界書相關標記
+            const isWorldBookMarker = displayName.includes('World Info') || displayName.includes('世界書');
+            return {
+                cat: isWorldBookMarker ? '世界書' : '預設',
+                source: `預設(${displayName})`,
+                creator: 'ST核心',
+                type: isWorldBookMarker ? 'LOREBOOK' : 'DEFAULT',
+                promptName: displayName,
+                promptId: sid,
             };
-            if (matched.isWorldBook) {
-                result.bookName = matched.bookName;
-                result.entryName = matched.entryName;
-                result.entryUid = matched.entryUid;
+        }
+
+        // ── 從世界書註冊表（動態導入的世界書）查詢 ──
+        // 注意：world info 條目在 ST 中可能被打包成一個 MessageCollection，
+        // 此時 sid 為 'worldInfoBefore'/'worldInfoAfter'，已在上面處理。
+        // 若條目以獨立方式注入（如透過 in-chat injection），每個條目會
+        // 有自己的 MessageCollection，此時 identifier 即為該條目的來源。
+        if (sid && sid.length > 0) {
+            // 嘗試匹配 world_info 中的條目 UID 或名稱
+            for (const [norm, wiData] of CoreEngine.worldInfoRegistry) {
+                if (sid.includes(String(wiData.uid)) || sid === wiData.entryName) {
+                    return {
+                        cat: '世界書',
+                        source: `世界書(${wiData.worldBookName}: ${wiData.entryName})`,
+                        creator: '世界書系統',
+                        type: 'LOREBOOK',
+                        bookName: wiData.worldBookName,
+                        entryName: wiData.entryName,
+                        entryUid: wiData.uid,
+                        isWorldBook: true,
+                    };
+                }
             }
-            if (matched.promptName) result.promptName = matched.promptName;
-            if (matched.promptId) result.promptId = matched.promptId;
-            return result;
         }
 
-        // ── 動態且無匹配 ──
-        if (isDynamic) return { cat: '動態', source: '動態提示詞', creator: 'ST核心/插件', type: 'DYNAMIC' };
-
-        // ── 從 name 查找世界書命名慣例 ──
-        if (msgNameLower.includes('world info') || msgNameLower.includes('lorebook') ||
-            msgNameLower.startsWith('wi-') || msgNameLower.includes('worldinfo')) {
-            let bookName = '未知世界書';
-            let entryName = '未知條目';
-            const fullMatch = msgName.match(/\(([^)]+):\s*([^)]+)\)/);
-            if (fullMatch) { bookName = fullMatch[1].trim(); entryName = fullMatch[2].trim(); }
-            const bracketMatch = msgName.match(/\((.*?)\)/);
-            if (!fullMatch && bracketMatch) entryName = bracketMatch[1];
-            return { cat: '世界書', source: `世界書(${bookName}: ${entryName})`, creator: '世界書系統', type: 'LOREBOOK', bookName, entryName };
+        // ── 有未知 identifier → 來自其他插件或自訂提示詞 ──
+        if (sid && sid.length > 0) {
+            return { cat: '其他插件', source: `其他插件(ID: ${sid})`, creator: sid, type: 'OTHER_PLUGIN', promptId: sid };
         }
 
-        // ── 有 name 但無法匹配 → 來自其他插件或未知來源 ──
-        if (msgName && msgName.length > 0) {
-            return { cat: '其他插件', source: `其他插件(${msgName})`, creator: msgName, type: 'OTHER_PLUGIN' };
-        }
-
-        // ── 最終 fallback: 空白/無名系統訊息 ──
-        // 嘗試從內容推導
-        const firstLine = (contentTrimmed || '').split(/\n|\r\n|\r/).find(l => l.trim()) || '';
-        if (firstLine.length > 2 && firstLine.length < 80) {
-            return { cat: '預設', source: `預設(${firstLine.substring(0, 40).trim()})`, creator: 'ST核心', type: 'DEFAULT' };
-        }
+        // ── 無 identifier 的最終 fallback（理論上不應發生） ──
+        const contentTrimmed = msg.content ? msg.content.trim() : '';
         if (contentTrimmed.length === 0) {
             return { cat: '預設', source: '預設(空白分隔)', creator: 'ST核心', type: 'DEFAULT' };
         }
-        return { cat: '預設', source: `預設(系統訊息)`, creator: 'ST核心', type: 'DEFAULT' };
+        return { cat: '預設', source: `預設(無ID標記)`, creator: 'ST核心', type: 'DEFAULT' };
     },
 };
 
@@ -649,14 +723,62 @@ const CoreEngine = {
 async function interceptAndRestructurePrompt(data) {
     if (data.dryRun || !data?.chat?.length) return;
 
-    await CoreEngine.buildRegistries();
+    // ==========================================
+    // 🔗 結構化溯源：單次動態導入 openai.js，同時用於 registry 和 zipping
+    // ==========================================
+    /** @type {Map<number, string>} */ let positionToIdentifier = new Map();
+    try {
+        const openaiMod = await import('../../../openai.js');
+        const pm = openaiMod?.promptManager;
+
+        // 先重建 registry（使用已導入的模組）
+        await CoreEngine.buildRegistriesInternal(pm);
+
+        // 再建立 position → identifier 映射
+        if (pm?.messages?.collection) {
+            let chatIdx = 0;
+            for (let item of pm.messages.collection) {
+                if (item.collection && Array.isArray(item.collection)) {
+                    for (let msg of item.collection) {
+                        if (msg.content || msg.tool_calls) {
+                            if (chatIdx < data.chat.length) {
+                                positionToIdentifier.set(chatIdx, item.identifier);
+                                chatIdx++;
+                            }
+                        }
+                    }
+                } else if (item.content || item.tool_calls) {
+                    if (chatIdx < data.chat.length) {
+                        positionToIdentifier.set(chatIdx, item.identifier || item.identifier_ || '');
+                        chatIdx++;
+                    }
+                }
+            }
+            console.debug(`[DS Cache] 🔗 結構化溯源完成: ${positionToIdentifier.size}/${data.chat.length} 個 chat item 取得 identifier`);
+        } else {
+            console.debug('[DS Cache] ⚠️ promptManager.messages 不可用');
+        }
+    } catch (e) {
+        console.debug('[DS Cache] ❌ 無法動態導入 openai.js:', e.message);
+        // fallback: 仍然嘗試建立 registry
+        await CoreEngine.buildRegistries();
+    }
 
     try {
         const state = getChatState(getChatKey());
         let incomingStream = data.chat;
         let incomingPool = [];
-        let ledger = []; 
-        
+        let ledger = [];
+
+        const processTime = Logger.getTime();
+        const chatTurn = getContext().chat ? getContext().chat.length : 0;
+        let otherPluginActions = new Set();
+        let detailedMods = [];
+        const state = getChatState(getChatKey());
+        let incomingStream = data.chat;
+        let incomingPool = [];
+        let ledger = [];
+
         const processTime = Logger.getTime();
         const chatTurn = getContext().chat ? getContext().chat.length : 0;
         let otherPluginActions = new Set();
@@ -739,7 +861,15 @@ async function interceptAndRestructurePrompt(data) {
             }
 
             msg._isDynamic = isDynamic;
-            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic);
+            // 🌟 結構化溯源：從 positionToIdentifier 取得 ST 內部的 identifier
+            const structuralId = positionToIdentifier.get(i) || null;
+            msg._structuralId = structuralId;
+            msg._attr = CoreEngine.classify(msg, structuralMap[i], isDynamic, structuralId);
+
+            // 🔍 診斷日誌：顯示每個 item 的 identifier 與分類結果
+            if (Settings.logLevel >= LogLevels.EXTREME) {
+                console.debug(`[DS Cache] [${i}] role=${msg.role} sid="${structuralId || 'NONE'}" → cat="${msg._attr.cat}" src="${msg._attr.source}"`, Logger.truncate(msg.content));
+            }
             
             if (msg._attr.type === 'OTHER_PLUGIN') {
                 otherPluginActions.add(`[${msg._attr.creator}] 處理/注入了提示詞節點: ${msg._attr.source}`);
