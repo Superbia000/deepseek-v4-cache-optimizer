@@ -197,17 +197,39 @@ const Logger = {
 // ==========================================
 function getChatKey() {
     const context = getContext();
-    // 🌟 使用穩定標識：角色名 + 群組ID，不依賴 chatId（chatId 在首條訊息後可能改變）
-    let character = context.name2 || "未分類角色";
+    let character = (context.name2 || "未分類角色").trim();
     let chatId = context.chatId || "";
     if (context.groupId) {
         character = "群聊: " + (context.groupName || context.groupId);
         chatId = context.groupId;
     }
-    // 優先使用角色名作為穩定鍵，chatId 作為後備
-    const stableKey = character !== "未分類角色" ? character : (chatId || "default_chat");
-    const key = `chat_${stableKey.replace(/[^a-zA-Z0-9一-鿿_-]/g, '_')}`;
-    return { key, label: `${chatId || stableKey}`, character: character };
+
+    // 🔑 雙鍵系統：同時支援 chatId 和角色名查找
+    // 避免 chatId 在首次訊息後變化導致狀態丟失
+    const charKey = `char_${character.replace(/[^a-zA-Z0-9一-鿿_-]/g, '_')}`;
+    const chatIdKey = chatId ? `chat_${chatId}` : null;
+
+    // 1. 先用 chatId 精確查找
+    if (chatIdKey && Settings.chats[chatIdKey]) {
+        return { key: chatIdKey, label: chatId, character };
+    }
+
+    // 2. 用角色名查找（跨 chatId 穩定）
+    if (Settings.chats[charKey]) {
+        return { key: charKey, label: chatId || charKey, character };
+    }
+
+    // 3. 遍歷所有已有 key 找相同角色（容錯）
+    for (const k of Object.keys(Settings.chats)) {
+        const c = Settings.chats[k]?.character;
+        if (c && c.trim() === character) {
+            return { key: k, label: chatId || k, character };
+        }
+    }
+
+    // 4. 新建：優先使用角色名作為穩定 key
+    const key = charKey;
+    return { key, label: chatId || character, character };
 }
 
 function getChatState(chatKeyInfo) {
@@ -1234,6 +1256,7 @@ async function interceptAndRestructurePrompt(data) {
                 if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
                 syncMessages.push(`<span style="color:#ff4444;">[節點刪除]</span> ${frozen._attr.source}`);
                 detailedMods.push(`[刪除] 偵測到歷史節點被移除或失效: ${frozen._attr.source}`);
+                console.log(`[DS Cache] 🗑️ 刪除節點: ${frozen._attr.source} | 位置: ${i}/${state.frozenSequence.length} | 斷點字節: ${firstBreakIndex}`);
                 ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(刪除感知)', status: '已刪除' });
             }
         }
@@ -1241,8 +1264,12 @@ async function interceptAndRestructurePrompt(data) {
         let cacheDrop = 0;
         if (firstBreakIndex !== -1) cacheDrop = ((totalFrozenLen - firstBreakIndex) / totalFrozenLen) * 100;
 
+        // 🌟 寫入日誌面板供測試讀取
+        if (cacheDrop > 0.01) {
+            Logger.write(`**[${processTime}]** ⚠️ 緩存流失率：**${cacheDrop.toFixed(2)}%** | 斷點: ${breakNodeName || '未知'}`, LogLevels.BASIC);
+        }
+
         if (syncMessages.length > 0) {
-            // 🌟 始終輸出到 console（即使 toastr 不可用）
             console.log(`[DS Cache] 🔄 量子糾纏同步觸發: ${syncMessages.length} 項變更, 緩存流失: ${cacheDrop.toFixed(2)}%`);
 
             if (Settings.instantNotify && typeof toastr !== 'undefined') {
