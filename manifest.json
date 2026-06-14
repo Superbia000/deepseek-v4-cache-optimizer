@@ -3,8 +3,8 @@
   "loading_order": 200,
   "requires": [],
   "optional": [],
-  "js": "index.js",
+  "js": "index.js?ds_cache_bust=202606142113",
   "author": "Superbia000",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "homePage": "https://github.com/Superbia000/deepseek-v4-cache-optimizer"
 }
