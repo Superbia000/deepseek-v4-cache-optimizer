@@ -115,6 +115,322 @@ let logQueue = [];
 let logRenderTimer = null;
 const MAX_LOG_ENTRIES = 500; 
 
+const FoldTable = {
+    escapeHtml: (value) => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;'),
+    inline: (value) => FoldTable.escapeHtml(value).replace(/\*\*(.*?)\*\*/g, '<b>$1</b>'),
+    cell: (value) => {
+        if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'html')) return value.html;
+        return FoldTable.inline(value);
+    },
+    truncate: (text, maxLen = 80) => {
+        const clean = String(text ?? '').replace(/[\n\r\t]+/g, ' ').trim();
+        return clean.length > maxLen ? clean.substring(0, maxLen) + '...' : clean;
+    },
+    isLongDetail: (label, value) => {
+        if (value && typeof value === 'object' && Object.prototype.hasOwnProperty.call(value, 'html')) return false;
+        const text = String(value ?? '');
+        if (!text.trim()) return false;
+        return text.length > 220 || (text.length > 120 && /[\n\r]/.test(text)) || /完整|提示詞|內容|修改前|修改後/.test(String(label || '')) && text.length > 140;
+    },
+    detailValue: (label, value) => {
+        if (!FoldTable.isLongDetail(label, value)) return FoldTable.cell(value || '（空白）');
+        const text = String(value ?? '').trim();
+        const preview = FoldTable.truncate(text, 140);
+        const count = Array.from(text).length;
+        return `<details class="ds-md-inner-fold">
+            <summary>
+                <span class="ds-md-inner-title">內容較長，點擊展開完整資料</span>
+                <span class="ds-md-inner-count">${count.toLocaleString('zh-Hant')} 字</span>
+            </summary>
+            <div class="ds-md-inner-preview">${FoldTable.inline(preview)}</div>
+            <div class="ds-md-inner-body">${FoldTable.inline(text)}</div>
+        </details>`;
+    },
+    detailRows: (rows) => rows.map(([label, value]) => `<div class="ds-md-detail-row ${FoldTable.isLongDetail(label, value) ? 'ds-md-detail-row-long' : ''}">
+        <span class="ds-md-detail-label">${FoldTable.inline(label)}</span>
+        <span class="ds-md-detail-value">${FoldTable.detailValue(label, value)}</span>
+    </div>`).join(''),
+    render: (headers, rows, options = {}) => {
+        const columns = options.columns || `28px repeat(${headers.length}, minmax(0, 1fr))`;
+        const minWidth = options.minWidth || '720px';
+        const shellMaxHeight = options.shellMaxHeight || 'none';
+        const title = options.tableTitle || headers.filter(Boolean).join(' / ') || '表格';
+        const safeHeaders = headers.map(header => `<span class="ds-md-cell">${FoldTable.inline(header)}</span>`).join('');
+        return `<div class="ds-md-table-frame" data-ds-table-title="${FoldTable.escapeHtml(title)}">
+            <div class="ds-md-table-toolbar">
+                <button type="button" class="ds-md-popout-btn" title="放大表格" aria-label="放大表格">
+                    <i class="fa-solid fa-up-right-and-down-left-from-center"></i>
+                </button>
+            </div>
+            <div class="ds-md-table-box">
+                <div class="ds-md-scroll-shell ${options.shellClass || ''}" style="--ds-md-shell-max-height: ${shellMaxHeight};">
+                    <div class="ds-md-table ${options.className || ''}" style="--ds-md-cols: ${columns}; --ds-md-min-width: ${minWidth};">
+                        <div class="ds-md-head">
+                            <span class="ds-md-cell ds-md-caret-head"></span>
+                            ${safeHeaders}
+                        </div>
+                        <div class="ds-md-body">
+                            ${rows.map(row => `<details class="ds-md-row ${row.rowClass || ''}">
+                                <summary class="ds-md-summary">
+                                    <span class="ds-md-cell ds-md-caret">›</span>
+                                    ${row.cells.map(cell => `<span class="ds-md-cell">${FoldTable.cell(cell)}</span>`).join('')}
+                                </summary>
+                                <div class="ds-md-detail">
+                                    ${FoldTable.detailRows(row.detailRows || headers.map((header, index) => [header, row.cells[index]]))}
+                                </div>
+                            </details>`).join('')}
+                        </div>
+                    </div>
+                </div>
+                <div class="ds-md-y-scrollbar" aria-label="上下滑動表格">
+                    <div class="ds-md-y-scrollbar-spacer"></div>
+                </div>
+            </div>
+            <div class="ds-md-x-scrollbar" aria-label="左右滑動表格">
+                <div class="ds-md-x-scrollbar-spacer"></div>
+            </div>
+        </div>`;
+    },
+};
+
+const TableScrollbar = {
+    bound: false,
+    observer: null,
+    raf: null,
+    init: () => {
+        if (TableScrollbar.bound) return;
+        TableScrollbar.bound = true;
+        document.addEventListener('scroll', TableScrollbar.handleScroll, true);
+        document.addEventListener('toggle', TableScrollbar.scheduleSync, true);
+        window.addEventListener('resize', TableScrollbar.scheduleSync);
+        TableScrollbar.observer = new MutationObserver(TableScrollbar.scheduleSync);
+        TableScrollbar.observer.observe(document.body, { childList: true, subtree: true });
+        TableScrollbar.scheduleSync();
+    },
+    scheduleSync: () => {
+        if (TableScrollbar.raf) cancelAnimationFrame(TableScrollbar.raf);
+        TableScrollbar.raf = requestAnimationFrame(TableScrollbar.syncAll);
+    },
+    syncAll: () => {
+        TableScrollbar.raf = null;
+        document.querySelectorAll('.ds-md-table-frame').forEach(TableScrollbar.syncFrame);
+    },
+    syncFrame: (frame) => {
+        const shell = frame.querySelector('.ds-md-scroll-shell');
+        const xBar = frame.querySelector('.ds-md-x-scrollbar');
+        const xSpacer = frame.querySelector('.ds-md-x-scrollbar-spacer');
+        const yBar = frame.querySelector('.ds-md-y-scrollbar');
+        const ySpacer = frame.querySelector('.ds-md-y-scrollbar-spacer');
+        if (!shell || !xBar || !xSpacer || !yBar || !ySpacer) return;
+        xSpacer.style.width = `${Math.max(shell.scrollWidth, shell.clientWidth)}px`;
+        ySpacer.style.height = `${Math.max(shell.scrollHeight, shell.clientHeight)}px`;
+        if (xBar.scrollLeft !== shell.scrollLeft) xBar.scrollLeft = shell.scrollLeft;
+        if (yBar.scrollTop !== shell.scrollTop) yBar.scrollTop = shell.scrollTop;
+    },
+    handleScroll: (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const frame = target.closest('.ds-md-table-frame');
+        if (!frame) return;
+        const shell = frame.querySelector('.ds-md-scroll-shell');
+        const xBar = frame.querySelector('.ds-md-x-scrollbar');
+        const yBar = frame.querySelector('.ds-md-y-scrollbar');
+        if (!shell || !xBar || !yBar) return;
+        if (target.classList.contains('ds-md-scroll-shell')) {
+            if (xBar.scrollLeft !== shell.scrollLeft) xBar.scrollLeft = shell.scrollLeft;
+            if (yBar.scrollTop !== shell.scrollTop) yBar.scrollTop = shell.scrollTop;
+        } else if (target.classList.contains('ds-md-x-scrollbar') && shell.scrollLeft !== xBar.scrollLeft) {
+            shell.scrollLeft = xBar.scrollLeft;
+        } else if (target.classList.contains('ds-md-y-scrollbar') && shell.scrollTop !== yBar.scrollTop) {
+            shell.scrollTop = yBar.scrollTop;
+        }
+    },
+};
+
+const TablePopout = {
+    nextId: 1,
+    zIndex: 62000,
+    bound: false,
+    clamp: (value, min, max) => Math.min(Math.max(value, min), max),
+    init: () => {
+        if (TablePopout.bound) return;
+        TablePopout.bound = true;
+        document.addEventListener('click', TablePopout.handleClick);
+        document.addEventListener('pointerdown', TablePopout.handlePointerDown);
+        window.addEventListener('resize', () => {
+            document.querySelectorAll('.ds-md-popout-window').forEach(TablePopout.constrain);
+        });
+    },
+    focus: (win) => {
+        TablePopout.zIndex += 1;
+        win.style.zIndex = String(TablePopout.zIndex);
+    },
+    tableTitle: (frame) => {
+        const title = frame?.getAttribute('data-ds-table-title') || '表格';
+        return title.length > 48 ? title.slice(0, 48) + '...' : title;
+    },
+    create: (button) => {
+        const frame = button.closest('.ds-md-table-frame');
+        const sourceShell = frame?.querySelector('.ds-md-scroll-shell');
+        if (!frame || !sourceShell) return;
+
+        const clone = sourceShell.cloneNode(true);
+        clone.classList.add('ds-md-popout-table-shell');
+        clone.style.setProperty('--ds-md-shell-max-height', 'none');
+        clone.querySelectorAll('.ds-md-popout-btn').forEach(btn => btn.remove());
+
+        const id = TablePopout.nextId++;
+        const vw = Math.max(window.innerWidth || 900, 360);
+        const vh = Math.max(window.innerHeight || 700, 320);
+        const width = Math.min(Math.max(vw * 0.78, 520), vw - 24);
+        const height = Math.min(Math.max(vh * 0.72, 360), vh - 24);
+        const offset = (id % 6) * 18;
+        const left = TablePopout.clamp((vw - width) / 2 + offset, 8, Math.max(8, vw - width - 8));
+        const top = TablePopout.clamp((vh - height) / 2 + offset, 8, Math.max(8, vh - height - 8));
+
+        const win = document.createElement('div');
+        win.className = 'ds-md-popout-window';
+        win.style.width = `${width}px`;
+        win.style.height = `${height}px`;
+        win.style.left = `${left}px`;
+        win.style.top = `${top}px`;
+        win.style.zIndex = String(++TablePopout.zIndex);
+        win.innerHTML = `
+            <div class="ds-md-popout-titlebar" title="拖動視窗">
+                <div class="ds-md-popout-title">
+                    <i class="fa-solid fa-table"></i>
+                    <span>${FoldTable.escapeHtml(TablePopout.tableTitle(frame))}</span>
+                </div>
+                <div class="ds-md-popout-controls">
+                    <button type="button" class="ds-md-popout-control ds-md-popout-minimize" title="最小化為圓形" aria-label="最小化為圓形"><i class="fa-solid fa-minus"></i></button>
+                    <button type="button" class="ds-md-popout-control ds-md-popout-close" title="關閉" aria-label="關閉"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+            </div>
+            <div class="ds-md-popout-body"></div>
+            <div class="ds-md-popout-resize" title="拖動縮放"></div>`;
+        win.querySelector('.ds-md-popout-body').appendChild(clone);
+        document.body.appendChild(win);
+    },
+    close: (win) => win?.remove(),
+    toggleMinimize: (win) => {
+        if (!win) return;
+        if (win.classList.contains('ds-md-popout-minimized')) {
+            win.classList.remove('ds-md-popout-minimized');
+            win.style.width = win.dataset.restoreWidth || '720px';
+            win.style.height = win.dataset.restoreHeight || '420px';
+            TablePopout.constrain(win);
+            TablePopout.focus(win);
+            return;
+        }
+        win.dataset.restoreWidth = win.style.width || `${win.offsetWidth}px`;
+        win.dataset.restoreHeight = win.style.height || `${win.offsetHeight}px`;
+        win.classList.add('ds-md-popout-minimized');
+        win.style.width = '54px';
+        win.style.height = '54px';
+        TablePopout.constrain(win);
+        TablePopout.focus(win);
+    },
+    handleClick: (event) => {
+        const popoutBtn = event.target.closest('.ds-md-popout-btn');
+        if (popoutBtn) {
+            event.preventDefault();
+            event.stopPropagation();
+            TablePopout.create(popoutBtn);
+            return;
+        }
+        const closeBtn = event.target.closest('.ds-md-popout-close');
+        if (closeBtn) {
+            event.preventDefault();
+            TablePopout.close(closeBtn.closest('.ds-md-popout-window'));
+            return;
+        }
+        const minBtn = event.target.closest('.ds-md-popout-minimize');
+        if (minBtn) {
+            event.preventDefault();
+            TablePopout.toggleMinimize(minBtn.closest('.ds-md-popout-window'));
+            return;
+        }
+        const minimized = event.target.closest('.ds-md-popout-window.ds-md-popout-minimized');
+        if (minimized && minimized.dataset.dragged !== '1') {
+            event.preventDefault();
+            TablePopout.toggleMinimize(minimized);
+        }
+    },
+    handlePointerDown: (event) => {
+        const win = event.target.closest('.ds-md-popout-window');
+        if (!win) return;
+        TablePopout.focus(win);
+        if (event.target.closest('.ds-md-popout-control')) return;
+        const resizeHandle = event.target.closest('.ds-md-popout-resize');
+        const titlebar = event.target.closest('.ds-md-popout-titlebar');
+        const minimized = win.classList.contains('ds-md-popout-minimized');
+        if (resizeHandle && !minimized) {
+            TablePopout.startResize(event, win);
+        } else if (titlebar || minimized) {
+            TablePopout.startDrag(event, win);
+        }
+    },
+    startDrag: (event, win) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const rect = win.getBoundingClientRect();
+        win.dataset.dragged = '0';
+        const move = (e) => {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+            if (Math.abs(dx) + Math.abs(dy) > 4) win.dataset.dragged = '1';
+            win.style.left = `${rect.left + dx}px`;
+            win.style.top = `${rect.top + dy}px`;
+            TablePopout.constrain(win);
+        };
+        const up = () => {
+            document.removeEventListener('pointermove', move);
+            document.removeEventListener('pointerup', up);
+            window.setTimeout(() => { win.dataset.dragged = '0'; }, 0);
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up, { once: true });
+    },
+    startResize: (event, win) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const rect = win.getBoundingClientRect();
+        const move = (e) => {
+            const maxWidth = Math.max(320, window.innerWidth - rect.left - 8);
+            const maxHeight = Math.max(220, window.innerHeight - rect.top - 8);
+            const width = TablePopout.clamp(rect.width + e.clientX - startX, 320, maxWidth);
+            const height = TablePopout.clamp(rect.height + e.clientY - startY, 220, maxHeight);
+            win.style.width = `${width}px`;
+            win.style.height = `${height}px`;
+        };
+        const up = () => {
+            document.removeEventListener('pointermove', move);
+            document.removeEventListener('pointerup', up);
+            TablePopout.constrain(win);
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up, { once: true });
+    },
+    constrain: (win) => {
+        if (!win || !win.isConnected) return;
+        const rect = win.getBoundingClientRect();
+        const margin = 8;
+        const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+        const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+        win.style.left = `${TablePopout.clamp(rect.left, margin, maxLeft)}px`;
+        win.style.top = `${TablePopout.clamp(rect.top, margin, maxTop)}px`;
+    },
+};
+
 const Logger = {
     _uiViewer: null,
     getTime: () => {
@@ -125,6 +441,120 @@ const Logger = {
         if (!text) return '';
         const clean = text.replace(/[\n\r]/g, ' ');
         return clean.length > maxLen ? clean.substring(0, maxLen) + '...' : clean;
+    },
+    escapeHtml: (value) => String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;'),
+    renderInline: (value) => Logger.escapeHtml(value)
+        .replace(/\*\*(.*?)\*\*/g, '<b>$1</b>'),
+    getLogText: () => {
+        const raw = rawMarkdownLogs.join('\n').trim();
+        if (raw) return rawMarkdownLogs.join('\n');
+        return Logger._uiViewer?.innerText || '';
+    },
+    copyTextFallback: (text) => {
+        const area = document.createElement('textarea');
+        area.value = text;
+        area.setAttribute('readonly', '');
+        area.style.position = 'fixed';
+        area.style.left = '-9999px';
+        area.style.top = '0';
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        const ok = document.execCommand('copy');
+        area.remove();
+        if (!ok) throw new Error('document.execCommand copy returned false');
+    },
+    renderLogTable: (headers, rows) => {
+        if (!headers.length || !rows.length) return '';
+        const pick = (cells, label) => {
+            const index = headers.findIndex(h => h.trim() === label);
+            return index === -1 ? '' : (cells[index] || '');
+        };
+        const visibleHeaders = ['#', '時間', '原始來源', '狀態', '內容摘要'];
+        const contentLabels = ['提示詞內容', '內容摘要', '內容', 'Prompt Content'];
+        const getPromptContent = (cells) => {
+            for (const label of contentLabels) {
+                const value = pick(cells, label);
+                if (value) return value;
+            }
+            return cells[cells.length - 1] || '';
+        };
+        const hasPreferredColumns = ['時間', '原始來源', '狀態', ...contentLabels].some(label => headers.includes(label));
+        const fallbackHeaders = ['#', ...headers.slice(0, 4)];
+        const summaryHeaders = hasPreferredColumns ? visibleHeaders : fallbackHeaders;
+        const summaryRows = rows.map((cells, index) => {
+            const promptContent = getPromptContent(cells);
+            const values = hasPreferredColumns
+                ? [
+                    pick(cells, '時間'),
+                    pick(cells, '原始來源'),
+                    pick(cells, '狀態'),
+                    FoldTable.truncate(promptContent, 70),
+                ]
+                : summaryHeaders.slice(1).map(label => cells[headers.indexOf(label)] || '');
+            let hasContentDetail = false;
+            const detailRows = headers.map((header, cellIndex) => {
+                const isContent = contentLabels.includes(header);
+                if (isContent) hasContentDetail = true;
+                return [isContent ? '完整提示詞內容' : header, cells[cellIndex] || '（空白）'];
+            });
+            if (promptContent && !hasContentDetail) detailRows.push(['完整提示詞內容', promptContent]);
+            return {
+                cells: [`#${index + 1}`, ...values],
+                detailRows,
+            };
+        });
+        return FoldTable.render(summaryHeaders, summaryRows, {
+            className: 'ds-md-log-table',
+            columns: '34px 52px minmax(64px, .75fr) minmax(120px, 1.3fr) minmax(70px, .8fr) minmax(180px, 2fr)',
+            minWidth: '880px',
+            shellMaxHeight: 'min(48vh, 420px)',
+            shellClass: 'ds-md-log-scroll',
+            tableTitle: '深度日誌表格',
+        });
+    },
+    renderLogEntry: (entry) => {
+        const lines = String(entry || '').trimEnd().split('\n');
+        const summary = Logger.truncate(lines.find(line => line.trim()) || '日誌紀錄', 120);
+        const body = [];
+        let headers = [];
+        let rows = [];
+        const flushTable = () => {
+            if (headers.length && rows.length) body.push(Logger.renderLogTable(headers, rows));
+            headers = [];
+            rows = [];
+        };
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('|')) {
+                if (trimmed.includes('---')) continue;
+                const cells = line.split('|').map(c => c.trim()).filter(Boolean);
+                if (!headers.length) headers = cells;
+                else rows.push(cells);
+                continue;
+            }
+            flushTable();
+            if (!trimmed) {
+                body.push('<div class="ds-ui-log-spacer"></div>');
+                continue;
+            }
+            body.push(`<div class="ds-ui-log-line">${Logger.renderInline(trimmed.replace(/^#{1,6}\s*/, ''))}</div>`);
+        }
+        flushTable();
+
+        return `<details class="ds-ui-log-entry">
+            <summary>
+                <span class="ds-diag-fold-caret">›</span>
+                <span class="ds-diag-fold-main">${Logger.renderInline(summary)}</span>
+            </summary>
+            <div class="ds-ui-log-detail">${body.join('')}</div>
+        </details>`;
     },
     write: (markdownText, level = LogLevels.STANDARD) => {
         if (Settings.logLevel < level) return;
@@ -138,37 +568,15 @@ const Logger = {
     },
     queueUIUpdate: (newEntry) => {
         if (!Logger._uiViewer) return;
-        let html = newEntry.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/^- (.*)/gm, '<li>$1</li>');
-        if (html.includes('|')) {
-            const lines = html.split('\n');
-            let tableHtml = '<div class="ds-ui-log-container"><table class="ds-ui-log-table">';
-            let inTable = false, isFirstRow = true;
-            for (let line of lines) {
-                if (line.trim().startsWith('|')) {
-                    if (!inTable) inTable = true;
-                    const cells = line.split('|').filter(c => c.trim() !== '');
-                    if (line.includes('---')) continue;
-                    if (isFirstRow) { tableHtml += '<tr>' + cells.map(c => `<th>${c.trim()}</th>`).join('') + '</tr>'; isFirstRow = false; } 
-                    else { tableHtml += '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>'; }
-                } else {
-                    if (inTable) { tableHtml += '</table></div>'; inTable = false; isFirstRow = true; }
-                    tableHtml += line + '<br>';
-                }
-            }
-            if (inTable) tableHtml += '</table></div>';
-            html = tableHtml;
-        }
-        
-        logQueue.push(html);
+        logQueue.push(Logger.renderLogEntry(newEntry));
         
         if (!logRenderTimer) {
             logRenderTimer = requestAnimationFrame(() => {
                 const fragment = document.createDocumentFragment();
                 logQueue.forEach(h => {
-                    const div = document.createElement('div');
-                    div.className = 'ds-ui-log-entry';
-                    div.innerHTML = h;
-                    fragment.appendChild(div);
+                    const template = document.createElement('template');
+                    template.innerHTML = h;
+                    fragment.appendChild(template.content);
                 });
                 Logger._uiViewer.appendChild(fragment);
                 
@@ -183,12 +591,53 @@ const Logger = {
         }
     },
     clear: () => { rawMarkdownLogs = []; if (Logger._uiViewer) Logger._uiViewer.innerHTML = ''; if (typeof toastr !== 'undefined') toastr.success("日誌已清空", "DeepSeek 緩存優化器"); },
-    copy: () => { navigator.clipboard.writeText(rawMarkdownLogs.join('\n')).then(() => { if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿", "DeepSeek 緩存優化器"); }); },
+    copy: async () => {
+        const text = Logger.getLogText();
+        if (!text.trim()) {
+            if (typeof toastr !== 'undefined') toastr.warning("目前沒有可複製的日誌", "DeepSeek 緩存優化器");
+            return;
+        }
+        let fallbackErr = null;
+        try {
+            Logger.copyTextFallback(text);
+        } catch (err) {
+            fallbackErr = err;
+            try {
+                if (!navigator.clipboard?.writeText) throw new Error('navigator.clipboard.writeText is unavailable');
+                await navigator.clipboard.writeText(text);
+            } catch (clipboardErr) {
+                console.warn('[DS Cache] copy failed:', fallbackErr, clipboardErr);
+                if (typeof toastr !== 'undefined') toastr.error("複製失敗，請手動選取日誌內容", "DeepSeek 緩存優化器");
+                return;
+            }
+        }
+        if (typeof toastr !== 'undefined') toastr.success("日誌已複製到剪貼簿", "DeepSeek 緩存優化器");
+    },
     export: () => {
-        const blob = new Blob([rawMarkdownLogs.join('\n')], { type: 'text/markdown' });
+        const text = Logger.getLogText();
+        if (!text.trim()) {
+            if (typeof toastr !== 'undefined') toastr.warning("目前沒有可導出的日誌", "DeepSeek 緩存優化器");
+            return;
+        }
+        const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = `DSCache_Log_${new Date().toISOString().replace(/[:.]/g, '-')}.md`; a.click(); URL.revokeObjectURL(url);
-        if (typeof toastr !== 'undefined') toastr.success("日誌導出成功", "DeepSeek 緩存優化器");
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `DSCache_Log_${new Date().toISOString().replace(/[:.]/g, '-')}.md`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        let backupCopied = false;
+        try {
+            Logger.copyTextFallback(text);
+            backupCopied = true;
+        } catch (_) {
+            // Download still proceeds; clipboard backup is best-effort for browsers that block downloads.
+        }
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 0);
+        if (typeof toastr !== 'undefined') {
+            toastr.success(backupCopied ? "日誌導出已觸發，並已複製備份到剪貼簿" : "日誌導出已觸發", "DeepSeek 緩存優化器");
+        }
     }
 };
 
@@ -199,11 +648,16 @@ const Diagnostics = {
     _panel: null,
     _cacheRateEl: null,
     _cacheMetaEl: null,
+    _cacheHistoryEl: null,
     _tbody: null,
     _sourceBody: null,
     events: [],
     sourceRows: [],
+    cacheHistory: [],
+    cacheSequence: 0,
     lastCacheInfo: null,
+    lastCacheRecordAt: 0,
+    lastGenerationRequest: null,
     escapeHtml: (value) => String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -214,10 +668,23 @@ const Diagnostics = {
         const clean = String(text ?? '').replace(/[\n\r\t]+/g, ' ').trim();
         return clean.length > maxLen ? clean.substring(0, maxLen) + '...' : clean;
     },
+    formatTokenCount: (value) => {
+        const number = Number(value) || 0;
+        return number.toLocaleString('zh-Hant');
+    },
+    pickUsageNumber: (...values) => {
+        for (const value of values) {
+            if (value === undefined || value === null || value === '') continue;
+            const number = Number(value);
+            if (Number.isFinite(number)) return { found: true, value: number };
+        }
+        return { found: false, value: 0 };
+    },
     init: () => {
         Diagnostics._panel = document.getElementById('ds-diagnostics-panel');
         Diagnostics._cacheRateEl = document.getElementById('ds-api-cache-rate');
         Diagnostics._cacheMetaEl = document.getElementById('ds-api-cache-meta');
+        Diagnostics._cacheHistoryEl = document.getElementById('ds-api-cache-history');
         Diagnostics._tbody = document.getElementById('ds-mod-source-body');
         Diagnostics._sourceBody = document.getElementById('ds-prompt-source-body');
         Diagnostics.renderCache();
@@ -232,7 +699,32 @@ const Diagnostics = {
         if (type === 'OTHER_PLUGIN') return 'plugin';
         return 'system';
     },
-    describeLocator: (msg) => {
+    sourceTypeLabel: (type) => ({
+        DEFAULT: '預設提示詞',
+        LOREBOOK: '世界書',
+        SUMMARY: '系統摘要',
+        DYNAMIC: '動態提示詞',
+        OTHER_PLUGIN: '插件/自訂',
+        USER_HISTORY: '歷史用戶訊息',
+        USER_CURRENT: '本輪用戶訊息',
+        AI_HISTORY: '歷史 AI 回覆',
+        AI_LAST_REPLY: '最近 AI 回覆',
+        PREFILL: '預填充',
+        UNKNOWN: '未知',
+    }[type] || Diagnostics.cleanDisplayName(type || '未知')),
+    cleanDisplayName: (value, fallback = '未命名') => {
+        const text = String(value ?? '').trim();
+        if (!text) return fallback;
+        return text
+            .replace(/^Preset Prompt:\s*/i, '')
+            .replace(/^Dynamic Prompt:\s*/i, '')
+            .replace(/^World Info:\s*/i, '世界書 ')
+            .replace(/^ST Summary\/Summarize:\s*/i, 'ST 摘要 ')
+            .replace(/用户/g, '用戶')
+            .replace(/输入/g, '輸入')
+            .replace(/旧版/g, '舊版');
+    },
+    technicalLocator: (msg) => {
         const attr = msg?._attr || {};
         const bits = [];
         if (attr.type === 'DEFAULT') bits.push(`Preset Prompt: ${attr.promptName || attr.promptId || attr.source || 'unknown'}`);
@@ -251,6 +743,96 @@ const Diagnostics = {
         if (Number.isInteger(msg?._origIdx)) bits.push(`incoming#=${msg._origIdx}`);
         return bits.join(' | ');
     },
+    analyzeLocator: (msg) => {
+        const attr = msg?._attr || {};
+        const promptName = Diagnostics.cleanDisplayName(attr.promptName || attr.source || attr.promptId, '未命名提示詞');
+        const chatIndex = Number.isInteger(msg?._chatIndex) ? msg._chatIndex + 1 : '?';
+        const technical = Diagnostics.technicalLocator(msg);
+        if (attr.type === 'DEFAULT') {
+            return {
+                summary: `預設提示詞「${promptName}」`,
+                analysis: 'ST 預設提示詞節點。若內容與上一輪不同，通常是使用者編輯了預設提示詞或模板被重新生成，系統會保留舊版並追加新版以保護 API 快取。',
+                technical,
+            };
+        }
+        if (attr.type === 'LOREBOOK') {
+            const book = Diagnostics.cleanDisplayName(attr.bookName, '未知世界書');
+            const entry = Diagnostics.cleanDisplayName(attr.entryName || attr.promptName || attr.entryUid, '未知條目');
+            return {
+                summary: `世界書「${book}」條目「${entry}」`,
+                analysis: '這段內容由世界書注入。若觸發條件或條目內容變動，會改變提示詞序列，系統會嘗試定位到具體世界書條目。',
+                technical,
+            };
+        }
+        if (attr.type === 'SUMMARY') {
+            return {
+                summary: 'ST 系統摘要',
+                analysis: '這是 SillyTavern 產生的對話摘要，內容可能隨上下文自動更新，屬於容易影響快取命中率的動態來源。',
+                technical,
+            };
+        }
+        if (attr.type === 'DYNAMIC') {
+            return {
+                summary: `動態提示詞「${promptName}」`,
+                analysis: '這類節點通常含模板變數或本輪輸入，會隨每次請求重新生成。系統保留舊版並把新版分離追加，避免前段快取被整段打斷。',
+                technical,
+            };
+        }
+        if (attr.type === 'OTHER_PLUGIN') {
+            const pluginName = Diagnostics.cleanDisplayName(attr.creator || attr.promptName || attr.source || attr.promptId, '未知插件');
+            return {
+                summary: `插件/自訂提示詞「${pluginName}」`,
+                analysis: '這段內容可能由其他插件或自訂提示詞注入。若內容變化，會被視為外部來源變動並單獨記錄。',
+                technical,
+            };
+        }
+        if (attr.type === 'USER_HISTORY' || attr.type === 'USER_CURRENT') {
+            return {
+                summary: `聊天訊息 #${chatIndex}（用戶）`,
+                analysis: '這是用戶訊息。若原文被編輯或上下文重新分類，系統會判斷是否需要同步或保留舊版快取節點。',
+                technical,
+            };
+        }
+        if (attr.type === 'AI_HISTORY' || attr.type === 'AI_LAST_REPLY') {
+            return {
+                summary: `聊天訊息 #${chatIndex}（AI）`,
+                analysis: '這是 AI 回覆。若回覆被編輯或位置被 ST 重新整理，系統會避免把上下文移位誤判成使用者修改。',
+                technical,
+            };
+        }
+        if (attr.type === 'PREFILL') {
+            return {
+                summary: 'Chat Completion Prefill',
+                analysis: '這是 ST 在請求前加入的預填充內容，可能由角色或回覆流程自動產生。',
+                technical,
+            };
+        }
+        return {
+            summary: Diagnostics.cleanDisplayName(attr.source, '未知來源'),
+            analysis: '暫時只能判定為未知來源。展開後可查看技術定位，方便追蹤實際節點。',
+            technical,
+        };
+    },
+    describeLocator: (msg) => Diagnostics.analyzeLocator(msg).summary,
+    explainEvent: (event) => {
+        const source = `${event?.source || ''} ${event?.outcome || ''}`;
+        if (source.includes('動態提示詞') || source.includes('模板變數') || source.includes('動態')) {
+            return '這次變化來自會隨本輪輸入或模板變數重新生成的內容。系統已把舊版保留、新版追加，目標是盡量維持 DeepSeek API 前段快取命中。';
+        }
+        if (event?.type === '手動修改') {
+            return '偵測到聊天原文已被修改，系統會同步新的內容；修改點之前的快取通常可保留，修改點之後需要重新計算。';
+        }
+        if (event?.type === '提示詞來源修改') {
+            return '偵測到預設提示詞、世界書或插件提示詞的內容與已凍結版本不同。系統會保留舊版並新增新版，避免直接覆蓋造成快取斷裂。';
+        }
+        if (event?.type === '自動轉換') {
+            return '這通常不是使用者直接手改，而是 ST、正則、摘要、模板或上下文管理造成的自動內容變化。';
+        }
+        if (event?.type === '節點消失' || event?.type === '手動刪除') {
+            return '原本凍結的節點在本輪請求中已不存在，系統會把它從凍結序列移除並記錄斷點。';
+        }
+        return '系統已記錄此變化。展開列可查看修改前後內容與技術定位。';
+    },
     recordModification: (event) => {
         const normalized = Object.assign({
             time: Logger.getTime(),
@@ -258,11 +840,17 @@ const Diagnostics = {
             source: '未知來源',
             sourceDetail: '',
             target: '未知節點',
+            targetAnalysis: '',
+            targetTechnical: '',
             outcome: '已記錄',
             before: '',
             after: '',
             confidence: 'medium',
         }, event || {});
+        normalized.source = Diagnostics.cleanDisplayName(normalized.source, normalized.source);
+        normalized.target = Diagnostics.cleanDisplayName(normalized.target, normalized.target);
+        normalized.targetAnalysis = normalized.targetAnalysis || Diagnostics.explainEvent(normalized);
+        normalized.targetTechnical = normalized.targetTechnical || normalized.sourceDetail;
         Diagnostics.events.unshift(normalized);
         if (Diagnostics.events.length > 80) Diagnostics.events.length = 80;
         Diagnostics.renderEvents();
@@ -270,12 +858,16 @@ const Diagnostics = {
     recordPromptSnapshot: (messages, turn) => {
         Diagnostics.sourceRows = (messages || []).map((msg, index) => {
             const attr = msg?._attr || {};
+            const locator = Diagnostics.analyzeLocator(msg);
             return {
                 idx: index + 1,
                 turn,
                 type: attr.type || attr.cat || 'UNKNOWN',
-                source: attr.source || '未知來源',
-                locator: Diagnostics.describeLocator(msg),
+                typeLabel: Diagnostics.sourceTypeLabel(attr.type || attr.cat || 'UNKNOWN'),
+                source: Diagnostics.cleanDisplayName(attr.source || '未知來源'),
+                locator: locator.summary,
+                locatorAnalysis: locator.analysis,
+                locatorTechnical: locator.technical,
                 action: msg?._diagAction || (msg?._isDynamic ? '動態鏡像/追加' : '凍結'),
                 preview: msg?.content || '',
             };
@@ -285,47 +877,123 @@ const Diagnostics = {
     renderEvents: () => {
         if (!Diagnostics._tbody) return;
         if (Diagnostics.events.length === 0) {
-            Diagnostics._tbody.innerHTML = '<tr><td colspan="7" class="ds-diag-empty">尚未偵測到修改來源。開始對話後會在此顯示手動修改、正則、插件、預設與世界書造成的變化。</td></tr>';
+            Diagnostics._tbody.innerHTML = '<div class="ds-diag-empty">尚未偵測到修改來源。開始對話後會在此顯示手動修改、正則、插件、預設與世界書造成的變化。</div>';
             return;
         }
-        Diagnostics._tbody.innerHTML = Diagnostics.events.map(evt => {
+        const headers = ['時間', '類型', '來源摘要', '位置摘要', '系統判斷', '處理方式'];
+        const rows = Diagnostics.events.map(evt => {
             const typeClass = evt.type === '手動修改' ? 'manual' : (evt.type === '自動轉換' ? 'auto' : 'system');
-            return `<tr class="ds-diag-row-${typeClass}">
-                <td>${Diagnostics.escapeHtml(evt.time)}</td>
-                <td><span class="ds-diag-pill ${typeClass}">${Diagnostics.escapeHtml(evt.type)}</span></td>
-                <td title="${Diagnostics.escapeHtml(evt.sourceDetail || evt.source)}">${Diagnostics.escapeHtml(Diagnostics.truncate(evt.source, 34))}</td>
-                <td title="${Diagnostics.escapeHtml(evt.target)}">${Diagnostics.escapeHtml(Diagnostics.truncate(evt.target, 34))}</td>
-                <td title="${Diagnostics.escapeHtml(evt.before)}">${Diagnostics.escapeHtml(Diagnostics.truncate(evt.before, 44))}</td>
-                <td title="${Diagnostics.escapeHtml(evt.after)}">${Diagnostics.escapeHtml(Diagnostics.truncate(evt.after, 44))}</td>
-                <td>${Diagnostics.escapeHtml(evt.outcome)}</td>
-            </tr>`;
-        }).join('');
+            return {
+                rowClass: `ds-diag-row-${typeClass}`,
+                cells: [
+                    evt.time,
+                    { html: `<span class="ds-diag-pill ${typeClass}">${Diagnostics.escapeHtml(evt.type)}</span>` },
+                    evt.source,
+                    FoldTable.truncate(evt.target, 70),
+                    FoldTable.truncate(evt.targetAnalysis, 90),
+                    FoldTable.truncate(evt.outcome, 70),
+                ],
+                detailRows: [
+                    ['時間', evt.time],
+                    ['類型', evt.type],
+                    ['來源', evt.source],
+                    ['定位', evt.target],
+                    ['定位分析', evt.targetAnalysis],
+                    ['修改前', evt.before],
+                    ['修改後', evt.after],
+                    ['處理結果', evt.outcome],
+                    ['技術定位', evt.targetTechnical || '（無）'],
+                ],
+            };
+        });
+        Diagnostics._tbody.innerHTML = FoldTable.render(headers, rows, {
+            className: 'ds-md-diag-table',
+            columns: '28px minmax(62px, .65fr) minmax(82px, .8fr) minmax(145px, 1.15fr) minmax(150px, 1.2fr) minmax(230px, 1.8fr) minmax(150px, 1.2fr)',
+            minWidth: '900px',
+            shellMaxHeight: 'min(34vh, 300px)',
+            tableTitle: '修改來源追蹤',
+        });
     },
     renderSources: () => {
         if (!Diagnostics._sourceBody) return;
         if (Diagnostics.sourceRows.length === 0) {
-            Diagnostics._sourceBody.innerHTML = '<tr><td colspan="7" class="ds-diag-empty">尚未有本輪提示詞來源快照。發送一次訊息後會列出所有凍結節點的來源與定位。</td></tr>';
+            Diagnostics._sourceBody.innerHTML = '<div class="ds-diag-empty">尚未有本輪提示詞來源快照。發送一次訊息後會列出所有凍結節點的來源與定位。</div>';
             return;
         }
-        Diagnostics._sourceBody.innerHTML = Diagnostics.sourceRows.map(row => {
+        const headers = ['#', '輪次', '類型', '來源摘要', '凍結策略', '定位分析', '內容摘要'];
+        const rows = Diagnostics.sourceRows.map(row => {
             const typeClass = Diagnostics.sourceTypeClass(row.type);
-            return `<tr class="ds-diag-row-${typeClass}">
-                <td>${row.idx}</td>
-                <td>第 ${Diagnostics.escapeHtml(row.turn)} 輪</td>
-                <td><span class="ds-diag-pill ${typeClass}">${Diagnostics.escapeHtml(row.type)}</span></td>
-                <td title="${Diagnostics.escapeHtml(row.source)}">${Diagnostics.escapeHtml(Diagnostics.truncate(row.source, 38))}</td>
-                <td title="${Diagnostics.escapeHtml(row.locator)}">${Diagnostics.escapeHtml(Diagnostics.truncate(row.locator, 58))}</td>
-                <td>${Diagnostics.escapeHtml(row.action)}</td>
-                <td title="${Diagnostics.escapeHtml(row.preview)}">${Diagnostics.escapeHtml(Diagnostics.truncate(row.preview, 42))}</td>
-            </tr>`;
-        }).join('');
+            return {
+                rowClass: `ds-diag-row-${typeClass}`,
+                cells: [
+                    `#${row.idx}`,
+                    `第 ${row.turn} 輪`,
+                    { html: `<span class="ds-diag-pill ${typeClass}">${Diagnostics.escapeHtml(row.typeLabel)}</span>` },
+                    row.source,
+                    row.action,
+                    FoldTable.truncate(row.locatorAnalysis, 90),
+                    FoldTable.truncate(row.preview, 90),
+                ],
+                detailRows: [
+                    ['#', row.idx],
+                    ['輪次', `第 ${row.turn} 輪`],
+                    ['類型', row.typeLabel],
+                    ['原始類型', row.type],
+                    ['來源摘要', row.source],
+                    ['位置摘要', row.locator],
+                    ['定位分析', row.locatorAnalysis],
+                    ['凍結策略', row.action],
+                    ['完整內容', row.preview],
+                    ['技術定位', row.locatorTechnical],
+                ],
+            };
+        });
+        Diagnostics._sourceBody.innerHTML = FoldTable.render(headers, rows, {
+            className: 'ds-md-source-table',
+            columns: '28px minmax(38px, .45fr) minmax(60px, .65fr) minmax(110px, .95fr) minmax(145px, 1.15fr) minmax(95px, .85fr) minmax(230px, 1.7fr) minmax(210px, 1.55fr)',
+            minWidth: '980px',
+            shellMaxHeight: 'min(48vh, 460px)',
+            tableTitle: '本輪提示詞來源定位',
+        });
+    },
+    looksLikeUsageObject: (obj) => {
+        if (!obj || typeof obj !== 'object') return false;
+        return [
+            'prompt_tokens',
+            'input_tokens',
+            'completion_tokens',
+            'total_tokens',
+            'prompt_cache_hit_tokens',
+            'prompt_cache_miss_tokens',
+            'cache_read_input_tokens',
+            'cache_creation_input_tokens',
+            'cache_read_tokens',
+            'cache_creation_tokens',
+        ].some(key => Object.prototype.hasOwnProperty.call(obj, key))
+            || Boolean(obj.prompt_tokens_details)
+            || Boolean(obj.input_tokens_details);
     },
     extractUsageObjects: (text) => {
         const usages = [];
+        const seen = new Set();
         const tryPush = (obj) => {
             if (!obj || typeof obj !== 'object') return;
-            if (obj.usage && typeof obj.usage === 'object') usages.push(obj.usage);
-            if (obj.data?.usage && typeof obj.data.usage === 'object') usages.push(obj.data.usage);
+            if (seen.has(obj)) return;
+            seen.add(obj);
+            if (Diagnostics.looksLikeUsageObject(obj)) {
+                usages.push(obj);
+                return;
+            }
+            if (obj.usage && typeof obj.usage === 'object') tryPush(obj.usage);
+            if (obj.data?.usage && typeof obj.data.usage === 'object') tryPush(obj.data.usage);
+            for (const value of Object.values(obj)) {
+                if (!value || typeof value !== 'object') continue;
+                if (Array.isArray(value)) {
+                    value.slice(0, 80).forEach(item => tryPush(item));
+                } else {
+                    tryPush(value);
+                }
+            }
         };
         try {
             tryPush(JSON.parse(text));
@@ -342,27 +1010,34 @@ const Diagnostics = {
         return usages;
     },
     normalizeUsage: (usage) => {
-        const promptTokens = Number(
-            usage?.prompt_tokens
-            ?? usage?.input_tokens
-            ?? usage?.usage?.prompt_tokens
-            ?? 0
-        ) || 0;
-        const cachedTokens = Number(
-            usage?.prompt_cache_hit_tokens
-            ?? usage?.prompt_tokens_details?.cached_tokens
-            ?? usage?.input_tokens_details?.cached_tokens
-            ?? usage?.cache_read_input_tokens
-            ?? usage?.cache_read_tokens
-            ?? 0
-        ) || 0;
-        const missTokens = Number(
-            usage?.prompt_cache_miss_tokens
-            ?? usage?.cache_creation_input_tokens
-            ?? usage?.cache_creation_tokens
-            ?? 0
-        ) || 0;
-        const denominator = cachedTokens + missTokens > 0 ? cachedTokens + missTokens : promptTokens;
+        const promptInfo = Diagnostics.pickUsageNumber(
+            usage?.prompt_tokens,
+            usage?.input_tokens,
+            usage?.usage?.prompt_tokens
+        );
+        const cachedInfo = Diagnostics.pickUsageNumber(
+            usage?.prompt_cache_hit_tokens,
+            usage?.prompt_tokens_details?.cached_tokens,
+            usage?.input_tokens_details?.cached_tokens,
+            usage?.cache_read_input_tokens,
+            usage?.cache_read_tokens
+        );
+        const missInfo = Diagnostics.pickUsageNumber(
+            usage?.prompt_cache_miss_tokens,
+            usage?.prompt_tokens_details?.uncached_tokens,
+            usage?.input_tokens_details?.uncached_tokens,
+            usage?.cache_creation_input_tokens,
+            usage?.cache_creation_tokens
+        );
+        const promptTokens = promptInfo.value;
+        const cachedTokens = cachedInfo.value;
+        const missTokens = missInfo.found
+            ? missInfo.value
+            : (cachedInfo.found && promptTokens > cachedTokens ? promptTokens - cachedTokens : 0);
+        const hasCacheBreakdown = cachedInfo.found || missInfo.found;
+        const denominator = hasCacheBreakdown
+            ? (cachedTokens + missTokens > 0 ? cachedTokens + missTokens : promptTokens)
+            : 0;
         const rate = denominator > 0 ? (cachedTokens / denominator) * 100 : null;
         return {
             raw: usage,
@@ -371,62 +1046,318 @@ const Diagnostics = {
             missTokens,
             denominator,
             rate,
+            hasCacheBreakdown,
         };
     },
-    recordApiText: (text, url = '') => {
+    describeCacheAnalysis: (info) => {
+        if (!info?.hasCacheBreakdown || info.rate === null) {
+            return {
+                category: '資料不足',
+                explanation: '這次回應沒有提供可判斷快取命中的統計，因此不能可靠計算命中率。',
+            };
+        }
+        if (info.rate >= 90) {
+            return {
+                category: '極佳命中',
+                explanation: '大部分提示詞內容已被快取復用，表示前文結構維持穩定。',
+            };
+        }
+        if (info.rate >= 70) {
+            return {
+                category: '良好命中',
+                explanation: '多數內容仍能復用快取，但已有一部分提示詞需要重新計算。',
+            };
+        }
+        if (info.rate >= 40) {
+            return {
+                category: '部分命中',
+                explanation: '快取只覆蓋部分提示詞，近期修改或插入內容可能造成斷點。',
+            };
+        }
+        if (info.rate > 0) {
+            return {
+                category: '低命中',
+                explanation: '只有少量提示詞命中快取，建議檢查是否有前段內容被改寫或重排。',
+            };
+        }
+        return {
+            category: '未命中',
+            explanation: '本次提示詞沒有可復用的快取內容，通常代表前文結構已大幅改變或是首次送出。',
+        };
+    },
+    formatCacheAnalysis: (info) => {
+        if (!info) {
+            return [
+                '狀態：等待資料',
+                '說明：送出下一則訊息後，這裡會顯示 DeepSeek 回應的快取命中分析。',
+            ].join('\n');
+        }
+        const analysis = Diagnostics.describeCacheAnalysis(info);
+        const lines = [
+            `時間：${info.time || '未知'}`,
+            `分類：${analysis.category}`,
+            `快取命中：${Diagnostics.formatTokenCount(info.cachedTokens)} 個 token 已復用`,
+            `重新計算：${Diagnostics.formatTokenCount(info.missTokens)} 個 token 未命中`,
+            `提示詞總量：${Diagnostics.formatTokenCount(info.promptTokens)} 個 token`,
+            `說明：${analysis.explanation}`,
+        ];
+        if (info.note) lines.push(`資料狀態：${info.note}`);
+        return lines.join('\n');
+    },
+    recordCacheInfo: (info) => {
+        const recordedAt = Date.now();
+        const snapshot = Object.assign({}, info, {
+            round: ++Diagnostics.cacheSequence,
+            recordedAt,
+            raw: null,
+        });
+        const first = Diagnostics.cacheHistory[0];
+        const replaceRecentFallback = Boolean(
+            info.hasCacheBreakdown
+            && first
+            && !first.hasCacheBreakdown
+            && recordedAt - (first.recordedAt || 0) < 12000
+        );
+        if (replaceRecentFallback) {
+            snapshot.round = first.round;
+            Diagnostics.cacheHistory[0] = snapshot;
+            Diagnostics.lastCacheInfo = snapshot;
+            Diagnostics.lastCacheRecordAt = recordedAt;
+            Diagnostics.renderCache();
+            return;
+        }
+        Diagnostics.lastCacheInfo = snapshot;
+        Diagnostics.lastCacheRecordAt = recordedAt;
+        Diagnostics.cacheHistory.unshift(snapshot);
+        if (Diagnostics.cacheHistory.length > 80) Diagnostics.cacheHistory.length = 80;
+        Diagnostics.renderCache();
+    },
+    buildUsageMissingNote: (requestInfo = {}) => {
+        const source = String(requestInfo.source || '').toLowerCase();
+        if (requestInfo.stream && source === 'deepseek') {
+            return '本輪是 SillyTavern native DeepSeek 串流請求，但回應沒有 usage chunk。通常是後端沒有向 DeepSeek 轉發 stream_options.include_usage，因此前端無法取得真實快取用量。';
+        }
+        if (requestInfo.stream) {
+            return '本輪是串流請求，但最後回傳的 SSE 內容沒有 usage 統計，因此不能可靠計算快取命中率。';
+        }
+        return '生成已完成，但本輪回應沒有取得 DeepSeek 可判讀的快取用量統計。';
+    },
+    importLegacyCacheRecord: async (requestInfo = {}) => {
+        if (typeof indexedDB === 'undefined') return false;
+        const since = Number(requestInfo.startedAt || 0) || Date.now() - 120000;
+        const records = await new Promise((resolve) => {
+            const open = indexedDB.open('StCacheMonitorDB', 1);
+            open.onerror = () => resolve([]);
+            open.onsuccess = () => {
+                const db = open.result;
+                if (!db.objectStoreNames.contains('cacheData')) {
+                    db.close();
+                    resolve([]);
+                    return;
+                }
+                const tx = db.transaction('cacheData', 'readonly');
+                const req = tx.objectStore('cacheData').getAll();
+                req.onerror = () => resolve([]);
+                req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+                tx.oncomplete = () => db.close();
+            };
+        });
+        const latest = records
+            .filter(item => item && Number(item.timestamp || 0) >= since - 5000)
+            .sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0))
+            .find(item => {
+                if (Diagnostics.cacheHistory.some(row => row.legacyRequestId === item.requestId)) return false;
+                return Number(item.total || 0) > 0 || Number(item.hit || 0) > 0 || Number(item.miss || 0) > 0;
+            });
+        if (!latest) return false;
+        const cachedTokens = Number(latest.hit || 0);
+        const missTokens = Number(latest.miss || 0);
+        const promptTokens = Number(latest.total || 0) || cachedTokens + missTokens;
+        const denominator = cachedTokens + missTokens || promptTokens;
+        Diagnostics.recordCacheInfo({
+            time: Logger.getTime(),
+            rate: denominator > 0 ? (cachedTokens / denominator) * 100 : null,
+            cachedTokens,
+            missTokens,
+            promptTokens,
+            source: '舊版 StCacheMonitorDB',
+            note: '已從舊版快取監控資料匯入本輪 API 快取統計',
+            raw: null,
+            hasCacheBreakdown: denominator > 0,
+            legacyRequestId: latest.requestId,
+        });
+        return true;
+    },
+    scheduleLegacyImport: (requestInfo = {}) => {
+        setTimeout(() => {
+            Diagnostics.importLegacyCacheRecord(requestInfo).catch(err => {
+                console.debug('[DS Cache] legacy cache import skipped:', err);
+            });
+        }, 400);
+    },
+    recordCacheFallback: (source = 'SillyTavern 生成結束事件', requestInfo = Diagnostics.lastGenerationRequest || {}) => {
+        Diagnostics.recordCacheInfo({
+            time: Logger.getTime(),
+            rate: null,
+            cachedTokens: 0,
+            missTokens: 0,
+            promptTokens: 0,
+            source,
+            note: Diagnostics.buildUsageMissingNote(requestInfo),
+            raw: null,
+            hasCacheBreakdown: false,
+        });
+        Diagnostics.scheduleLegacyImport(requestInfo);
+    },
+    renderCacheHistory: () => {
+        if (!Diagnostics._cacheHistoryEl) return;
+        if (Diagnostics.cacheHistory.length === 0) {
+            Diagnostics._cacheHistoryEl.innerHTML = '<div class="ds-diag-empty">尚未有 API 快取分析紀錄。送出訊息後，每一輪 DeepSeek 回應都會保留在這裡。</div>';
+            return;
+        }
+        const headers = ['#', '時間', '分類', '命中率', '資料狀態'];
+        const rows = Diagnostics.cacheHistory.map(info => {
+            const analysis = Diagnostics.describeCacheAnalysis(info);
+            const rateText = info.rate === null ? 'N/A' : `${info.rate.toFixed(2)}%`;
+            return {
+                cells: [
+                    `#${info.round}`,
+                    info.time || '未知',
+                    { html: `<span class="ds-diag-pill system">${Diagnostics.escapeHtml(analysis.category)}</span>` },
+                    rateText,
+                    info.note || '已完成分析',
+                ],
+                detailRows: [
+                    ['分類', analysis.category],
+                    ['命中率', rateText],
+                    ['快取命中', `${Diagnostics.formatTokenCount(info.cachedTokens)} 個 token 已復用`],
+                    ['重新計算', `${Diagnostics.formatTokenCount(info.missTokens)} 個 token 未命中`],
+                    ['提示詞總量', `${Diagnostics.formatTokenCount(info.promptTokens)} 個 token`],
+                    ['說明', analysis.explanation],
+                    ['資料來源', info.source || '未知'],
+                    ['資料狀態', info.note],
+                ],
+            };
+        });
+        Diagnostics._cacheHistoryEl.innerHTML = FoldTable.render(headers, rows, {
+            className: 'ds-md-cache-table',
+            columns: '28px minmax(42px, .5fr) minmax(58px, .7fr) minmax(72px, .85fr) minmax(62px, .75fr) minmax(190px, 2fr)',
+            minWidth: '760px',
+            shellMaxHeight: 'min(34vh, 300px)',
+            tableTitle: '每輪 API 快取分析紀錄',
+        });
+    },
+    recordApiText: (text, url = '', requestInfo = Diagnostics.lastGenerationRequest || {}) => {
         const usages = Diagnostics.extractUsageObjects(text);
         if (usages.length === 0) {
-            Diagnostics.lastCacheInfo = {
+            Diagnostics.recordCacheInfo({
                 time: Logger.getTime(),
                 rate: null,
                 cachedTokens: 0,
                 missTokens: 0,
                 promptTokens: 0,
                 source: url,
-                note: '本次回應未包含可解析的 usage/cache 欄位',
+                note: Diagnostics.buildUsageMissingNote(requestInfo),
                 raw: null,
-            };
-            Diagnostics.renderCache();
+                hasCacheBreakdown: false,
+            });
+            Diagnostics.scheduleLegacyImport(requestInfo);
             return;
         }
         const normalized = Diagnostics.normalizeUsage(usages[usages.length - 1]);
-        Diagnostics.lastCacheInfo = Object.assign({ time: Logger.getTime(), source: url, note: 'DeepSeek/OpenAI-compatible usage' }, normalized);
-        Diagnostics.renderCache();
+        Diagnostics.recordCacheInfo(Object.assign({ time: Logger.getTime(), source: url, note: '已收到模型用量統計並完成快取命中分析' }, normalized));
     },
     renderCache: () => {
         if (!Diagnostics._cacheRateEl || !Diagnostics._cacheMetaEl) return;
         const info = Diagnostics.lastCacheInfo;
         if (!info) {
             Diagnostics._cacheRateEl.textContent = '--';
-            Diagnostics._cacheMetaEl.textContent = '等待下一次 DeepSeek API 回應';
+            Diagnostics._cacheMetaEl.textContent = Diagnostics.formatCacheAnalysis(null);
+            Diagnostics.renderCacheHistory();
             return;
         }
         Diagnostics._cacheRateEl.textContent = info.rate === null ? 'N/A' : `${info.rate.toFixed(2)}%`;
-        const rawKeys = info.raw ? Object.keys(info.raw).slice(0, 10).join(', ') : 'none';
-        Diagnostics._cacheMetaEl.textContent = `${info.time} | cached=${info.cachedTokens || 0}, miss=${info.missTokens || 0}, prompt=${info.promptTokens || 0} | ${info.note || ''} | fields: ${rawKeys}`;
+        Diagnostics._cacheMetaEl.textContent = Diagnostics.formatCacheAnalysis(info);
+        Diagnostics.renderCacheHistory();
     },
 };
 
 function installApiUsageInterceptor() {
     const isGenerationUrl = (url) => {
-        const text = String(url || '');
-        return text.includes('/api/') && text.includes('generate');
+        const text = String(url || '').toLowerCase();
+        return text.includes('/api/') && (
+            text.includes('generate') ||
+            text.includes('chat-completions') ||
+            text.includes('completions') ||
+            text.includes('responses')
+        );
     };
+    const parseRequestInfo = (url, body) => {
+        const info = {
+            url: String(url || ''),
+            startedAt: Date.now(),
+            source: '',
+            model: '',
+            stream: false,
+        };
+        try {
+            const text = typeof body === 'string'
+                ? body
+                : (body instanceof URLSearchParams ? body.toString() : '');
+            if (!text) return info;
+            const payload = JSON.parse(text);
+            info.source = String(payload?.chat_completion_source || payload?.api || payload?.source || '');
+            info.model = String(payload?.model || '');
+            info.stream = Boolean(payload?.stream);
+        } catch (_) {
+            // Request body can be a stream/FormData in some ST endpoints; those are not useful here.
+        }
+        return info;
+    };
+    const getFetchUrl = (request) => typeof request === 'string' ? request : (request?.url || '');
+    const getFetchBody = (args) => {
+        const request = args[0];
+        const init = args[1];
+        if (init?.body !== undefined) return init.body;
+        return request?.body || '';
+    };
+
+    if (!window._ds_cache_generation_usage_listener && eventSource?.on) {
+        window._ds_cache_generation_usage_listener = true;
+        window._ds_cache_generation_started_at = 0;
+        const markGenerationStart = () => {
+            window._ds_cache_generation_started_at = Date.now();
+        };
+        const ensureGenerationRecord = () => {
+            const startedAt = window._ds_cache_generation_started_at || Date.now();
+            setTimeout(() => {
+                if ((Diagnostics.lastCacheRecordAt || 0) >= startedAt) return;
+                Diagnostics.recordCacheFallback('SillyTavern generation_ended', Diagnostics.lastGenerationRequest || { startedAt });
+            }, 2500);
+        };
+        eventSource.on(event_types.GENERATION_STARTED, markGenerationStart);
+        eventSource.on(event_types.GENERATION_AFTER_COMMANDS, markGenerationStart);
+        eventSource.on(event_types.GENERATION_ENDED, ensureGenerationRecord);
+    }
 
     if (!window._ds_cache_fetch_usage_patched) {
         const originalFetch = globalThis.fetch || window.fetch;
         if (typeof originalFetch === 'function') {
             const boundFetch = originalFetch.bind(globalThis);
             const patchedFetch = async (...args) => {
+                const request = args[0];
+                const url = getFetchUrl(request);
+                const requestInfo = isGenerationUrl(url)
+                    ? parseRequestInfo(url, getFetchBody(args))
+                    : null;
+                if (requestInfo) Diagnostics.lastGenerationRequest = requestInfo;
                 const response = await boundFetch(...args);
                 try {
-                    const request = args[0];
-                    const url = typeof request === 'string' ? request : (request?.url || '');
-                    if (isGenerationUrl(url)) {
+                    if (requestInfo) {
                         const clone = response.clone();
                         clone.text()
-                            .then(text => Diagnostics.recordApiText(text, url))
-                            .catch(err => Diagnostics.recordApiText('', `${url} (${err?.message || 'read failed'})`));
+                            .then(text => Diagnostics.recordApiText(text, url, requestInfo))
+                            .catch(err => Diagnostics.recordApiText('', `${url} (${err?.message || 'read failed'})`, requestInfo));
                     }
                 } catch (err) {
                     console.debug('[DS Cache] API fetch usage interceptor skipped:', err);
@@ -451,12 +1382,14 @@ function installApiUsageInterceptor() {
         XMLHttpRequest.prototype.send = function(...args) {
             if (this._dsCacheGenerateUrl && !this._dsCacheUsageListenerAttached) {
                 this._dsCacheUsageListenerAttached = true;
+                this._dsCacheRequestInfo = parseRequestInfo(this._dsCacheGenerateUrl, args[0]);
+                Diagnostics.lastGenerationRequest = this._dsCacheRequestInfo;
                 this.addEventListener('loadend', () => {
                     try {
                         const responseText = typeof this.responseText === 'string' ? this.responseText : '';
-                        Diagnostics.recordApiText(responseText, this._dsCacheGenerateUrl);
+                        Diagnostics.recordApiText(responseText, this._dsCacheGenerateUrl, this._dsCacheRequestInfo);
                     } catch (err) {
-                        Diagnostics.recordApiText('', `${this._dsCacheGenerateUrl} (${err?.message || 'xhr read failed'})`);
+                        Diagnostics.recordApiText('', `${this._dsCacheGenerateUrl} (${err?.message || 'xhr read failed'})`, this._dsCacheRequestInfo);
                     }
                 });
             }
@@ -1710,6 +2643,7 @@ async function interceptAndRestructurePrompt(data) {
             return contextChat.some(item => CoreEngine.normalize(item?.mes || '') === targetNorm);
         };
         const getPromptLocator = (msg) => Diagnostics.describeLocator(msg);
+        const getAttrLabel = (attr) => Diagnostics.cleanDisplayName(attr?.promptName || attr?.source || attr?.promptId || attr?.creator || '未知來源');
         const getSourceDetail = (msg) => {
             const attr = msg?._attr || {};
             return [
@@ -1830,23 +2764,23 @@ async function interceptAndRestructurePrompt(data) {
             const matchedTemplate = matched?._origTemplate || '';
             if (frozenTemplate && matchedTemplate && CoreEngine.normalize(frozenTemplate) !== CoreEngine.normalize(matchedTemplate)) {
                 if (attr.type === 'LOREBOOK') {
-                    return { type: '提示詞來源修改', source: `世界書條目: ${attr.bookName || '未知世界書'} -> ${attr.entryName || attr.entryUid || '未知條目'}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
+                    return { type: '提示詞來源修改', source: `世界書條目: ${Diagnostics.cleanDisplayName(attr.bookName, '未知世界書')} -> ${Diagnostics.cleanDisplayName(attr.entryName || attr.entryUid, '未知條目')}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
                 }
                 if (attr.type === 'DEFAULT') {
-                    return { type: '提示詞來源修改', source: `預設提示詞: ${attr.promptName || attr.promptId || attr.source}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
+                    return { type: '提示詞來源修改', source: `預設提示詞: ${getAttrLabel(attr)}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
                 }
                 if (attr.type === 'OTHER_PLUGIN') {
-                    return { type: '提示詞來源修改', source: `插件/自訂提示詞: ${attr.promptId || attr.creator || attr.source}`, sourceDetail: getSourceDetail(matched), confidence: 'medium' };
+                    return { type: '提示詞來源修改', source: `插件/自訂提示詞: ${getAttrLabel(attr)}`, sourceDetail: getSourceDetail(matched), confidence: 'medium' };
                 }
-                return { type: '提示詞來源修改', source: attr.source || '未知提示詞來源', sourceDetail: getSourceDetail(matched), confidence: 'medium' };
+                return { type: '提示詞來源修改', source: getAttrLabel(attr), sourceDetail: getSourceDetail(matched), confidence: 'medium' };
             }
             if (frozen?._isDynamic || matched?._isDynamic || attr.type === 'DYNAMIC') {
-                return { type: '自動轉換', source: `動態提示詞/模板變數: ${attr.promptName || attr.promptId || attr.source}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
+                return { type: '自動轉換', source: `動態提示詞/模板變數: ${getAttrLabel(attr)}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
             }
             if (attr.type === 'SUMMARY') {
-                return { type: '自動轉換', source: `ST系統摘要: ${attr.promptId || attr.source}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
+                return { type: '自動轉換', source: `ST系統摘要: ${getAttrLabel(attr)}`, sourceDetail: getSourceDetail(matched), confidence: 'high' };
             }
-            return { type: '未知修改', source: attr.source || '未知來源', sourceDetail: getSourceDetail(matched), confidence: 'low' };
+            return { type: '未知修改', source: getAttrLabel(attr), sourceDetail: getSourceDetail(matched), confidence: 'low' };
         };
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
@@ -2375,6 +3309,51 @@ function addMenuEntry() {
     menu.appendChild(item);
 }
 
+async function openManagedChat(chatKey) {
+    const savedChat = Settings.chats?.[chatKey];
+    if (!savedChat) {
+        if (typeof toastr !== 'undefined') toastr.warning('找不到這個聊天的緩存記錄', 'DeepSeek 緩存優化器');
+        return;
+    }
+
+    const chatFile = String(savedChat.label || chatKey.replace(/^chat_/, '') || '').replace(/\.jsonl$/i, '').trim();
+    if (!chatFile || chatFile.startsWith('char_')) {
+        if (typeof toastr !== 'undefined') toastr.warning('這筆舊緩存沒有可開啟的聊天檔名，請先在該聊天發送一次訊息後再使用。', 'DeepSeek 緩存優化器');
+        return;
+    }
+
+    if (String(savedChat.character || '').startsWith('群聊:')) {
+        if (typeof toastr !== 'undefined') toastr.warning('群聊緩存目前沒有保存具體群聊檔名，暫時不能直接跳轉。', 'DeepSeek 緩存優化器');
+        return;
+    }
+
+    const context = getSTContext();
+    const characters = Array.isArray(context?.characters) ? context.characters : [];
+    const characterName = String(savedChat.character || '').trim();
+    let characterId = characters.findIndex(ch => ch?.name === characterName || ch?.data?.name === characterName);
+    if (characterId < 0 && String(context?.name2 || '').trim() === characterName && context?.characterId !== undefined) {
+        characterId = Number(context.characterId);
+    }
+
+    if (characterId < 0 || !characters[characterId]) {
+        if (typeof toastr !== 'undefined') toastr.error(`找不到角色「${characterName || '未命名'}」，無法直接進入該聊天。`, 'DeepSeek 緩存優化器');
+        return;
+    }
+
+    try {
+        if (String(context.characterId) !== String(characterId) && typeof context.selectCharacterById === 'function') {
+            await context.selectCharacterById(characterId, { switchMenu: false });
+        }
+        if (typeof context.openCharacterChat !== 'function') throw new Error('openCharacterChat is unavailable');
+        await context.openCharacterChat(chatFile);
+        if (typeof toastr !== 'undefined') toastr.success(`已進入「${chatFile}」`, 'DeepSeek 緩存優化器');
+        renderChatsUI();
+    } catch (err) {
+        console.warn('[DS Cache] open managed chat failed:', err);
+        if (typeof toastr !== 'undefined') toastr.error(`開啟聊天失敗：${err?.message || err}`, 'DeepSeek 緩存優化器');
+    }
+}
+
 function renderChatsUI() {
     const container = $('#ds-ui-chat-list-container');
     if (container.length === 0) return;
@@ -2413,13 +3392,18 @@ function renderChatsUI() {
         chats.forEach(c => {
             const isCurrent = c.key === currentChatKey;
             const chatName = c.label.replace('.jsonl', '');
+            const safeKey = FoldTable.escapeHtml(c.key);
+            const safeChatName = FoldTable.escapeHtml(chatName);
             html += `
                 <div class="ds-ui-chat-item ${isCurrent ? 'ds-ui-chat-current' : ''}">
                     <div class="ds-ui-chat-info">
-                        <span class="ds-ui-chat-name">${isCurrent ? '<i class="fa-solid fa-location-dot" style="color:#00e5ff; margin-right:6px; text-shadow: 0 0 5px rgba(0,229,255,0.5);"></i>' : '<i class="fa-regular fa-file-lines" style="color:#555; margin-right:6px;"></i>'}${chatName}</span>
+                        <span class="ds-ui-chat-name">${isCurrent ? '<i class="fa-solid fa-location-dot" style="color:#00e5ff; margin-right:6px; text-shadow: 0 0 5px rgba(0,229,255,0.5);"></i>' : '<i class="fa-regular fa-file-lines" style="color:#555; margin-right:6px;"></i>'}${safeChatName}</span>
                         <span class="ds-ui-chat-nodes">已凍結 ${c.frozenSequence.length} 個節點</span>
                     </div>
-                    <button class="ds-ui-icon-btn ds-ui-delete-chat-btn" data-key="${c.key}" title="清除此聊天的緩存池"><i class="fa-solid fa-xmark"></i></button>
+                    <div class="ds-ui-chat-actions">
+                        <button class="ds-ui-icon-btn ds-ui-open-chat-btn" data-key="${safeKey}" title="進入該對話"><i class="fa-solid fa-arrow-up-right-from-square"></i></button>
+                        <button class="ds-ui-icon-btn ds-ui-delete-chat-btn" data-key="${safeKey}" title="清除此聊天的緩存池"><i class="fa-solid fa-xmark"></i></button>
+                    </div>
                 </div>`;
         });
         html += `</div></div>`;
@@ -2475,34 +3459,113 @@ async function setupUI() {
                 .ds-ui-chat-item:last-child { border-bottom: none; }
                 .ds-ui-chat-item:hover { background: rgba(0, 229, 255, 0.05); }
                 .ds-ui-chat-current { background: rgba(0, 229, 255, 0.08); border-left: 3px solid var(--ds-cyan); padding-left: 27px; }
-                .ds-ui-chat-info { display: flex; flex-direction: column; gap: 2px; }
-                .ds-ui-chat-name { font-size: 12px; color: #ccc; }
+                .ds-ui-chat-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+                .ds-ui-chat-name { font-size: 12px; color: #ccc; overflow-wrap: anywhere; white-space: normal; }
                 .ds-ui-chat-current .ds-ui-chat-name { color: #fff; font-weight: bold; }
                 .ds-ui-chat-nodes { font-size: 10px; color: #777; }
+                .ds-ui-chat-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; margin-left: 8px; }
                 
                 .ds-ui-icon-btn { background: transparent; border: none; color: #777; cursor: pointer; font-size: 13px; padding: 4px 6px; border-radius: 4px; transition: color 0.2s, background-color 0.2s; }
                 .ds-ui-icon-btn:hover { color: var(--ds-cyan); background: var(--ds-cyan-dim); }
+                .ds-ui-open-chat-btn:hover { color: var(--ds-cyan); background: rgba(0, 229, 255, 0.15); }
                 .ds-ui-delete-char-btn:hover, .ds-ui-delete-chat-btn:hover { color: #ff4444; background: rgba(255, 68, 68, 0.15); }
                 .ds-ui-btn-danger { background: rgba(255, 68, 68, 0.1); color: #ff4444; border: 1px solid rgba(255, 68, 68, 0.3); padding: 4px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: background-color 0.2s, box-shadow 0.2s; }
                 .ds-ui-btn-danger:hover { background: rgba(255, 68, 68, 0.2); box-shadow: 0 0 8px rgba(255, 68, 68, 0.4); }
                 
-                .ds-ui-log-viewer { width: 100%; height: 350px; background: #080808; color: #ccc; font-family: 'Consolas', monospace; font-size: 11px; overflow-y: auto; border-radius: 6px; padding: 10px; border: 1px inset rgba(255,255,255,0.05); transform: translateZ(0); will-change: scroll-position; }
-                .ds-ui-log-entry { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed rgba(255,255,255,0.1); }
-                .ds-ui-log-table { width: 100%; border-collapse: collapse; margin-top: 5px; }
-                .ds-ui-log-table th { background: #1a1a1a; color: var(--ds-cyan); padding: 6px; text-align: left; border-bottom: 1px solid var(--ds-cyan); position: sticky; top: 0; }
-                .ds-ui-log-table td { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-                .ds-ui-log-table tr:hover td { background: rgba(0, 229, 255, 0.05); color: #fff; }
+                .ds-ui-log-viewer { width: 100%; height: 350px; background: #080808; color: #ccc; font-family: 'Consolas', monospace; font-size: 11px; overflow-y: scroll; overflow-x: hidden; scrollbar-gutter: stable both-edges; border-radius: 6px; padding: 10px; border: 1px inset rgba(255,255,255,0.05); transform: translateZ(0); will-change: scroll-position; }
+                .ds-ui-log-entry { margin-bottom: 8px; border: 1px solid rgba(255,255,255,0.07); border-radius: 6px; background: rgba(255,255,255,0.02); overflow: hidden; }
+                .ds-ui-log-entry > summary { display: flex; align-items: center; gap: 6px; padding: 8px; cursor: pointer; color: #ddd; list-style: none; overflow-wrap: anywhere; white-space: normal; }
+                .ds-ui-log-entry > summary::-webkit-details-marker, .ds-diag-fold-card > summary::-webkit-details-marker, .ds-ui-log-row > summary::-webkit-details-marker { display: none; }
+                .ds-ui-log-detail { border-top: 1px solid rgba(255,255,255,0.06); padding: 8px; display: flex; flex-direction: column; gap: 5px; overflow-wrap: anywhere; white-space: normal; }
+                .ds-ui-log-line { overflow-wrap: anywhere; white-space: pre-wrap; }
+                .ds-ui-log-spacer { height: 4px; }
+                .ds-ui-log-fold-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+                .ds-ui-log-row { border: 1px solid rgba(0,229,255,0.12); border-radius: 5px; background: rgba(0,0,0,0.22); overflow: hidden; }
+                .ds-ui-log-row > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 7px 8px; cursor: pointer; list-style: none; color: #ddd; }
+                .ds-md-table-frame { width: 100%; min-width: 0; position: relative; }
+                .ds-md-table-toolbar { display: flex; justify-content: flex-end; align-items: center; min-height: 28px; margin: 0 0 4px; gap: 6px; }
+                .ds-md-popout-btn { width: 28px; height: 28px; border: 1px solid rgba(0,229,255,0.28); border-radius: 6px; background: rgba(0,229,255,0.08); color: var(--ds-cyan); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 8px rgba(0,229,255,0.12); transition: background-color .2s, border-color .2s, transform .2s; }
+                .ds-md-popout-btn:hover { background: rgba(0,229,255,0.18); border-color: rgba(0,229,255,0.55); transform: translateY(-1px); }
+                .ds-md-table-box { position: relative; min-width: 0; background: rgba(0,0,0,0.24); border-radius: 6px 6px 0 0; }
+                .ds-md-x-scrollbar { height: 18px; overflow-x: scroll; overflow-y: hidden; scrollbar-gutter: stable; border: 1px solid rgba(0,229,255,0.2); border-top: none; border-radius: 0 0 6px 6px; background: rgba(255,255,255,0.07); margin-right: 18px; }
+                .ds-md-x-scrollbar-spacer { height: 1px; min-width: 100%; }
+                .ds-md-y-scrollbar { position: absolute; top: 0; right: 0; bottom: 0; width: 18px; min-width: 18px; overflow-y: scroll; overflow-x: hidden; scrollbar-gutter: stable; border: 1px solid rgba(0,229,255,0.2); border-left: none; border-radius: 0 6px 0 0; background: rgba(255,255,255,0.07); }
+                .ds-md-y-scrollbar-spacer { width: 1px; min-height: 100%; }
+                .ds-md-scroll-shell { width: calc(100% - 18px); max-width: calc(100% - 18px); max-height: var(--ds-md-shell-max-height); overflow: scroll; border: 1px solid rgba(0,229,255,0.2); border-right: none; border-radius: 6px 0 0 0; background: rgba(0,0,0,0.24); container-type: inline-size; scrollbar-width: none; -ms-overflow-style: none; }
+                .ds-md-scroll-shell::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
+                .ds-md-log-scroll { margin: 0; box-shadow: inset 0 -12px 0 rgba(255,255,255,0.025); }
+                .ds-md-table { width: max(100%, var(--ds-md-min-width)); min-width: var(--ds-md-min-width); border: 1px solid rgba(0,229,255,0.18); border-radius: 6px; background: rgba(0,0,0,0.2); overflow: visible; font-size: 11px; line-height: 1.45; }
+                .ds-md-head, .ds-md-summary { display: grid; grid-template-columns: var(--ds-md-cols); align-items: stretch; min-width: var(--ds-md-min-width); }
+                .ds-md-head { position: sticky; top: 0; z-index: 1; background: #151515; color: var(--ds-cyan); font-weight: 700; border-bottom: 1px solid rgba(0,229,255,0.35); }
+                .ds-md-row { border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.015); }
+                .ds-md-row:last-child { border-bottom: none; }
+                .ds-md-row > summary { cursor: pointer; list-style: none; color: #ddd; }
+                .ds-md-row > summary::-webkit-details-marker { display: none; }
+                .ds-md-row[open] > summary { background: rgba(0,229,255,0.055); border-bottom: 1px solid rgba(0,229,255,0.14); }
+                .ds-md-cell { min-width: 0; padding: 7px 8px; overflow-wrap: anywhere; word-break: break-word; white-space: normal; border-right: 1px solid rgba(0,229,255,0.11); }
+                .ds-md-cell:last-child { border-right: none; }
+                .ds-md-caret, .ds-md-caret-head { text-align: center; padding-left: 4px; padding-right: 4px; color: var(--ds-cyan); font-weight: 700; }
+                .ds-md-row[open] .ds-md-caret { transform: rotate(90deg); }
+                .ds-md-detail { position: sticky; left: 0; width: calc(100cqw - 24px); max-width: calc(100cqw - 24px); min-width: 0; box-sizing: border-box; padding: 10px; background: rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 7px; border-right: 1px solid rgba(0,229,255,0.16); }
+                .ds-md-detail-row { display: grid; grid-template-columns: minmax(86px, 24%) minmax(0, 1fr); gap: 10px; align-items: start; min-width: 0; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.045); }
+                .ds-md-detail-row:last-child { border-bottom: none; }
+                .ds-md-detail-row-long { grid-template-columns: minmax(86px, 20%) minmax(0, 1fr); }
+                .ds-md-detail-label { color: var(--ds-cyan); font-weight: 700; overflow-wrap: anywhere; white-space: normal; }
+                .ds-md-detail-value { color: #ddd; overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; min-width: 0; }
+                .ds-md-inner-fold { border: 1px solid rgba(0,229,255,0.16); border-radius: 6px; background: rgba(255,255,255,0.025); overflow: hidden; white-space: normal; }
+                .ds-md-inner-fold > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; color: #ddd; background: rgba(0,229,255,0.055); }
+                .ds-md-inner-fold > summary::-webkit-details-marker { display: none; }
+                .ds-md-inner-fold > summary::before { content: '›'; color: var(--ds-cyan); font-weight: 700; margin-right: 2px; transition: transform .2s; }
+                .ds-md-inner-fold[open] > summary::before { transform: rotate(90deg); }
+                .ds-md-inner-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+                .ds-md-inner-count { flex: 0 0 auto; color: #8eefff; font-size: 10px; opacity: .9; }
+                .ds-md-inner-preview { padding: 7px 8px; color: #aaa; border-top: 1px solid rgba(255,255,255,0.05); overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
+                .ds-md-inner-fold[open] .ds-md-inner-preview { display: none; }
+                .ds-md-inner-body { display: none; padding: 9px 8px; color: #eee; line-height: 1.55; border-top: 1px solid rgba(0,229,255,0.12); overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
+                .ds-md-inner-fold[open] .ds-md-inner-body { display: block; }
+                .ds-md-popout-window { position: fixed; z-index: 62000; min-width: 320px; min-height: 220px; background: rgba(8,8,10,0.98); border: 1px solid rgba(0,229,255,0.36); border-radius: 8px; box-shadow: 0 16px 44px rgba(0,0,0,0.6), 0 0 18px rgba(0,229,255,0.14); display: flex; flex-direction: column; overflow: hidden; color: #ddd; backdrop-filter: blur(10px); }
+                .ds-md-popout-titlebar { height: 36px; flex: 0 0 36px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 10px; border-bottom: 1px solid rgba(0,229,255,0.2); background: rgba(0,229,255,0.08); cursor: move; user-select: none; }
+                .ds-md-popout-title { display: flex; align-items: center; gap: 7px; min-width: 0; color: #f0f0f0; font-size: 12px; font-weight: 700; }
+                .ds-md-popout-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .ds-md-popout-title i { color: var(--ds-cyan); }
+                .ds-md-popout-controls { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+                .ds-md-popout-control { width: 26px; height: 26px; border: 1px solid rgba(255,255,255,0.12); border-radius: 5px; background: rgba(255,255,255,0.05); color: #ddd; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+                .ds-md-popout-control:hover { color: var(--ds-cyan); border-color: rgba(0,229,255,0.4); background: rgba(0,229,255,0.12); }
+                .ds-md-popout-close:hover { color: #ff6b6b; border-color: rgba(255,80,80,0.45); background: rgba(255,80,80,0.13); }
+                .ds-md-popout-body { flex: 1 1 auto; min-height: 0; padding: 8px; display: flex; overflow: hidden; }
+                .ds-md-popout-table-shell { flex: 1 1 auto; height: 100%; max-height: none !important; min-height: 0; overflow: scroll; scrollbar-width: auto; -ms-overflow-style: auto; }
+                .ds-md-popout-table-shell::-webkit-scrollbar { width: 12px !important; height: 12px !important; display: block !important; }
+                .ds-md-popout-table-shell .ds-md-table { min-height: 100%; }
+                .ds-md-popout-resize { position: absolute; right: 0; bottom: 0; width: 18px; height: 18px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 0 45%, rgba(0,229,255,0.45) 46% 55%, transparent 56% 100%); opacity: .9; }
+                .ds-md-popout-window.ds-md-popout-minimized { min-width: 54px; min-height: 54px; width: 54px !important; height: 54px !important; border-radius: 50%; overflow: hidden; cursor: move; }
+                .ds-md-popout-minimized .ds-md-popout-titlebar { width: 100%; height: 100%; padding: 0; border-bottom: none; justify-content: center; background: rgba(0,229,255,0.14); }
+                .ds-md-popout-minimized .ds-md-popout-title span, .ds-md-popout-minimized .ds-md-popout-controls, .ds-md-popout-minimized .ds-md-popout-body, .ds-md-popout-minimized .ds-md-popout-resize { display: none; }
+                .ds-md-popout-minimized .ds-md-popout-title { justify-content: center; font-size: 18px; }
                 .ds-diag-cache-grid { display: grid; grid-template-columns: minmax(110px, 160px) minmax(0, 1fr); gap: 10px; margin-bottom: 10px; }
                 .ds-diag-cache-card { background: rgba(0,0,0,0.26); border: 1px solid rgba(0,229,255,0.18); border-radius: 6px; padding: 10px; min-width: 0; }
                 .ds-diag-cache-label { font-size: 11px; color: #8aa; margin-bottom: 5px; }
                 .ds-diag-cache-rate { font-size: 24px; line-height: 1.1; color: var(--ds-cyan); font-weight: 700; font-family: Consolas, monospace; }
-                .ds-diag-cache-meta { font-size: 11px; color: #aaa; line-height: 1.45; overflow-wrap: anywhere; }
+                .ds-diag-cache-meta { font-size: 11px; color: #aaa; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-line; }
+                .ds-diag-cache-help { color: #aaa; font-size: 11px; line-height: 1.55; background: rgba(0,229,255,0.06); border: 1px solid rgba(0,229,255,0.12); border-radius: 6px; padding: 8px; overflow-wrap: anywhere; white-space: normal; }
                 .ds-diag-table-title { display: flex; align-items: center; gap: 6px; margin: 12px 0 6px; font-size: 12px; color: #ddd; font-weight: 700; }
                 .ds-diag-table-wrap { max-height: 240px; overflow: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; background: #080808; }
                 .ds-diag-table { width: 100%; border-collapse: collapse; font-size: 11px; table-layout: fixed; }
                 .ds-diag-table th { position: sticky; top: 0; z-index: 1; background: #151515; color: var(--ds-cyan); padding: 6px; text-align: left; border-bottom: 1px solid rgba(0,229,255,0.35); }
                 .ds-diag-table td { padding: 6px; border-bottom: 1px solid rgba(255,255,255,0.05); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 .ds-diag-table tr:hover td { background: rgba(0,229,255,0.06); color: #fff; }
+                .ds-diag-fold-list { overflow: visible; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; background: #080808; padding: 7px 10px 10px 7px; display: flex; flex-direction: column; gap: 7px; }
+                .ds-diag-fold-card { border: 1px solid rgba(0,229,255,0.12); border-radius: 6px; background: rgba(255,255,255,0.02); overflow: hidden; }
+                .ds-diag-fold-card > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px; cursor: pointer; color: #ddd; list-style: none; }
+                .ds-diag-fold-card[open] > summary, .ds-ui-log-entry[open] > summary, .ds-ui-log-row[open] > summary { border-bottom: 1px solid rgba(0,229,255,0.14); background: rgba(0,229,255,0.06); }
+                .ds-diag-fold-caret { color: var(--ds-cyan); font-size: 15px; line-height: 1; transition: transform 0.2s; flex: 0 0 auto; }
+                .ds-diag-fold-card[open] > summary .ds-diag-fold-caret, .ds-ui-log-entry[open] > summary .ds-diag-fold-caret, .ds-ui-log-row[open] > summary .ds-diag-fold-caret { transform: rotate(90deg); }
+                .ds-diag-fold-index, .ds-diag-fold-time { color: var(--ds-cyan); font-weight: 700; flex: 0 0 auto; }
+                .ds-diag-fold-main { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+                .ds-diag-fold-sub { flex: 1 1 150px; min-width: 0; color: #aaa; overflow-wrap: anywhere; white-space: normal; }
+                .ds-diag-fold-detail { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+                .ds-diag-fold-detail-row { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: flex-start; }
+                .ds-diag-fold-detail-label { flex: 0 0 72px; color: var(--ds-cyan); font-weight: 700; }
+                .ds-diag-fold-detail-value { flex: 1 1 220px; min-width: 0; color: #ddd; overflow-wrap: anywhere; white-space: pre-wrap; }
                 .ds-diag-pill { display: inline-block; max-width: 100%; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
                 .ds-diag-pill.manual { background: rgba(0,229,255,0.16); color: #64f1ff; }
                 .ds-diag-pill.ai { background: rgba(150,190,255,0.16); color: #b7d0ff; }
@@ -2511,11 +3574,19 @@ async function setupUI() {
                 .ds-diag-pill.plugin { background: rgba(210,160,255,0.16); color: #ddb8ff; }
                 .ds-diag-pill.system { background: rgba(210,210,210,0.14); color: #ddd; }
                 .ds-diag-empty { color: #777; font-style: italic; text-align: center; padding: 16px !important; white-space: normal !important; }
+                @media (max-width: 560px) {
+                    .ds-md-table { font-size: 10.5px; }
+                    .ds-md-cell { padding: 6px 5px; }
+                    .ds-md-detail { padding: 7px; }
+                    .ds-md-detail-row, .ds-md-detail-row-long { grid-template-columns: 1fr; gap: 5px; }
+                    .ds-md-detail-label { font-size: 11px; }
+                }
                 
-                .ds-ui-log-viewer::-webkit-scrollbar, #ds-ui-chat-list-container::-webkit-scrollbar, .ds-diag-table-wrap::-webkit-scrollbar { width: 6px; height: 6px; }
-                .ds-ui-log-viewer::-webkit-scrollbar-track, #ds-ui-chat-list-container::-webkit-scrollbar-track, .ds-diag-table-wrap::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
-                .ds-ui-log-viewer::-webkit-scrollbar-thumb, #ds-ui-chat-list-container::-webkit-scrollbar-thumb, .ds-diag-table-wrap::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
-                .ds-ui-log-viewer::-webkit-scrollbar-thumb:hover, #ds-ui-chat-list-container::-webkit-scrollbar-thumb:hover, .ds-diag-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--ds-cyan); }
+                .ds-ui-log-viewer, #ds-ui-chat-list-container, .ds-diag-table-wrap, .ds-md-x-scrollbar, .ds-md-y-scrollbar, .ds-md-popout-table-shell { scrollbar-color: rgba(0,229,255,0.75) rgba(255,255,255,0.08); scrollbar-width: auto; }
+                .ds-ui-log-viewer::-webkit-scrollbar, #ds-ui-chat-list-container::-webkit-scrollbar, .ds-diag-table-wrap::-webkit-scrollbar, .ds-md-x-scrollbar::-webkit-scrollbar, .ds-md-y-scrollbar::-webkit-scrollbar, .ds-md-popout-table-shell::-webkit-scrollbar { width: 12px; height: 12px; }
+                .ds-ui-log-viewer::-webkit-scrollbar-track, #ds-ui-chat-list-container::-webkit-scrollbar-track, .ds-diag-table-wrap::-webkit-scrollbar-track, .ds-md-x-scrollbar::-webkit-scrollbar-track, .ds-md-y-scrollbar::-webkit-scrollbar-track, .ds-md-popout-table-shell::-webkit-scrollbar-track { background: rgba(255,255,255,0.08); border-radius: 8px; }
+                .ds-ui-log-viewer::-webkit-scrollbar-thumb, #ds-ui-chat-list-container::-webkit-scrollbar-thumb, .ds-diag-table-wrap::-webkit-scrollbar-thumb, .ds-md-x-scrollbar::-webkit-scrollbar-thumb, .ds-md-y-scrollbar::-webkit-scrollbar-thumb, .ds-md-popout-table-shell::-webkit-scrollbar-thumb { background: rgba(0,229,255,0.75); border: 2px solid rgba(0,0,0,0.55); border-radius: 8px; }
+                .ds-ui-log-viewer::-webkit-scrollbar-thumb:hover, #ds-ui-chat-list-container::-webkit-scrollbar-thumb:hover, .ds-diag-table-wrap::-webkit-scrollbar-thumb:hover, .ds-md-x-scrollbar::-webkit-scrollbar-thumb:hover, .ds-md-y-scrollbar::-webkit-scrollbar-thumb:hover, .ds-md-popout-table-shell::-webkit-scrollbar-thumb:hover { background: var(--ds-cyan); }
             </style>
         `);
     }
@@ -2552,57 +3623,41 @@ async function setupUI() {
                 </div>
             </div>
 
-            <div class="ds-ui-panel" id="ds-diagnostics-panel">
+            <div class="ds-ui-panel" id="ds-api-cache-panel">
                 <div class="ds-ui-header collapsed" onclick="$(this).toggleClass('collapsed').next().slideToggle(200)">
-                    <i class="fa-solid fa-chevron-down"></i> 📡 修改來源定位與 API 緩存率
+                    <i class="fa-solid fa-chevron-down"></i> 📊 API 快取命中率分析
                 </div>
                 <div class="ds-ui-content" style="display: none; padding-top: 10px;">
                     <div class="ds-diag-cache-grid">
                         <div class="ds-diag-cache-card">
-                            <div class="ds-diag-cache-label">DeepSeek API Cache Rate</div>
+                            <div class="ds-diag-cache-label">DeepSeek API 快取命中率</div>
                             <div id="ds-api-cache-rate" class="ds-diag-cache-rate">--</div>
                         </div>
                         <div class="ds-diag-cache-card">
-                            <div class="ds-diag-cache-label">最近一次 API usage/cache 欄位</div>
-                            <div id="ds-api-cache-meta" class="ds-diag-cache-meta">等待下一次 DeepSeek API 回應</div>
+                            <div class="ds-diag-cache-label">最近一次快取分析</div>
+                            <div id="ds-api-cache-meta" class="ds-diag-cache-meta">狀態：等待資料
+說明：送出下一則訊息後，這裡會顯示 DeepSeek 回應的快取命中分析。</div>
                         </div>
                     </div>
+                    <div class="ds-diag-cache-help">
+                        這裡只顯示分析後的中文結論，不直接展示 API 原始欄位。命中率越高，代表越多提示詞 token 被伺服器快取復用；若顯示 N/A，代表本次回應沒有提供足夠的快取統計，不能可靠判斷。
+                    </div>
+                    <div class="ds-diag-table-title"><i class="fa-solid fa-clock-rotate-left"></i> 每輪 API 快取分析紀錄</div>
+                    <div class="ds-diag-fold-list" id="ds-api-cache-history"></div>
+                </div>
+            </div>
+
+            <div class="ds-ui-panel" id="ds-diagnostics-panel">
+                <div class="ds-ui-header collapsed" onclick="$(this).toggleClass('collapsed').next().slideToggle(200)">
+                    <i class="fa-solid fa-chevron-down"></i> 📡 修改來源定位
+                </div>
+                <div class="ds-ui-content" style="display: none; padding-top: 10px;">
 
                     <div class="ds-diag-table-title"><i class="fa-solid fa-route"></i> 修改來源追蹤</div>
-                    <div class="ds-diag-table-wrap">
-                        <table class="ds-diag-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:58px;">時間</th>
-                                    <th style="width:92px;">類型</th>
-                                    <th style="width:190px;">來源</th>
-                                    <th style="width:210px;">定位</th>
-                                    <th>修改前</th>
-                                    <th>修改後</th>
-                                    <th style="width:180px;">處理結果</th>
-                                </tr>
-                            </thead>
-                            <tbody id="ds-mod-source-body"></tbody>
-                        </table>
-                    </div>
+                    <div class="ds-diag-fold-list" id="ds-mod-source-body"></div>
 
                     <div class="ds-diag-table-title"><i class="fa-solid fa-map-location-dot"></i> 本輪提示詞來源定位</div>
-                    <div class="ds-diag-table-wrap">
-                        <table class="ds-diag-table">
-                            <thead>
-                                <tr>
-                                    <th style="width:46px;">#</th>
-                                    <th style="width:70px;">輪次</th>
-                                    <th style="width:92px;">類型</th>
-                                    <th style="width:170px;">來源</th>
-                                    <th>可定位位置</th>
-                                    <th style="width:120px;">凍結策略</th>
-                                    <th style="width:180px;">內容摘要</th>
-                                </tr>
-                            </thead>
-                            <tbody id="ds-prompt-source-body"></tbody>
-                        </table>
-                    </div>
+                    <div class="ds-diag-fold-list" id="ds-prompt-source-body"></div>
                 </div>
             </div>
 
@@ -2638,6 +3693,8 @@ async function setupUI() {
     
     $('#extensions_settings').append(html);
     Logger._uiViewer = document.getElementById('ds-cache-log-viewer');
+    TableScrollbar.init();
+    TablePopout.init();
     Diagnostics.init();
 
     $('#ds-opt-enabled').on('change', function() { Settings.enabled = $(this).is(':checked'); safeSave(); });
@@ -2676,6 +3733,12 @@ async function setupUI() {
             safeSave(); renderChatsUI();
             if (typeof toastr !== 'undefined') toastr.success("已清除該聊天的凍結池", "DeepSeek 緩存優化器");
         }
+    });
+
+    $chatContainer.on('click', '.ds-ui-open-chat-btn', async function(e) {
+        e.stopPropagation();
+        const key = $(this).data('key');
+        await openManagedChat(key);
     });
 
     $chatContainer.on('click', '.ds-ui-delete-char-btn', function(e) {
