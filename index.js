@@ -2229,46 +2229,94 @@ async function interceptAndRestructurePrompt(data) {
         let uidMap = new Array(incomingStream.length).fill(null);
         let chatIndexMap = new Array(incomingStream.length).fill(null);
         let rawChatContentMap = new Array(incomingStream.length).fill(null);
-        
+
+        const asText = (value) => typeof value === 'string' ? value : '';
+        const normalizeChatText = (value) => CoreEngine.normalize(asText(value));
+        const contextMeta = contextChat.map((item, index) => ({
+            index,
+            role: item?.is_user ? 'user' : 'assistant',
+            raw: asText(item?.mes),
+            norm: normalizeChatText(item?.mes),
+        }));
+        const latestChatIndex = contextMeta.length - 1;
+        const currentUserIndex = latestChatIndex >= 0 && contextMeta[latestChatIndex]?.role === 'user' ? latestChatIndex : -1;
+        let lastAiReplyIndex = -1;
+        for (let c = (currentUserIndex >= 0 ? currentUserIndex - 1 : latestChatIndex); c >= 0; c--) {
+            if (contextMeta[c]?.role === 'assistant') {
+                lastAiReplyIndex = c;
+                break;
+            }
+        }
+
+        const classifyContextIndex = (cIdx, role) => {
+            if (role === 'user') return cIdx === currentUserIndex ? 'USER_CURRENT' : 'USER_HISTORY';
+            if (role === 'assistant') return cIdx === lastAiReplyIndex ? 'AI_LAST_REPLY' : 'AI_HISTORY';
+            return null;
+        };
+
+        const usedChatIndices = new Set();
+        const findExactContextIndex = (msg) => {
+            const role = msg?.role;
+            if (role !== 'user' && role !== 'assistant') return null;
+            const norm = normalizeChatText(msg?.content);
+            if (!norm) return null;
+
+            const candidates = [];
+            if (role === 'user' && currentUserIndex >= 0) candidates.push(currentUserIndex);
+            if (role === 'assistant' && lastAiReplyIndex >= 0) candidates.push(lastAiReplyIndex);
+            for (let c = contextMeta.length - 1; c >= 0; c--) {
+                if (!candidates.includes(c)) candidates.push(c);
+            }
+
+            for (const cIdx of candidates) {
+                const meta = contextMeta[cIdx];
+                if (!meta || usedChatIndices.has(cIdx) || meta.role !== role || !meta.norm) continue;
+                if (norm === meta.norm) return cIdx;
+            }
+            return null;
+        };
+
+        for (let i = incomingStream.length - 1; i >= 0; i--) {
+            const msg = incomingStream[i];
+            if (!msg || msg.role === 'system') continue;
+            const name = msg.name ? msg.name.toLowerCase() : '';
+            if (name.includes('example') || name.includes('scenario') || name.includes('system')) continue;
+            const structuralId = positionToIdentifier.get(i) || '';
+            const sidLower = structuralId.toLowerCase();
+            const canBeChatItem = !structuralId || sidLower === 'chathistory' || sidLower.startsWith('chathistory-');
+            if (!canBeChatItem) continue;
+
+            const cIdx = findExactContextIndex(msg);
+            if (cIdx === null) continue;
+
+            const role = contextMeta[cIdx].role;
+            const structuralTag = classifyContextIndex(cIdx, role);
+            if (!structuralTag) continue;
+
+            structuralMap[i] = structuralTag;
+            uidMap[i] = `chat_msg_${cIdx}`;
+            chatIndexMap[i] = cIdx;
+            rawChatContentMap[i] = contextMeta[cIdx].raw;
+            usedChatIndices.add(cIdx);
+        }
+
+        const isExplicitPrefillId = (identifier) => {
+            const sidLower = (identifier || '').toLowerCase();
+            return sidLower.includes('prefill') || sidLower === 'bias';
+        };
+
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             if (incomingStream[i].role === 'system') continue;
             if (incomingStream[i].role === 'assistant') {
-                if (contextChat.length > 0 && contextChat[contextChat.length - 1].is_user) {
+                const structuralId = positionToIdentifier.get(i) || '';
+                const norm = normalizeChatText(incomingStream[i]?.content);
+                const matchesAssistantChat = contextMeta.some(meta => meta.role === 'assistant' && meta.norm && meta.norm === norm);
+                if (!structuralMap[i] && !matchesAssistantChat && (isExplicitPrefillId(structuralId) || (!structuralId && currentUserIndex >= 0))) {
                     structuralMap[i] = 'PREFILL';
                     uidMap[i] = 'chat_prefill';
                 }
             }
             break;
-        }
-
-        let cIdx = contextChat.length - 1;
-        for (let i = incomingStream.length - 1; i >= 0; i--) {
-            if (structuralMap[i]) continue;
-            let msg = incomingStream[i];
-            
-            if (msg.role === 'system') continue;
-            let name = msg.name ? msg.name.toLowerCase() : '';
-            if (name.includes('example') || name.includes('scenario') || name.includes('system')) continue;
-
-            if (cIdx >= 0) {
-                let expectedRole = contextChat[cIdx].is_user ? 'user' : 'assistant';
-                if (msg.role === expectedRole) {
-                    uidMap[i] = `chat_msg_${cIdx}`; 
-                    chatIndexMap[i] = cIdx;
-                    rawChatContentMap[i] = typeof contextChat[cIdx]?.mes === 'string' ? contextChat[cIdx].mes : '';
-                    if (cIdx === contextChat.length - 1) structuralMap[i] = 'USER_CURRENT';
-                    else if (cIdx === contextChat.length - 2) structuralMap[i] = 'AI_LAST_REPLY';
-                    else structuralMap[i] = expectedRole === 'user' ? 'USER_HISTORY' : 'AI_HISTORY';
-                    cIdx--;
-                }
-            } else if (cIdx === -1 && contextChat.length === 0) {
-                if (msg.role === 'user' && !structuralMap.includes('USER_CURRENT')) {
-                    structuralMap[i] = 'USER_CURRENT';
-                    uidMap[i] = `chat_msg_0`;
-                    chatIndexMap[i] = 0;
-                    rawChatContentMap[i] = typeof contextChat[0]?.mes === 'string' ? contextChat[0].mes : msg.content;
-                }
-            }
         }
 
         let userCurrentText = "";
@@ -2971,9 +3019,9 @@ async function interceptAndRestructurePrompt(data) {
                             const trackedRawChanged = rawTextChanged(frozen, matched);
                             const isHistoryReclass = (
                                 matched._attr && frozen._attr && (
-                                    (frozen._attr.type === 'AI_LAST_REPLY' && (matched._attr.type === 'AI_HISTORY' || matched._attr.type === 'USER_HISTORY')) ||
-                                    (frozen._attr.type === 'USER_CURRENT' && (matched._attr.type === 'USER_HISTORY' || matched._attr.type === 'AI_HISTORY')) ||
-                                    (frozen._attr.type === 'PREFILL' && (matched._attr.type === 'AI_HISTORY' || matched._attr.type === 'PREFILL'))
+                                    (frozen._attr.type === 'AI_LAST_REPLY' && matched._attr.type === 'AI_HISTORY' && frozen.role === matched.role) ||
+                                    (frozen._attr.type === 'USER_CURRENT' && matched._attr.type === 'USER_HISTORY' && frozen.role === matched.role) ||
+                                    (frozen._attr.type === 'PREFILL' && matched._attr.type === 'PREFILL' && frozen.role === matched.role)
                                 )
                             );
 
@@ -2984,15 +3032,24 @@ async function interceptAndRestructurePrompt(data) {
                             }
 
                             if (isReclassHighSim) {
-                                // ST 上下文重新分類：內容與 metadata 都維持舊版凍結，避免已凍結節點被改寫。
+                                // ST 上下文重新分類：內容維持凍結，但來源 metadata 必須跟隨目前輪次更新。
+                                const reclassified = {
+                                    ...frozen,
+                                    _uid: matched._uid || frozen._uid,
+                                    _attr: matched._attr ? { ...matched._attr } : frozen._attr,
+                                    _chatIndex: matched._chatIndex,
+                                    _rawChatContent: matched._rawChatContent,
+                                    _structuralId: matched._structuralId,
+                                    _origIdx: matched._origIdx,
+                                };
                                 if (Settings.logLevel >= LogLevels.EXTREME) {
-                                    Logger.write(`**[${processTime}]** 📋 [EXTREME] 上下文重分類保留: ${frozen._attr.source}`, LogLevels.EXTREME);
+                                    Logger.write(`**[${processTime}]** 📋 [EXTREME] 上下文重分類更新來源: ${frozen._attr.source}`, LogLevels.EXTREME);
                                     Logger.write(`  原內容: ${frozen.content}`, LogLevels.EXTREME);
                                     Logger.write(`  偵測分類: ${frozen._attr.source} → ${matched._attr.source}`, LogLevels.EXTREME);
                                 }
-                                nextFrozen.push(frozen);
-                                if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '絕對凍結(上下文重分類保留)', status: '已凍結' });
+                                nextFrozen.push(reclassified);
+                                if (firstBreakIndex === -1) currentValidLength += reclassified.content.length;
+                                ledger.push({ time: processTime, ref: reclassified, origIdx: matched._origIdx, role: roleStr, attr: reclassified._attr, gen: '繼承', creator: reclassified._attr.creator, action: '原位凍結', func: '絕對凍結(上下文重分類更新來源)', status: '已凍結' });
                             } else if (
                                 isFrozenConversationNode(frozen)
                                 && isFrozenConversationNode(matched)
@@ -3264,6 +3321,21 @@ async function interceptAndRestructurePrompt(data) {
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話2+)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話2+)');
         }
+
+        const chatAttrByTag = {
+            USER_CURRENT: { cat: '用戶', source: '用戶輸入', creator: '用戶', type: 'USER_CURRENT' },
+            USER_HISTORY: { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' },
+            AI_LAST_REPLY: { cat: 'AI', source: 'AI回覆', creator: '大模型', type: 'AI_LAST_REPLY' },
+            AI_HISTORY: { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' },
+        };
+        nextFrozen.forEach(msg => {
+            if (!msg || !Number.isInteger(msg._chatIndex) || !msg._attr) return;
+            if (msg.role !== 'user' && msg.role !== 'assistant') return;
+            if (contextMeta[msg._chatIndex]?.role !== msg.role) return;
+            const tag = classifyContextIndex(msg._chatIndex, msg.role);
+            if (!chatAttrByTag[tag] || msg._attr.type === tag) return;
+            msg._attr = { ...msg._attr, ...chatAttrByTag[tag] };
+        });
 
         state.frozenSequence = nextFrozen;
         state.updatedAt = Date.now();
