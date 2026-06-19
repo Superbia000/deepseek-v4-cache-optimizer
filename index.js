@@ -825,6 +825,9 @@ const Diagnostics = {
         if (event?.type === '提示詞來源修改') {
             return '偵測到預設提示詞、世界書或插件提示詞的內容與已凍結版本不同。系統會保留舊版並新增新版，避免直接覆蓋造成快取斷裂。';
         }
+        if (event?.type === '提示詞來源刪除') {
+            return '偵測到原本凍結的預設提示詞、世界書或插件提示詞已不在本輪 ST 提示詞陣列中，系統會同步移除該來源並記錄斷點。';
+        }
         if (event?.type === '自動轉換') {
             return '這通常不是使用者直接手改，而是 ST、正則、摘要、模板或上下文管理造成的自動內容變化。';
         }
@@ -2229,94 +2232,46 @@ async function interceptAndRestructurePrompt(data) {
         let uidMap = new Array(incomingStream.length).fill(null);
         let chatIndexMap = new Array(incomingStream.length).fill(null);
         let rawChatContentMap = new Array(incomingStream.length).fill(null);
-
-        const asText = (value) => typeof value === 'string' ? value : '';
-        const normalizeChatText = (value) => CoreEngine.normalize(asText(value));
-        const contextMeta = contextChat.map((item, index) => ({
-            index,
-            role: item?.is_user ? 'user' : 'assistant',
-            raw: asText(item?.mes),
-            norm: normalizeChatText(item?.mes),
-        }));
-        const latestChatIndex = contextMeta.length - 1;
-        const currentUserIndex = latestChatIndex >= 0 && contextMeta[latestChatIndex]?.role === 'user' ? latestChatIndex : -1;
-        let lastAiReplyIndex = -1;
-        for (let c = (currentUserIndex >= 0 ? currentUserIndex - 1 : latestChatIndex); c >= 0; c--) {
-            if (contextMeta[c]?.role === 'assistant') {
-                lastAiReplyIndex = c;
-                break;
-            }
-        }
-
-        const classifyContextIndex = (cIdx, role) => {
-            if (role === 'user') return cIdx === currentUserIndex ? 'USER_CURRENT' : 'USER_HISTORY';
-            if (role === 'assistant') return cIdx === lastAiReplyIndex ? 'AI_LAST_REPLY' : 'AI_HISTORY';
-            return null;
-        };
-
-        const usedChatIndices = new Set();
-        const findExactContextIndex = (msg) => {
-            const role = msg?.role;
-            if (role !== 'user' && role !== 'assistant') return null;
-            const norm = normalizeChatText(msg?.content);
-            if (!norm) return null;
-
-            const candidates = [];
-            if (role === 'user' && currentUserIndex >= 0) candidates.push(currentUserIndex);
-            if (role === 'assistant' && lastAiReplyIndex >= 0) candidates.push(lastAiReplyIndex);
-            for (let c = contextMeta.length - 1; c >= 0; c--) {
-                if (!candidates.includes(c)) candidates.push(c);
-            }
-
-            for (const cIdx of candidates) {
-                const meta = contextMeta[cIdx];
-                if (!meta || usedChatIndices.has(cIdx) || meta.role !== role || !meta.norm) continue;
-                if (norm === meta.norm) return cIdx;
-            }
-            return null;
-        };
-
-        for (let i = incomingStream.length - 1; i >= 0; i--) {
-            const msg = incomingStream[i];
-            if (!msg || msg.role === 'system') continue;
-            const name = msg.name ? msg.name.toLowerCase() : '';
-            if (name.includes('example') || name.includes('scenario') || name.includes('system')) continue;
-            const structuralId = positionToIdentifier.get(i) || '';
-            const sidLower = structuralId.toLowerCase();
-            const canBeChatItem = !structuralId || sidLower === 'chathistory' || sidLower.startsWith('chathistory-');
-            if (!canBeChatItem) continue;
-
-            const cIdx = findExactContextIndex(msg);
-            if (cIdx === null) continue;
-
-            const role = contextMeta[cIdx].role;
-            const structuralTag = classifyContextIndex(cIdx, role);
-            if (!structuralTag) continue;
-
-            structuralMap[i] = structuralTag;
-            uidMap[i] = `chat_msg_${cIdx}`;
-            chatIndexMap[i] = cIdx;
-            rawChatContentMap[i] = contextMeta[cIdx].raw;
-            usedChatIndices.add(cIdx);
-        }
-
-        const isExplicitPrefillId = (identifier) => {
-            const sidLower = (identifier || '').toLowerCase();
-            return sidLower.includes('prefill') || sidLower === 'bias';
-        };
-
+        
         for (let i = incomingStream.length - 1; i >= 0; i--) {
             if (incomingStream[i].role === 'system') continue;
             if (incomingStream[i].role === 'assistant') {
-                const structuralId = positionToIdentifier.get(i) || '';
-                const norm = normalizeChatText(incomingStream[i]?.content);
-                const matchesAssistantChat = contextMeta.some(meta => meta.role === 'assistant' && meta.norm && meta.norm === norm);
-                if (!structuralMap[i] && !matchesAssistantChat && (isExplicitPrefillId(structuralId) || (!structuralId && currentUserIndex >= 0))) {
+                if (contextChat.length > 0 && contextChat[contextChat.length - 1].is_user) {
                     structuralMap[i] = 'PREFILL';
                     uidMap[i] = 'chat_prefill';
                 }
             }
             break;
+        }
+
+        let cIdx = contextChat.length - 1;
+        for (let i = incomingStream.length - 1; i >= 0; i--) {
+            if (structuralMap[i]) continue;
+            let msg = incomingStream[i];
+            
+            if (msg.role === 'system') continue;
+            let name = msg.name ? msg.name.toLowerCase() : '';
+            if (name.includes('example') || name.includes('scenario') || name.includes('system')) continue;
+
+            if (cIdx >= 0) {
+                let expectedRole = contextChat[cIdx].is_user ? 'user' : 'assistant';
+                if (msg.role === expectedRole) {
+                    uidMap[i] = `chat_msg_${cIdx}`; 
+                    chatIndexMap[i] = cIdx;
+                    rawChatContentMap[i] = typeof contextChat[cIdx]?.mes === 'string' ? contextChat[cIdx].mes : '';
+                    if (cIdx === contextChat.length - 1) structuralMap[i] = 'USER_CURRENT';
+                    else if (cIdx === contextChat.length - 2) structuralMap[i] = 'AI_LAST_REPLY';
+                    else structuralMap[i] = expectedRole === 'user' ? 'USER_HISTORY' : 'AI_HISTORY';
+                    cIdx--;
+                }
+            } else if (cIdx === -1 && contextChat.length === 0) {
+                if (msg.role === 'user' && !structuralMap.includes('USER_CURRENT')) {
+                    structuralMap[i] = 'USER_CURRENT';
+                    uidMap[i] = `chat_msg_0`;
+                    chatIndexMap[i] = 0;
+                    rawChatContentMap[i] = typeof contextChat[0]?.mes === 'string' ? contextChat[0].mes : msg.content;
+                }
+            }
         }
 
         let userCurrentText = "";
@@ -2548,20 +2503,146 @@ async function interceptAndRestructurePrompt(data) {
                 || attr.cat === 'AI'
                 || attr.cat === '聊天';
         };
+        const isFrozenPromptNode = (msg) => {
+            const attr = msg?._attr || {};
+            return !!msg?._isDynamic
+                || attr.type === 'DEFAULT'
+                || attr.type === 'LOREBOOK'
+                || attr.type === 'OTHER_PLUGIN'
+                || attr.type === 'SUMMARY'
+                || attr.type === 'DYNAMIC'
+                || attr.cat === '預設'
+                || attr.cat === '世界書'
+                || attr.cat === '其他插件'
+                || attr.cat === '摘要'
+                || attr.cat === '動態';
+        };
+        const getStablePromptSourceKey = (msg) => {
+            if (!msg || !isFrozenPromptNode(msg) || isFrozenConversationNode(msg)) return '';
+            const attr = msg._attr || {};
+            const type = attr.type || attr.cat || 'PROMPT';
+            if (attr.type === 'LOREBOOK') {
+                if (attr.bookName && attr.entryUid !== undefined && attr.entryUid !== null && attr.entryUid !== '') {
+                    return `LOREBOOK:${attr.bookName}:${attr.entryUid}`;
+                }
+                if (attr.bookName && attr.entryName) return `LOREBOOK:${attr.bookName}:${attr.entryName}`;
+            }
+            if (attr.promptId) return `${type}:${attr.promptId}`;
+            if (msg._structuralId) return `${type}:${msg._structuralId}`;
+            if (attr.type === 'OTHER_PLUGIN' && (attr.creator || attr.source)) {
+                return `OTHER_PLUGIN:${attr.creator || 'unknown'}:${attr.source || ''}`;
+            }
+            return '';
+        };
         const isLegacyUntrackedConversation = (msg) => isFrozenConversationNode(msg) && !hasRawChatTracking(msg);
+        let frozenRawChatIndexMap = new Map();
+        state.frozenSequence.forEach((msg) => {
+            if (!isFrozenConversationNode(msg) || !hasRawChatTracking(msg)) return;
+            const rawNorm = CoreEngine.normalize(msg._rawChatContent);
+            if (!rawNorm) return;
+            const key = `${msg.role}:${rawNorm}`;
+            if (!frozenRawChatIndexMap.has(key)) frozenRawChatIndexMap.set(key, new Set());
+            frozenRawChatIndexMap.get(key).add(Number.isInteger(msg._chatIndex) ? msg._chatIndex : -1);
+        });
+        const isShiftedConversationCandidate = (frozen, candidate) => {
+            if (!isFrozenConversationNode(frozen) || !isFrozenConversationNode(candidate)) return false;
+            if (!hasRawChatTracking(frozen) || !hasRawChatTracking(candidate)) return false;
+            const frozenRaw = CoreEngine.normalize(frozen._rawChatContent);
+            const candidateRaw = CoreEngine.normalize(candidate._rawChatContent);
+            if (!frozenRaw || !candidateRaw || frozenRaw === candidateRaw) return false;
+            const previousIndices = frozenRawChatIndexMap.get(`${candidate.role}:${candidateRaw}`);
+            if (!previousIndices) return false;
+            const frozenIndex = Number.isInteger(frozen._chatIndex) ? frozen._chatIndex : -1;
+            for (const previousIndex of previousIndices) {
+                if (previousIndex !== frozenIndex) return true;
+            }
+            return false;
+        };
+        const canFallbackMatchNode = (frozen, candidate) => {
+            if (!candidate || candidate.role !== frozen.role) return false;
+            const frozenConv = isFrozenConversationNode(frozen);
+            const candidateConv = isFrozenConversationNode(candidate);
+            if (frozenConv || candidateConv) {
+                if (!frozenConv || !candidateConv) return false;
+                if (isShiftedConversationCandidate(frozen, candidate)) return false;
+            } else {
+                const frozenPromptKey = getStablePromptSourceKey(frozen);
+                const candidatePromptKey = getStablePromptSourceKey(candidate);
+                if (frozenPromptKey || candidatePromptKey) {
+                    return !!frozenPromptKey && frozenPromptKey === candidatePromptKey;
+                }
+            }
+            return true;
+        };
+
+        let incomingRawChatMap = new Map();
+        let incomingStableSourceMap = new Map();
+        incomingPool.forEach((msg, j) => {
+            if (isFrozenConversationNode(msg) && hasRawChatTracking(msg)) {
+                const rawNorm = CoreEngine.normalize(msg._rawChatContent);
+                if (rawNorm) {
+                    const rawKey = `${msg.role}:${rawNorm}`;
+                    if (!incomingRawChatMap.has(rawKey)) incomingRawChatMap.set(rawKey, []);
+                    incomingRawChatMap.get(rawKey).push(j);
+                }
+            }
+
+            const sourceKey = getStablePromptSourceKey(msg);
+            if (sourceKey) {
+                if (!incomingStableSourceMap.has(sourceKey)) incomingStableSourceMap.set(sourceKey, []);
+                incomingStableSourceMap.get(sourceKey).push(j);
+            }
+        });
+
+        let latestFrozenSourceIndex = new Map();
+        state.frozenSequence.forEach((msg, idx) => {
+            const sourceKey = getStablePromptSourceKey(msg);
+            if (sourceKey) latestFrozenSourceIndex.set(sourceKey, idx);
+        });
+        const activeStableSourceKeys = new Set(incomingStableSourceMap.keys());
 
         let nextFrozen = [];
         let matchResults = new Array(state.frozenSequence.length).fill(-1);
         let matchedIncomingIndices = new Set();
         let matchedFrozenIndices = new Set();
-        
+
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
-            if (frozen._uid && frozen._uid.startsWith('chat_') && !isLegacyUntrackedConversation(frozen)) {
+            if (!isFrozenConversationNode(frozen) || !hasRawChatTracking(frozen)) continue;
+            const rawNorm = CoreEngine.normalize(frozen._rawChatContent);
+            if (!rawNorm) continue;
+            let indices = incomingRawChatMap.get(`${frozen.role}:${rawNorm}`);
+            if (indices) {
+                for (let j of indices) {
+                    if (!matchedIncomingIndices.has(j)) {
+                        matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+                    }
+                }
+            }
+        }
+
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            if (matchedFrozenIndices.has(i)) continue;
+            let frozen = state.frozenSequence[i];
+            const sourceKey = getStablePromptSourceKey(frozen);
+            if (!sourceKey || latestFrozenSourceIndex.get(sourceKey) !== i) continue;
+            let indices = incomingStableSourceMap.get(sourceKey);
+            if (indices) {
+                for (let j of indices) {
+                    if (!matchedIncomingIndices.has(j) && incomingPool[j].role === frozen.role) {
+                        matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
+                    }
+                }
+            }
+        }
+
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            let frozen = state.frozenSequence[i];
+            if (frozen._uid && frozen._uid.startsWith('chat_') && isFrozenConversationNode(frozen) && !isLegacyUntrackedConversation(frozen)) {
                 let indices = incomingUidMap.get(frozen._uid);
                 if (indices) {
                     for (let j of indices) {
-                        if (!matchedIncomingIndices.has(j)) {
+                        if (!matchedIncomingIndices.has(j) && canFallbackMatchNode(frozen, incomingPool[j])) {
                             matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
                         }
                     }
@@ -2575,7 +2656,7 @@ async function interceptAndRestructurePrompt(data) {
             let indices = incomingNormMap.get(frozen._norm);
             if (indices) {
                 for (let j of indices) {
-                    if (!matchedIncomingIndices.has(j) && incomingPool[j].role === frozen.role) {
+                    if (!matchedIncomingIndices.has(j) && canFallbackMatchNode(frozen, incomingPool[j])) {
                         matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
                     }
                 }
@@ -2595,7 +2676,7 @@ async function interceptAndRestructurePrompt(data) {
             let bestMatchIdx = -1; let bestSim = 0;
             for (let j = 0; j < incomingPool.length; j++) {
                 if (matchedIncomingIndices.has(j)) continue;
-                if (incomingPool[j].role !== frozen.role || incomingPool[j]._isDynamic || incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
+                if (!canFallbackMatchNode(frozen, incomingPool[j]) || incomingPool[j]._isDynamic || incomingPool[j]._attr.cat !== frozen._attr.cat) continue;
                 
                 let sim = CoreEngine.getSimilarityFast(frozen._nGrams, incomingPool[j]._nGrams);
                 if (sim > bestSim) { bestSim = sim; bestMatchIdx = j; }
@@ -2614,7 +2695,7 @@ async function interceptAndRestructurePrompt(data) {
             let indices = incomingUidMap.get(frozen._uid);
             if (indices) {
                 for (let j of indices) {
-                    if (!matchedIncomingIndices.has(j) && incomingPool[j]._attr.cat === frozen._attr.cat) {
+                    if (!matchedIncomingIndices.has(j) && canFallbackMatchNode(frozen, incomingPool[j]) && incomingPool[j]._attr.cat === frozen._attr.cat) {
                         matchResults[i] = j; matchedIncomingIndices.add(j); matchedFrozenIndices.add(i); break;
                     }
                 }
@@ -2637,20 +2718,6 @@ async function interceptAndRestructurePrompt(data) {
         let queuedPrefillAdditions = [];
 
         const byOriginalOrder = (a, b) => (a._origIdx || 0) - (b._origIdx || 0);
-        const isFrozenPromptNode = (msg) => {
-            const attr = msg?._attr || {};
-            return !!msg?._isDynamic
-                || attr.type === 'DEFAULT'
-                || attr.type === 'LOREBOOK'
-                || attr.type === 'OTHER_PLUGIN'
-                || attr.type === 'SUMMARY'
-                || attr.type === 'DYNAMIC'
-                || attr.cat === '預設'
-                || attr.cat === '世界書'
-                || attr.cat === '其他插件'
-                || attr.cat === '摘要'
-                || attr.cat === '動態';
-        };
         const cloneFrozenAddition = (msg) => {
             const cloned = Object.assign({}, msg);
             cloned._attr = Object.assign({}, msg._attr);
@@ -2830,6 +2897,7 @@ async function interceptAndRestructurePrompt(data) {
             }
             return { type: '未知修改', source: getAttrLabel(attr), sourceDetail: getSourceDetail(matched), confidence: 'low' };
         };
+        let recordedPromptDeletionKeys = new Set();
 
         for (let i = 0; i < state.frozenSequence.length; i++) {
             let frozen = state.frozenSequence[i];
@@ -3019,9 +3087,9 @@ async function interceptAndRestructurePrompt(data) {
                             const trackedRawChanged = rawTextChanged(frozen, matched);
                             const isHistoryReclass = (
                                 matched._attr && frozen._attr && (
-                                    (frozen._attr.type === 'AI_LAST_REPLY' && matched._attr.type === 'AI_HISTORY' && frozen.role === matched.role) ||
-                                    (frozen._attr.type === 'USER_CURRENT' && matched._attr.type === 'USER_HISTORY' && frozen.role === matched.role) ||
-                                    (frozen._attr.type === 'PREFILL' && matched._attr.type === 'PREFILL' && frozen.role === matched.role)
+                                    (frozen._attr.type === 'AI_LAST_REPLY' && (matched._attr.type === 'AI_HISTORY' || matched._attr.type === 'USER_HISTORY')) ||
+                                    (frozen._attr.type === 'USER_CURRENT' && (matched._attr.type === 'USER_HISTORY' || matched._attr.type === 'AI_HISTORY')) ||
+                                    (frozen._attr.type === 'PREFILL' && (matched._attr.type === 'AI_HISTORY' || matched._attr.type === 'PREFILL'))
                                 )
                             );
 
@@ -3032,24 +3100,15 @@ async function interceptAndRestructurePrompt(data) {
                             }
 
                             if (isReclassHighSim) {
-                                // ST 上下文重新分類：內容維持凍結，但來源 metadata 必須跟隨目前輪次更新。
-                                const reclassified = {
-                                    ...frozen,
-                                    _uid: matched._uid || frozen._uid,
-                                    _attr: matched._attr ? { ...matched._attr } : frozen._attr,
-                                    _chatIndex: matched._chatIndex,
-                                    _rawChatContent: matched._rawChatContent,
-                                    _structuralId: matched._structuralId,
-                                    _origIdx: matched._origIdx,
-                                };
+                                // ST 上下文重新分類：內容與 metadata 都維持舊版凍結，避免已凍結節點被改寫。
                                 if (Settings.logLevel >= LogLevels.EXTREME) {
-                                    Logger.write(`**[${processTime}]** 📋 [EXTREME] 上下文重分類更新來源: ${frozen._attr.source}`, LogLevels.EXTREME);
+                                    Logger.write(`**[${processTime}]** 📋 [EXTREME] 上下文重分類保留: ${frozen._attr.source}`, LogLevels.EXTREME);
                                     Logger.write(`  原內容: ${frozen.content}`, LogLevels.EXTREME);
                                     Logger.write(`  偵測分類: ${frozen._attr.source} → ${matched._attr.source}`, LogLevels.EXTREME);
                                 }
-                                nextFrozen.push(reclassified);
-                                if (firstBreakIndex === -1) currentValidLength += reclassified.content.length;
-                                ledger.push({ time: processTime, ref: reclassified, origIdx: matched._origIdx, role: roleStr, attr: reclassified._attr, gen: '繼承', creator: reclassified._attr.creator, action: '原位凍結', func: '絕對凍結(上下文重分類更新來源)', status: '已凍結' });
+                                nextFrozen.push(frozen);
+                                if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
+                                ledger.push({ time: processTime, ref: frozen, origIdx: matched._origIdx, role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '絕對凍結(上下文重分類保留)', status: '已凍結' });
                             } else if (
                                 isFrozenConversationNode(frozen)
                                 && isFrozenConversationNode(matched)
@@ -3132,12 +3191,36 @@ async function interceptAndRestructurePrompt(data) {
 
             // 處理未匹配條目（原為 else if，因 JS 語法限制改為獨立 if）
             if (matchIdx === -1 && isFrozenPromptNode(frozen)) {
-                nextFrozen.push(frozen);
-                if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
-                ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '絕對凍結(提示詞保留)', status: '已凍結' });
-                if (Settings.logLevel >= LogLevels.EXTREME) {
-                    Logger.write(`**[${processTime}]** 📋 [EXTREME] 提示詞保留（本輪未出現）: ${frozen._attr.source}`, LogLevels.EXTREME);
-                    Logger.write(`  🗃️ 保留內容: ${frozen.content}`, LogLevels.EXTREME);
+                const sourceKey = getStablePromptSourceKey(frozen);
+                if (sourceKey && !activeStableSourceKeys.has(sourceKey)) {
+                    recordedPromptDeletionKeys.add(sourceKey);
+                    if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
+                    syncMessages.push(`<span style="color:#ff4444;">[提示詞刪除]</span> ${frozen._attr.source}`);
+                    detailedMods.push(`[刪除] 偵測到提示詞來源已不存在: ${frozen._attr.source}`);
+                    Diagnostics.recordModification({
+                        type: '提示詞來源刪除',
+                        source: frozen._attr?.type === 'LOREBOOK' ? `世界書條目: ${Diagnostics.cleanDisplayName(frozen._attr.bookName || frozen._attr.source, '未知世界書')}` : (frozen._attr?.source || '未知來源'),
+                        sourceDetail: getSourceDetail(frozen),
+                        target: getPromptLocator(frozen),
+                        before: frozen.content,
+                        after: '',
+                        outcome: '提示詞來源已不在本輪 ST 提示詞陣列中，從凍結序列移除',
+                        confidence: 'high',
+                    });
+                    console.log(`[DS Cache] 🗑️ 提示詞來源刪除: ${frozen._attr.source} | 位置: ${i}/${state.frozenSequence.length} | 斷點字節: ${firstBreakIndex}`);
+                    if (Settings.logLevel >= LogLevels.EXTREME) {
+                        Logger.write(`**[${processTime}]** 📋 [EXTREME] 提示詞來源刪除: ${frozen._attr.source}`, LogLevels.EXTREME);
+                        Logger.write(`  🗑️ 刪除內容: ${frozen.content}`, LogLevels.EXTREME);
+                    }
+                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(提示詞來源刪除)', status: '已刪除' });
+                } else {
+                    nextFrozen.push(frozen);
+                    if (firstBreakIndex === -1) currentValidLength += frozen.content.length;
+                    ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '繼承', creator: frozen._attr.creator, action: '原位凍結', func: '絕對凍結(提示詞保留)', status: '已凍結' });
+                    if (Settings.logLevel >= LogLevels.EXTREME) {
+                        Logger.write(`**[${processTime}]** 📋 [EXTREME] 提示詞保留（本輪未出現）: ${frozen._attr.source}`, LogLevels.EXTREME);
+                        Logger.write(`  🗃️ 保留內容: ${frozen.content}`, LogLevels.EXTREME);
+                    }
                 }
             } else if (matchIdx === -1 && isFrozenConversationNode(frozen) && (!hasRawChatTracking(frozen) || rawChatStillExists(frozen))) {
                 nextFrozen.push(frozen);
@@ -3171,6 +3254,29 @@ async function interceptAndRestructurePrompt(data) {
             }
         }
         } // 🌟 結束 for 迴圈
+
+        const nextPromptSourceKeys = new Set(nextFrozen.map(getStablePromptSourceKey).filter(Boolean));
+        for (let i = 0; i < state.frozenSequence.length; i++) {
+            const frozen = state.frozenSequence[i];
+            const sourceKey = getStablePromptSourceKey(frozen);
+            if (!sourceKey || activeStableSourceKeys.has(sourceKey) || nextPromptSourceKeys.has(sourceKey) || recordedPromptDeletionKeys.has(sourceKey)) continue;
+            recordedPromptDeletionKeys.add(sourceKey);
+            const roleStr = frozen.role.charAt(0).toUpperCase() + frozen.role.slice(1);
+            if (firstBreakIndex === -1) { firstBreakIndex = currentValidLength; breakNodeName = frozen._attr.source; }
+            syncMessages.push(`<span style="color:#ff4444;">[提示詞刪除]</span> ${frozen._attr.source}`);
+            detailedMods.push(`[刪除] 偵測到提示詞來源已不存在: ${frozen._attr.source}`);
+            Diagnostics.recordModification({
+                type: '提示詞來源刪除',
+                source: frozen._attr?.type === 'LOREBOOK' ? `世界書條目: ${Diagnostics.cleanDisplayName(frozen._attr.bookName || frozen._attr.source, '未知世界書')}` : (frozen._attr?.source || '未知來源'),
+                sourceDetail: getSourceDetail(frozen),
+                target: getPromptLocator(frozen),
+                before: frozen.content,
+                after: '',
+                outcome: '提示詞來源已不在本輪 ST 提示詞陣列中，從凍結序列移除',
+                confidence: 'high',
+            });
+            ledger.push({ time: processTime, ref: frozen, origIdx: '-', role: roleStr, attr: frozen._attr, gen: '消失', creator: frozen._attr.creator, action: '向上補位(刪除)', func: '量子糾纏(提示詞來源刪除補記)', status: '已刪除' });
+        }
 
         let cacheDrop = 0;
         if (firstBreakIndex !== -1) cacheDrop = ((totalFrozenLen - firstBreakIndex) / totalFrozenLen) * 100;
@@ -3321,21 +3427,6 @@ async function interceptAndRestructurePrompt(data) {
             appendToFrozen(currentUser, '新增', '即時凍結', '絕對凍結(對話2+)');
             appendToFrozen(currentPrefill, '新增', '即時凍結', '絕對凍結(對話2+)');
         }
-
-        const chatAttrByTag = {
-            USER_CURRENT: { cat: '用戶', source: '用戶輸入', creator: '用戶', type: 'USER_CURRENT' },
-            USER_HISTORY: { cat: '用戶', source: '用戶歷史輸入', creator: '用戶', type: 'USER_HISTORY' },
-            AI_LAST_REPLY: { cat: 'AI', source: 'AI回覆', creator: '大模型', type: 'AI_LAST_REPLY' },
-            AI_HISTORY: { cat: 'AI', source: 'AI歷史回覆', creator: '大模型', type: 'AI_HISTORY' },
-        };
-        nextFrozen.forEach(msg => {
-            if (!msg || !Number.isInteger(msg._chatIndex) || !msg._attr) return;
-            if (msg.role !== 'user' && msg.role !== 'assistant') return;
-            if (contextMeta[msg._chatIndex]?.role !== msg.role) return;
-            const tag = classifyContextIndex(msg._chatIndex, msg.role);
-            if (!chatAttrByTag[tag] || msg._attr.type === tag) return;
-            msg._attr = { ...msg._attr, ...chatAttrByTag[tag] };
-        });
 
         state.frozenSequence = nextFrozen;
         state.updatedAt = Date.now();
@@ -3499,6 +3590,35 @@ function createToggle(id, title, desc, checked) {
 }
 
 async function setupUI() {
+    const waitForSettingsRoot = () => new Promise(resolve => {
+        const findRoot = () => document.getElementById('extensions_settings') || document.getElementById('extensions_settings2');
+        const existing = findRoot();
+        if (existing) return resolve(existing);
+        const startedAt = Date.now();
+        const timer = setInterval(() => {
+            const root = findRoot();
+            if (root) {
+                clearInterval(timer);
+                resolve(root);
+            } else if (Date.now() - startedAt > 15000) {
+                clearInterval(timer);
+                resolve(null);
+            }
+        }, 200);
+    });
+
+    const settingsRoot = await waitForSettingsRoot();
+    if (!settingsRoot) {
+        console.warn('[DS Cache] 找不到 ST 擴充設定容器，延後掛載 UI 失敗');
+        return false;
+    }
+    if ($('#ds-v36-opt-drawer').length) {
+        Logger._uiViewer = document.getElementById('ds-cache-log-viewer');
+        Diagnostics.init();
+        renderChatsUI();
+        return true;
+    }
+
     if (!$('#ds-ui-style').length) {
         $('head').append(`
             <style id="ds-ui-style">
@@ -3763,7 +3883,7 @@ async function setupUI() {
         </div>
     </div>`;
     
-    $('#extensions_settings').append(html);
+    $(settingsRoot).append(html);
     Logger._uiViewer = document.getElementById('ds-cache-log-viewer');
     TableScrollbar.init();
     TablePopout.init();
@@ -3826,12 +3946,20 @@ async function setupUI() {
     });
 
     renderChatsUI();
+    return true;
 }
 
-jQuery(async () => {
+async function startDeepSeekCacheOptimizer() {
+    if (window.__dsCacheV36Started) return;
+    window.__dsCacheV36Started = true;
     try {
         initSettings();
-        await setupUI();
+        const uiReady = await setupUI();
+        if (!uiReady) {
+            window.__dsCacheV36Started = false;
+            setTimeout(startDeepSeekCacheOptimizer, 1000);
+            return;
+        }
         installApiUsageInterceptor();
         addMenuEntry();
 
@@ -3867,6 +3995,26 @@ jQuery(async () => {
 
         Logger.write('══════ 🛡️ DeepSeek V4 Pro 緩存優化器 v2.0 (ST-API 精準溯源) 就緒 ══════', LogLevels.BASIC);
     } catch (e) {
+        window.__dsCacheV36Started = false;
         console.error('[DS Cache] 插件啟動崩潰:', e);
     }
-});
+}
+
+function scheduleDeepSeekCacheStartup() {
+    if (typeof jQuery === 'function') {
+        jQuery(startDeepSeekCacheOptimizer);
+        return;
+    }
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+        if (typeof jQuery === 'function') {
+            clearInterval(timer);
+            jQuery(startDeepSeekCacheOptimizer);
+        } else if (Date.now() - startedAt > 15000) {
+            clearInterval(timer);
+            console.warn('[DS Cache] jQuery 尚未就緒，插件啟動延後失敗');
+        }
+    }, 200);
+}
+
+scheduleDeepSeekCacheStartup();
